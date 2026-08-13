@@ -82,20 +82,44 @@ Produces `artifacts/win-x64/WinDiag.Mcp.exe`, ~96 MB. Drop `--self-contained` fo
 the target already has the .NET 9 runtime. Trimming is *not* used: the MCP SDK discovers tools by
 reflection and WMI binds late, so a trimmed build fails at runtime rather than at publish.
 
-**For a 32-bit target**, swap the RID — some lab VMs still run 32-bit Windows, where an x64 build
-cannot load at all:
+**Targets are both 32- and 64-bit VMs, so publish both** and copy the matching one to each machine —
+an x64 build cannot load at all on 32-bit Windows:
 
 ```
+dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x64 --self-contained ^
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/win-x64
 dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x86 --self-contained ^
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/win-x86
 ```
 
-The hand-written interop is 32-bit clean — every struct with a pointer in it is sized with
-`Marshal.SizeOf` rather than a hardcoded constant, and the fixed offsets (`FILE_DIRECTORY_INFORMATION`,
-the `MIB_*` row strides) are pointer-free and identical on both. Verified by running the x86 build under
-WOW64 and checking that named-pipe instance counts and socket ports still come back right. One real
-limitation: a 32-bit `capture_dump` cannot dump a 64-bit process, which only matters if you run the x86
-build on 64-bit Windows — don't.
+Roughly 96 MB and 89 MB respectively.
+
+The hand-written interop is 32-bit clean — every struct containing a pointer is sized with
+`Marshal.SizeOf` rather than a constant, and the fixed offsets (`FILE_DIRECTORY_INFORMATION`, the
+`MIB_*` row strides) are pointer-free and identical on both. Verified by running the x86 build under
+WOW64 and confirming named-pipe instance counts and socket ports still come back correct.
+
+**Getting the pairing wrong is the failure worth guarding.** The x86 build on 64-bit Windows cannot dump
+a 64-bit process and cannot capture activity at all (the 32-bit Procmon refuses to capture on x64) — and
+both failures surface much later, looking like tool bugs rather than a wrong download. The server
+therefore warns about it at startup and in `system_overview`.
+
+## Verifying on a target
+
+Two capabilities cannot be covered by `dotnet test`, because they need administrator rights and a kernel
+driver: `capture_activity`/`query_activity` and `path_handle_search`. Their unit tests run against a
+stubbed process runner, so they prove the arguments are composed correctly and nothing more.
+
+`tools/verify-on-target.ps1` proves they actually work. It drives the **published** server over stdio
+exactly as Claude Code does, so the machine under test needs no .NET SDK — just the one exe:
+
+```
+powershell -ExecutionPolicy Bypass -File verify-on-target.ps1 -ServerPath .\WinDiag.Mcp.exe
+```
+
+Run it elevated. Each check is self-verifying: the script holds a file open and requires the handle
+search to find its own PID, and generates known file activity during the capture window and requires
+the query to find it. A pass cannot be a coincidence.
 
 **2. Sign it.** An unsigned, elevated network listener is exactly what endpoint security on a managed
 machine should object to. Sign with the release certificate before copying.

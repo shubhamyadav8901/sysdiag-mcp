@@ -82,6 +82,17 @@ public sealed class SystemTools
         builder.Append("Running as ").Append(overview.UserName)
             .Append(overview.Elevated ? " (elevated)" : " (NOT elevated)").AppendLine();
 
+        if (overview.Is64BitOperatingSystem && !overview.Is64BitProcess)
+        {
+            // A misdeployment, not a curiosity: the 32-bit build cannot dump a 64-bit process at all,
+            // and it cannot drive Procmon here either, since the 32-bit Procmon refuses to capture on
+            // x64. Both failures appear later and look like tool bugs rather than a wrong download.
+            builder.AppendLine(
+                "WARNING: this is the 32-bit build of the server running on 64-bit Windows. Use the " +
+                "win-x64 build here - the 32-bit one cannot dump 64-bit processes and cannot capture " +
+                "activity on this OS.");
+        }
+
         builder.Append("Up ").Append(FormatUptime(overview.Uptime))
             .Append(", booted ").Append(overview.BootTime.ToString("u", CultureInfo.InvariantCulture))
             .AppendLine();

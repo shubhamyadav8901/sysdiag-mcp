@@ -39,6 +39,7 @@ async Task<int> RunStdio(WinDiagOptions opts)
     ServerBuilder.ConfigureServices(builder.Services, opts).WithStdioServerTransport();
 
     var host = builder.Build();
+    WarnIfMisdeployed();
     Log(host.Services, $"starting stdio server ({opts.Describe()})");
 
     await host.RunAsync().ConfigureAwait(false);
@@ -64,6 +65,7 @@ async Task<int> RunHttp(WinDiagOptions opts, string address)
     app.UseMiddleware<BearerTokenGate>(token);
     app.MapMcp();
 
+    WarnIfMisdeployed();
     Console.Error.WriteLine($"[windiag] serving MCP over HTTP on {address}");
 
     // Printed only when generated. Echoing a configured token would put a long-lived credential into
@@ -104,6 +106,18 @@ void ConfigureLogging(ILoggingBuilder logging)
 {
     logging.ClearProviders();
     logging.AddConsole(consoleOptions => consoleOptions.LogToStandardErrorThreshold = LogLevel.Trace);
+}
+
+// Surfaced at startup as well as in system_overview, because the consequences (no 64-bit dumps, no
+// activity capture) only show up much later and look like tool failures rather than a wrong build.
+void WarnIfMisdeployed()
+{
+    if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
+    {
+        Console.Error.WriteLine(
+            "[windiag] WARNING: this is the win-x86 build running on 64-bit Windows. Deploy the win-x64 " +
+            "build here; the 32-bit one cannot dump 64-bit processes or capture activity on this OS.");
+    }
 }
 
 void Log(IServiceProvider services, string message) =>
