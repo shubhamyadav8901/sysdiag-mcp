@@ -124,6 +124,32 @@ the query to find it. A pass cannot be a coincidence.
 **2. Sign it.** An unsigned, elevated network listener is exactly what endpoint security on a managed
 machine should object to. Sign with the release certificate before copying.
 
+**Verify the copy by hash, not by size.** Copying the ~90 MB build to a lab VM produced a file of
+*exactly* the right size that was corrupt — twice, once with an explicit "unexpected network error".
+Only the hash caught it, and a swap script that checked size alone would have installed a broken
+executable.
+
+Two things make this manageable:
+
+- `-p:EnableCompressionInSingleFile=true` roughly halves the payload (90 MB → 45 MB), at the cost of a
+  little startup time while it decompresses. Worth it on any slow link.
+- Use **BITS** rather than a plain copy. It is restartable and checksummed, and it succeeded on the
+  same link where `Copy-Item` and `robocopy` both failed:
+  ```powershell
+  Start-BitsTransfer -Source .\WinDiag.Mcp.exe -Destination \\target\C$\...\WinDiag.Mcp.new.exe
+  ```
+
+Verify the landed file with the server already running on the target — `file_signatures` hashes it
+*there*, so nothing crosses the link a second time:
+
+```powershell
+mcp-call.ps1 -Address http://target:7777 -Token ... -Tool file_signatures `
+  -Arguments '{"paths":["C:/path/WinDiag.Mcp.new.exe"]}'
+```
+
+Stage under a different filename. The live exe is locked while it runs, so making it the copy target
+fails — and a rename-then-copy dance risks renaming the running binary instead.
+
 **3. Copy it across and start it elevated:**
 
 ```

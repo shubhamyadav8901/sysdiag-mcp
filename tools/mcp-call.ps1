@@ -142,13 +142,17 @@ if ($result.isError) {
     exit 1
 }
 
+# Results go to the SUCCESS stream, not to the host. Write-Host cannot be captured by redirection, so
+# emitting there makes the script unusable in a pipeline - which is most of the point of having it.
+# Only the connection banner above is host chrome.
 if ($Raw) {
-    $result.structuredContent | ConvertTo-Json -Depth 12
+    Write-Output ($result.structuredContent | ConvertTo-Json -Depth 12)
 }
 else {
     # Every windiag tool returns a rendered summary alongside its structured content.
     $summary = $result.structuredContent.summary
-    if ($summary) { Write-Host $summary } else { $result.structuredContent | ConvertTo-Json -Depth 12 }
+    if ($summary) { Write-Output $summary }
+    else { Write-Output ($result.structuredContent | ConvertTo-Json -Depth 12) }
 }
 
 exit 0

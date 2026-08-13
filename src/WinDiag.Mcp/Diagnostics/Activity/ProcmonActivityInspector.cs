@@ -89,7 +89,7 @@ public sealed class ProcmonActivityInspector : IActivityInspector
             var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
             var pml = Path.Combine(_options.ArtifactDirectory, $"activity_{stamp}.pml");
             var csv = Path.Combine(_options.ArtifactDirectory, $"activity_{stamp}.csv");
-            var config = ExtractConfiguration();
+            var (config, isTemporary) = ResolveConfiguration();
 
             try
             {
@@ -100,7 +100,11 @@ public sealed class ProcmonActivityInspector : IActivityInspector
             }
             finally
             {
-                TryDelete(config);
+                // Only clean up what we extracted; an operator-supplied config is not ours to delete.
+                if (isTemporary)
+                {
+                    TryDelete(config);
+                }
             }
 
             return Summarise(pml, csv, durationSeconds, cancellationToken);
@@ -446,23 +450,43 @@ public sealed class ProcmonActivityInspector : IActivityInspector
     }
 
     /// <summary>
-    /// Writes the embedded Procmon configuration to a temp file for <c>/LoadConfig</c>.
+    /// Resolves the Procmon configuration for <c>/LoadConfig</c>, preferring one placed on disk.
     /// </summary>
+    /// <returns>The path to use, and whether it is a temporary file the caller must delete.</returns>
     /// <remarks>
-    /// Embedded rather than shipped alongside: a single-file publish has no directory to read from.
+    /// <para>The configuration is embedded so a single-file publish carries it, but a
+    /// <c>windiag.pmc</c> sitting beside the server overrides it. That matters because the filter set
+    /// is the one part of this that genuinely needs tuning per environment, and PMC is an undocumented
+    /// binary format only the Procmon GUI can author — so without an override, every filter change
+    /// would mean a rebuild and a redeploy of a 90 MB executable.</para>
+    /// <para>Learned from a real trace: a configuration exported while Procmon's filters were cleared
+    /// carried no exclusions at all, and 52% of the resulting capture was Procmon observing itself.</para>
     /// </remarks>
-    private string ExtractConfiguration()
+    private (string Path, bool IsTemporary) ResolveConfiguration()
     {
+        var directory = Path.GetDirectoryName(Environment.ProcessPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            var beside = Path.Combine(directory, "windiag.pmc");
+            if (File.Exists(beside))
+            {
+                _logger.LogInformation("using the Procmon configuration at {Path}", beside);
+                return (beside, false);
+            }
+        }
+
         var path = Path.Combine(Path.GetTempPath(), $"windiag-{Guid.NewGuid():N}.pmc");
 
         using var resource = typeof(ProcmonActivityInspector).Assembly.GetManifestResourceStream(ConfigResource)
             ?? throw new ActivityCaptureException(
                 $"The embedded Procmon configuration '{ConfigResource}' is missing from this build.");
 
-        using var file = File.Create(path);
-        resource.CopyTo(file);
+        using (var file = File.Create(path))
+        {
+            resource.CopyTo(file);
+        }
 
-        return path;
+        return (path, true);
     }
 
     private static void Increment(Dictionary<string, int> counts, string key)
