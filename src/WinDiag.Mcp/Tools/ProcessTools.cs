@@ -1,0 +1,236 @@
+using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.Versioning;
+using System.Text;
+using ModelContextProtocol.Server;
+using WinDiag.Mcp.Diagnostics.Pipes;
+using WinDiag.Mcp.Diagnostics.Processes;
+
+namespace WinDiag.Mcp.Tools;
+
+/// <summary>Structured result of <c>process_list</c>.</summary>
+public sealed record ProcessListToolResult(
+    string Summary,
+    IReadOnlyList<ProcessInfo> Processes,
+    int TotalMatched,
+    bool Truncated,
+    int CommandLinesRedacted,
+    string? Limitation);
+
+/// <summary>Structured result of <c>named_pipes</c>.</summary>
+public sealed record NamedPipesResult(
+    string Summary,
+    IReadOnlyList<NamedPipe> Pipes,
+    int TotalMatched,
+    bool Truncated);
+
+/// <summary>What is running, and how the running things talk to each other.</summary>
+[McpServerToolType]
+[SupportedOSPlatform("windows")]
+public sealed class ProcessTools
+{
+    private readonly IProcessInspector _processes;
+    private readonly INamedPipeInspector _pipes;
+
+    public ProcessTools(IProcessInspector processes, INamedPipeInspector pipes)
+    {
+        _processes = processes;
+        _pipes = pipes;
+    }
+
+    [McpServerTool(
+        Name = "process_list",
+        Title = "Running processes",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "List running processes with their PID, parent PID, start time, memory, thread count and full " +
+        "command line. The command line is the point: it is what distinguishes one svchost.exe or one " +
+        "service host from another, and it shows the arguments a process was actually launched with. " +
+        "Filter by name or command-line substring, or ask for a single PID. Command lines of processes " +
+        "owned by other users are only readable when the server is elevated.")]
+    public ProcessListToolResult ProcessList(
+        [Description("Match this text against the process name or its command line")]
+        string? nameFilter = null,
+        [Description("Return only this process id")]
+        int? processId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = _processes.List(nameFilter, processId, cancellationToken);
+
+        return new ProcessListToolResult(
+            RenderProcesses(result, nameFilter, processId),
+            result.Processes,
+            result.TotalMatched,
+            result.Truncated,
+            result.CommandLinesRedacted,
+            result.Limitation);
+    }
+
+    [McpServerTool(
+        Name = "named_pipes",
+        Title = "Named pipes and instance usage",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "List named pipes with how many instances are currently in use against how many the server " +
+        "allows. Use it when a client cannot connect to a local service, or hangs connecting, while " +
+        "the service itself looks healthy - a pipe at its instance limit produces exactly that, and is " +
+        "invisible from every other angle. Pipes at their limit are listed first.")]
+    public NamedPipesResult NamedPipes(
+        [Description("Match this text anywhere in the pipe name, for example a product or service name")]
+        string? nameFilter = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = _pipes.List(nameFilter, cancellationToken);
+
+        return new NamedPipesResult(RenderPipes(result, nameFilter), result.Pipes, result.TotalMatched, result.Truncated);
+    }
+
+    internal static string RenderProcesses(ProcessListResult result, string? nameFilter, int? processId)
+    {
+        var builder = new StringBuilder();
+
+        if (result.Limitation is { } limitation)
+        {
+            builder.Append("WARNING: ").AppendLine(limitation);
+        }
+
+        if (result.Processes.Count == 0)
+        {
+            builder.Append("No process matched");
+            if (processId is { } pid)
+            {
+                builder.Append(" PID ").Append(pid);
+            }
+
+            if (!string.IsNullOrWhiteSpace(nameFilter))
+            {
+                builder.Append(" '").Append(nameFilter).Append('\'');
+            }
+
+            builder.Append('.');
+            return builder.ToString();
+        }
+
+        builder.Append(result.TotalMatched)
+            .Append(result.TotalMatched == 1 ? " process" : " processes")
+            .AppendLine(":");
+
+        foreach (var process in result.Processes)
+        {
+            builder.Append("- ").Append(process.Name).Append(" (PID ").Append(process.ProcessId);
+            if (process.ParentProcessId is { } parent)
+            {
+                builder.Append(", parent ").Append(parent);
+            }
+
+            builder.Append(") ").Append(FormatBytes(process.WorkingSetBytes))
+                .Append(", ").Append(process.ThreadCount).Append(" threads");
+
+            if (process.StartTime is { } started)
+            {
+                builder.Append(", started ").Append(started.ToString("u", CultureInfo.InvariantCulture));
+            }
+
+            builder.AppendLine();
+
+            if (process.CommandLine is { } commandLine)
+            {
+                builder.Append("    ").AppendLine(Truncate(commandLine, 400));
+            }
+        }
+
+        if (result.CommandLinesRedacted > 0)
+        {
+            // Without this, a listing of nulls reads as "these processes have no arguments".
+            builder.Append(result.CommandLinesRedacted)
+                .Append(" of these had an unreadable command line, which means the server could not ")
+                .Append("access the process, not that it was started without arguments. ")
+                .AppendLine("Run elevated to see them.");
+        }
+
+        if (result.Truncated)
+        {
+            builder.Append("Showing the first ").Append(result.Processes.Count).Append(" of ")
+                .Append(result.TotalMatched).Append("; narrow the filter or raise WINDIAG_MAX_RESULTS.");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    internal static string RenderPipes(NamedPipeListResult result, string? nameFilter)
+    {
+        var builder = new StringBuilder();
+
+        if (result.Pipes.Count == 0)
+        {
+            builder.Append("No named pipes matched");
+            if (!string.IsNullOrWhiteSpace(nameFilter))
+            {
+                builder.Append(" '").Append(nameFilter).Append('\'');
+            }
+
+            builder.Append('.');
+            return builder.ToString();
+        }
+
+        var exhausted = result.Pipes.Count(p => p.Exhausted);
+        if (exhausted > 0)
+        {
+            builder.Append("ATTENTION: ").Append(exhausted)
+                .Append(exhausted == 1 ? " pipe is" : " pipes are")
+                .AppendLine(" at their instance limit. A client connecting to one of these will block " +
+                            "or fail even though the server process is healthy.");
+        }
+
+        builder.Append(result.TotalMatched)
+            .Append(result.TotalMatched == 1 ? " named pipe" : " named pipes")
+            .AppendLine(":");
+
+        foreach (var pipe in result.Pipes)
+        {
+            builder.Append("- ").Append(pipe.Name).Append(": ").Append(pipe.ActiveInstances)
+                .Append(pipe.Unlimited ? " active (unlimited)" : $" of {pipe.MaximumInstances} instances");
+
+            if (pipe.Exhausted)
+            {
+                builder.Append(" - AT LIMIT");
+            }
+
+            builder.AppendLine();
+        }
+
+        if (result.Truncated)
+        {
+            builder.Append("Showing the first ").Append(result.Pipes.Count).Append(" of ")
+                .Append(result.TotalMatched).Append("; narrow the filter or raise WINDIAG_MAX_RESULTS.");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string Truncate(string value, int max) =>
+        value.Length <= max ? value : value[..max] + "...";
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        var unit = 0;
+
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return $"{value.ToString(unit == 0 ? "0" : "0.#", CultureInfo.InvariantCulture)} {units[unit]}";
+    }
+}

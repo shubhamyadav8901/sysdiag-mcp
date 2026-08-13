@@ -1,0 +1,21 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Warnings are errors everywhere, including in tests. This project drives a live machine as
+      SYSTEM; a nullable-reference or unused-result warning is the kind of thing that turns into a
+      wrong answer about someone's production box, so there is no "we'll clean it up later" tier.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- P/Invoke signatures are hand-written and reviewed; the analyzer's source-generated
+         LibraryImport suggestion is noise for the small surface we declare. -->
+    <NoWarn>$(NoWarn);SYSLIB1054</NoWarn>
+  </PropertyGroup>
+
+</Project>

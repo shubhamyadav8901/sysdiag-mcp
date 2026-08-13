@@ -1,0 +1,8 @@
+Process,PID,User,Handle,Type,Share Flags,Name,Access
+explorer.exe,3628,File,CONTOSO\jdoe,0x0000068C,C:\Windows\Fonts\StaticCache.dat
+explorer.exe,3628,File,CONTOSO\jdoe,0x000017B0,C:\Windows\Fonts\seguiemj.ttf
+explorer.exe,3628,File,CONTOSO\jdoe,0x00002038,C:\Windows\Fonts\segoeui.ttf
+PanGPA.exe,14624,File,CONTOSO\jdoe,0x00000460,C:\Windows\Fonts\StaticCache.dat
+CrossDeviceResume.exe,14884,File,CONTOSO\jdoe,0x000006CC,C:\Windows\Fonts\segoeui.ttf
+msedgewebview2.exe,15276,File,CONTOSO\jdoe,0x00001194,C:\Windows\Fonts
+msedgewebview2.exe,15852,File,CONTOSO\jdoe,0x000003B4,C:\Windows\Fonts\ARIALN.TTF

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.sln text eol=crlf
+*.csproj text eol=crlf
+*.props text eol=crlf
+
+# Golden fixtures are captured verbatim from Sysinternals tools. Normalising their line endings
+# would silently change what the parser tests assert against.
+tests/**/Fixtures/** -text

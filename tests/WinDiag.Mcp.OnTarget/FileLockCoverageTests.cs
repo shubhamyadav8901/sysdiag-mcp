@@ -1,0 +1,189 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
+using WinDiag.Mcp.Configuration;
+using WinDiag.Mcp.Diagnostics;
+using WinDiag.Mcp.Diagnostics.External;
+using WinDiag.Mcp.Diagnostics.Handles;
+using WinDiag.Mcp.Diagnostics.Locks;
+using Xunit.Abstractions;
+
+namespace WinDiag.Mcp.OnTarget;
+
+/// <summary>
+/// Characterises what Restart Manager can and cannot see, against real locks on a real machine.
+/// </summary>
+/// <remarks>
+/// <para>These tests exist to pin a <em>boundary</em>, not to confirm a happy path. Restart Manager is
+/// the default backing for <c>who_locks_path</c> precisely because it needs no elevation, but it was
+/// designed for installer reboot-avoidance and does not report every holder. The tool's wording
+/// depends on that limitation being real and stable, so it is asserted rather than assumed.</para>
+/// <para>Self-verifying by construction: the test creates the lock it then goes looking for, so there
+/// are no fixtures to keep in sync and no ambiguity about the expected answer.</para>
+/// </remarks>
+[Trait("Category", "OnTarget")]
+public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposable
+{
+    private readonly string _path = Path.Combine(Path.GetTempPath(), $"windiag-lock-{Guid.NewGuid():N}.tmp");
+
+    private static ILockInspector Locks() =>
+        new RestartManagerLockInspector(NullLogger<RestartManagerLockInspector>.Instance);
+
+    private static IHandleInspector Handles() =>
+        new HandleExeInspector(
+            new ExternalToolRunner(new ToolLocator(), new WinDiagOptions(), NullLogger<ExternalToolRunner>.Instance),
+            new WindowsPrivilegeProbe(),
+            new WinDiagOptions());
+
+    [Fact]
+    public void Finds_a_file_that_this_very_process_is_holding_open()
+    {
+        using var stream = new FileStream(_path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+
+        var result = Locks().WhoLocks(_path, CancellationToken.None);
+
+        var self = Environment.ProcessId;
+        Assert.Contains(result.Holders, h => h.ProcessId == self);
+
+        var holder = result.Holders.First(h => h.ProcessId == self);
+        Assert.True(holder.StillRunning);
+
+        // Even a correct, complete-looking answer must not claim to be exhaustive.
+        Assert.False(result.Exhaustive);
+    }
+
+    [Fact]
+    public void Reports_a_live_holder_as_running()
+    {
+        using (new FileStream(_path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+        {
+            var result = Locks().WhoLocks(_path, CancellationToken.None);
+
+            // Assert the holder exists before asserting anything about it. An Assert.All over a
+            // possibly-empty filtered sequence passes unconditionally, which would keep this test
+            // green even if Restart Manager stopped reporting the current process entirely.
+            var self = Assert.Single(result.Holders, h => h.ProcessId == Environment.ProcessId);
+            Assert.True(self.StillRunning, "the running test process was reported as exited");
+            Assert.NotNull(self.StartedAt);
+        }
+    }
+
+    [RequiresElevatedHandleExeFact]
+    public async Task Exhaustive_search_covers_registry_keys_not_just_files()
+    {
+        // The tripwire for the -a flag. handle.exe without -a "will dump all file references" and
+        // nothing else, so this returns zero Key rows while path_handle_search's description promises
+        // registry keys and who_locks_path points at it as the exhaustive answer. Every other test in
+        // the suite searches a file name, so this is the only one that fails if -a is dropped.
+        var result = await Handles().SearchAsync(
+            @"Software\Microsoft\Windows\CurrentVersion", includeAllObjectTypes: true, CancellationToken.None);
+
+        output.WriteLine($"matched {result.TotalMatched}, types: " +
+                         string.Join(", ", result.Entries.Select(e => e.Type).Distinct()));
+
+        Assert.Contains(result.Entries, e => e.Type.Equals("Key", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [RequiresElevatedHandleExeFact]
+    public async Task Exhaustive_search_finds_a_holder_in_another_process()
+    {
+        // A child process holds the file. It never registers with Restart Manager, which is the
+        // population who_locks_path is documented to potentially miss.
+        using var holder = StartFileHolder(_path);
+
+        try
+        {
+            await WaitForLock(_path);
+
+            var viaRestartManager = Locks().WhoLocks(_path, CancellationToken.None);
+            output.WriteLine(
+                $"Restart Manager reported {viaRestartManager.Holders.Count} holder(s): " +
+                string.Join(", ", viaRestartManager.Holders.Select(h => $"{h.ProcessName}/{h.ProcessId}")));
+
+            var viaHandle = await Handles().SearchAsync(
+                Path.GetFileName(_path), includeAllObjectTypes: false, CancellationToken.None);
+            output.WriteLine($"handle.exe reported {viaHandle.TotalMatched} match(es)");
+
+            // The exhaustive path must find it. This is the guarantee that makes who_locks_path's
+            // "run path_handle_search" advice worth giving.
+            Assert.Contains(viaHandle.Entries, e => e.ProcessId == holder.Id);
+            Assert.True(viaHandle.Elevated);
+        }
+        finally
+        {
+            KillQuietly(holder);
+        }
+    }
+
+    /// <summary>Spawns a process that opens the file exclusively and holds it.</summary>
+    private static Process StartFileHolder(string path)
+    {
+        var script =
+            $"$f=[System.IO.File]::Open('{path}','OpenOrCreate','ReadWrite','None'); " +
+            "Start-Sleep -Seconds 60; $f.Close()";
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-Command");
+        startInfo.ArgumentList.Add(script);
+
+        return Process.Start(startInfo)
+               ?? throw new InvalidOperationException("could not start the file-holder process");
+    }
+
+    /// <summary>Waits until the file is genuinely locked, so the test never races the child.</summary>
+    private static async Task WaitForLock(string path)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            try
+            {
+                using var probe = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException("the file-holder process never took an exclusive lock");
+    }
+
+    private static void KillQuietly(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Nothing useful to do; the temp file is cleaned up either way.
+        }
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (File.Exists(_path))
+            {
+                File.Delete(_path);
+            }
+        }
+        catch (IOException)
+        {
+            // Still held by a child that outlived the kill. The temp directory will reclaim it.
+        }
+    }
+}
