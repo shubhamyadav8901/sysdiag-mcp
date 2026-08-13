@@ -60,7 +60,8 @@ public sealed class WindowsSystemInspector : ISystemInspector
                     Label: string.IsNullOrWhiteSpace(drive.VolumeLabel) ? null : drive.VolumeLabel,
                     FileSystem: drive.DriveFormat,
                     TotalBytes: drive.TotalSize,
-                    FreeBytes: drive.AvailableFreeSpace));
+                    FreeBytes: drive.AvailableFreeSpace,
+                    DriveType: drive.DriveType.ToString()));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

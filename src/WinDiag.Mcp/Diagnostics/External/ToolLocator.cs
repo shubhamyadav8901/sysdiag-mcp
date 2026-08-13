@@ -65,9 +65,32 @@ public sealed class ToolLocator : IToolLocator
 
     private static string? Locate(string executableName)
     {
-        return FromAppPaths(Registry.CurrentUser, executableName)
+        return BesideTheServer(executableName)
+               ?? FromAppPaths(Registry.CurrentUser, executableName)
                ?? FromAppPaths(Registry.LocalMachine, executableName)
                ?? FromSearchPath(executableName);
+    }
+
+    /// <summary>Looks in the directory the server executable itself lives in.</summary>
+    /// <remarks>
+    /// <para>Checked first because it matches how this actually gets deployed: copy a folder to a
+    /// target machine containing the server and whatever Sysinternals binaries it needs. Nothing gets
+    /// installed there, so App Paths is empty and PATH knows nothing about it.</para>
+    /// <para>Found the hard way — a freshly deployed lab VM reported <c>capture_activity</c> and
+    /// <c>path_handle_search</c> as unavailable with Procmon sitting in a folder on the desktop.</para>
+    /// <para><see cref="Environment.ProcessPath"/> rather than <c>AppContext.BaseDirectory</c>: under a
+    /// single-file publish the latter points at the extraction directory, not at the exe.</para>
+    /// </remarks>
+    private static string? BesideTheServer(string executableName)
+    {
+        var directory = Path.GetDirectoryName(Environment.ProcessPath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return null;
+        }
+
+        var candidate = Path.Combine(directory, executableName);
+        return File.Exists(candidate) ? candidate : null;
     }
 
     private static string? FromAppPaths(RegistryKey root, string executableName)

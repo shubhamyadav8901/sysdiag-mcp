@@ -6,10 +6,19 @@ public sealed record LogicalDisk(
     string? Label,
     string FileSystem,
     long TotalBytes,
-    long FreeBytes)
+    long FreeBytes,
+    string DriveType)
 {
     /// <summary>Percentage of the volume still free, or null when the size is unknown.</summary>
     public double? PercentFree => TotalBytes > 0 ? Math.Round(100.0 * FreeBytes / TotalBytes, 1) : null;
+
+    /// <summary>Whether running out of space on this volume would actually mean anything.</summary>
+    /// <remarks>
+    /// Optical media and mounted ISOs are read-only and therefore always 0% free. Reporting a mounted
+    /// Windows installer ISO as "CRITICALLY LOW" is noise that trains the reader to ignore the warning
+    /// on the volume where it matters.
+    /// </remarks>
+    public bool CanRunOutOfSpace => !string.Equals(DriveType, "CDRom", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Baseline description of the machine the server is running on.</summary>

@@ -174,3 +174,25 @@ public sealed class ArtifactDirectoryTests
         Assert.Throws<ConfigurationException>(() => WinDiagOptions.FromEnvironment(env));
     }
 }
+
+public sealed class LogicalDiskWarningTests
+{
+    private static WinDiag.Mcp.Diagnostics.SystemInfo.LogicalDisk Disk(string type, long free) =>
+        new("D:\\", "media", "UDF", 4_000_000_000, free, type);
+
+    [Fact]
+    public void A_mounted_iso_is_not_reported_as_running_out_of_space()
+    {
+        // A read-only volume is always 0% free. Flagging a mounted Windows installer ISO as
+        // CRITICALLY LOW trains the reader to ignore the warning on the volume where it matters.
+        Assert.False(Disk("CDRom", 0).CanRunOutOfSpace);
+    }
+
+    [Fact]
+    public void A_real_volume_can_still_run_out_of_space()
+    {
+        Assert.True(Disk("Fixed", 0).CanRunOutOfSpace);
+        Assert.True(Disk("Network", 0).CanRunOutOfSpace);
+        Assert.True(Disk("Removable", 0).CanRunOutOfSpace);
+    }
+}

@@ -118,8 +118,9 @@ public sealed class SystemTools
                 builder.Append(" (").Append(percent.ToString("0.#", CultureInfo.InvariantCulture)).Append("%)");
 
                 // Worth calling out unprompted: a nearly full volume explains a large class of
-                // "it suddenly stopped working" reports on its own.
-                if (percent < 5)
+                // "it suddenly stopped working" reports on its own. Read-only media is excluded --
+                // a mounted ISO is always 0% free, and flagging it teaches the reader to ignore this.
+                if (percent < 5 && disk.CanRunOutOfSpace)
                 {
                     builder.Append(" - CRITICALLY LOW");
                 }
