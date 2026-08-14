@@ -8,19 +8,21 @@ process; this server sees the machine.
 
 ## Status
 
-Steps 1–5 and 7 of the build order, and `process_modules` from step 6: the server spine, seventeen
-tools plus an opt-in eighteenth (`update_self`), both transports (stdio locally, authenticated
-Streamable HTTP for running on a target), dump capture, Procmon-backed activity tracing, and the
-process/service control write tools. Still to come: the two remaining step-6 shell-outs,
-`autostart_audit` and `process_handles`.
+**The build order is complete.** Nineteen tools plus an opt-in twentieth (`update_self`), both
+transports (stdio locally, authenticated Streamable HTTP for running on a target), dump capture,
+Procmon-backed activity tracing, the Sysinternals shell-outs, and the process/service control write
+tools.
 
-All but two are backed by native Windows APIs; only `path_handle_search` and `capture_activity` shell
-out to Sysinternals.
+Most are backed by native Windows APIs. Four shell out to Sysinternals — `path_handle_search` and
+`process_handles` to `handle`, `capture_activity` to `Procmon`, `autostart_audit` to `autorunsc` —
+and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 
 | Tool | Backing | Answers |
 |---|---|---|
 | `who_locks_path` | Restart Manager | Who is holding this file or folder open |
-| `path_handle_search` | Sysinternals `handle.exe` | Handle search across every process (files by default; all object types on request) |
+| `path_handle_search` | Sysinternals `handle` | Handle search across every process (files by default; all object types on request) |
+| `process_handles` | Sysinternals `handle -p` | Everything one process holds open — files, keys, sections, mutants, tokens |
+| `autostart_audit` | Sysinternals `autorunsc` | What runs without anybody starting it, and who signed it |
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
