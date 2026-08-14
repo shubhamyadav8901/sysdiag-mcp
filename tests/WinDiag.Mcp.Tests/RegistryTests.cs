@@ -72,8 +72,50 @@ public sealed class RegistryPathTests
     [Fact]
     public void Names_the_view_it_read_so_an_answer_is_never_ambiguous()
     {
+        if (!Environment.Is64BitOperatingSystem)
+        {
+            return; // Covered by the single-view test below, which is the only case that applies here.
+        }
+
         Assert.Equal("32-bit (WOW6432Node)", RegistryPath.Describe(RegistryView.Registry32));
         Assert.Equal("64-bit", RegistryPath.Describe(RegistryView.Registry64));
+    }
+
+    [Fact]
+    public void Never_calls_the_only_view_on_32_bit_windows_the_wow6432node_one()
+    {
+        // Found live on the 32-bit target, which reported "[32-bit (WOW6432Node) view]" for every key.
+        // There is no WOW6432Node on 32-bit Windows -- there is one registry -- so that label tells a
+        // reader they are looking at a redirected copy and sends them hunting for a real key that does
+        // not exist. The expectation is written against Is64BitOperatingSystem rather than derived
+        // from Describe, because deriving it is what made the original test unable to see this.
+        var described = RegistryPath.Describe(RegistryPath.NativeView);
+
+        if (Environment.Is64BitOperatingSystem)
+        {
+            Assert.Equal("64-bit", described);
+        }
+        else
+        {
+            Assert.DoesNotContain("WOW6432Node", described);
+            Assert.Contains("single view", described);
+        }
+    }
+
+    [Fact]
+    public void Refuses_a_view_this_machine_does_not_have()
+    {
+        if (Environment.Is64BitOperatingSystem)
+        {
+            Assert.Equal(RegistryView.Registry64, RegistryPath.ParseView("64"));
+            return;
+        }
+
+        // Windows accepts Registry64 on 32-bit Windows and ignores it, so honouring the request would
+        // return the only view under a label saying otherwise.
+        var ex = Assert.Throws<RegistryPathException>(() => RegistryPath.ParseView("64"));
+
+        Assert.Contains("one registry rather than two", ex.Message);
     }
 }
 
@@ -196,6 +238,21 @@ public sealed class RegistryInspectorTests
         Assert.True(result.Truncated);
         Assert.True(result.Values.Count <= 3);
         Assert.True(result.TotalValues > 3);
+    }
+
+    [Fact]
+    public void Reads_a_bare_hive_without_disposing_the_base_key_twice()
+    {
+        // Open() returns the base key itself when there is no subkey, so a second `using` over it
+        // would dispose it twice. HKCC is small enough to read whole.
+        var result = Inspector().Read("HKCC", null, null, CancellationToken.None);
+
+        Assert.NotEmpty(result.SubKeyNames);
+
+        // And again, to prove the first call left the base key usable rather than disposed.
+        var again = Inspector().Read("HKCC", null, null, CancellationToken.None);
+
+        Assert.Equal(result.TotalSubKeys, again.TotalSubKeys);
     }
 
     [Fact]

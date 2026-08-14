@@ -71,8 +71,14 @@ internal static class RegistryPath
     }
 
     /// <summary>Maps the caller's word for a view onto the enum, or refuses it.</summary>
-    public static RegistryView ParseView(string? view) =>
-        view?.Trim().ToLowerInvariant() switch
+    /// <remarks>
+    /// An explicit request for a view this machine does not have is refused rather than quietly
+    /// honoured. Windows accepts <c>Registry64</c> on 32-bit Windows and ignores it, so silently
+    /// accepting the request would return the only view under a label saying otherwise.
+    /// </remarks>
+    public static RegistryView ParseView(string? view)
+    {
+        var requested = view?.Trim().ToLowerInvariant() switch
         {
             null or "" or "native" or "default" => NativeView,
             "64" or "x64" or "registry64" => RegistryView.Registry64,
@@ -82,11 +88,35 @@ internal static class RegistryPath
                 "shows), '64', or '32' for the WOW6432Node view a 32-bit process sees.")
         };
 
+        if (!Environment.Is64BitOperatingSystem && requested == RegistryView.Registry64)
+        {
+            throw new RegistryPathException(
+                "This is 32-bit Windows, which has one registry rather than two -- there is no 64-bit " +
+                "view to read. Omit view, or pass 'native'.");
+        }
+
+        return requested;
+    }
+
     /// <summary>How to describe the view in a result, so an answer is never ambiguous about which it read.</summary>
-    public static string Describe(RegistryView view) => view switch
+    /// <remarks>
+    /// The 32-bit-OS case is not cosmetic. There is no WOW6432Node on 32-bit Windows -- there is one
+    /// registry -- so labelling its only view "WOW6432Node" tells a reader they are looking at the
+    /// redirected copy of a key and sends them hunting for a real one that does not exist. Caught on
+    /// the live 32-bit target, which reported exactly that for every key.
+    /// </remarks>
+    public static string Describe(RegistryView view)
     {
-        RegistryView.Registry32 => "32-bit (WOW6432Node)",
-        RegistryView.Registry64 => "64-bit",
-        _ => "process default"
-    };
+        if (!Environment.Is64BitOperatingSystem)
+        {
+            return "32-bit Windows, single view";
+        }
+
+        return view switch
+        {
+            RegistryView.Registry32 => "32-bit (WOW6432Node)",
+            RegistryView.Registry64 => "64-bit",
+            _ => "process default"
+        };
+    }
 }

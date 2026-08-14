@@ -49,10 +49,26 @@ public sealed class WindowsRegistryInspector : IRegistryInspector
         var registryView = RegistryPath.ParseView(view);
 
         using var root = RegistryKey.OpenBaseKey(hive, registryView);
-        using var key = Open(root, subKey, path, registryView);
 
-        var values = ReadValues(key, valueName, path, cancellationToken);
-        var subKeyNames = ReadSubKeyNames(key);
+        // Open returns `root` itself for a bare hive such as "HKCR", so ownership is tracked rather
+        // than assumed: a second `using` over the same object would dispose the base key twice.
+        var key = subKey.Length == 0 ? root : Open(root, subKey, path, registryView);
+
+        List<RegistryValue> values;
+        List<string> subKeyNames;
+
+        try
+        {
+            values = ReadValues(key, valueName, path, cancellationToken);
+            subKeyNames = ReadSubKeyNames(key);
+        }
+        finally
+        {
+            if (!ReferenceEquals(key, root))
+            {
+                key.Dispose();
+            }
+        }
 
         var truncated = values.Count > _options.MaxResults || subKeyNames.Count > _options.MaxResults;
 
@@ -70,11 +86,6 @@ public sealed class WindowsRegistryInspector : IRegistryInspector
     {
         try
         {
-            if (subKey.Length == 0)
-            {
-                return root;
-            }
-
             return root.OpenSubKey(subKey, writable: false)
                    ?? throw new RegistryQueryException(
                        $"The registry key '{path}' does not exist in the " +
