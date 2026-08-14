@@ -8,12 +8,13 @@ process; this server sees the machine.
 
 ## Status
 
-Steps 1–5 of the build order: the server spine, fourteen tools, both transports (stdio locally,
-authenticated Streamable HTTP for running on a target), dump capture, and Procmon-backed activity
-tracing. Still to come: the remaining Sysinternals shell-outs (step 6) and the process/service control
-write tools (7).
+Steps 1–5 and 7 of the build order: the server spine, seventeen tools, both transports (stdio locally,
+authenticated Streamable HTTP for running on a target), dump capture, Procmon-backed activity tracing,
+and the process/service control write tools. Still to come: the remaining Sysinternals shell-outs
+(step 6) — `autostart_audit` and `process_handles`.
 
-Ten of the eleven are backed by native Windows APIs; only `path_handle_search` shells out.
+All but two are backed by native Windows APIs; only `path_handle_search` and `capture_activity` shell
+out to Sysinternals.
 
 | Tool | Backing | Answers |
 |---|---|---|
@@ -22,6 +23,7 @@ Ten of the eleven are backed by native Windows APIs; only `path_handle_search` s
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
+| `process_modules` | `Process.Modules` + `WinVerifyTrust` | Which DLL version actually loaded, from where, and whether anything unsigned got in |
 | `named_pipes` | `NtQueryDirectoryFile` | IPC pipes, and whether any is at its instance limit |
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
@@ -31,6 +33,9 @@ Ten of the eleven are backed by native Windows APIs; only `path_handle_search` s
 | `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg |
 | `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
+| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting |
+| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
+| `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand |
 
 ## Build and test
 
@@ -210,6 +215,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | Variable | Default | Meaning |
 |---|---|---|
 | `WINDIAG_READ_ONLY` | `false` | `1`/`true` drops all state-changing tools from registration |
+| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`. Gated separately because it lets the bearer token replace an elevated binary; `WINDIAG_READ_ONLY` still overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
 | `WINDIAG_MAX_RESULTS` | `200` | Row cap per tool call (1–10000) |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |

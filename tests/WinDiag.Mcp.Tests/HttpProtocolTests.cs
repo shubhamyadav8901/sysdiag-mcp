@@ -170,7 +170,7 @@ public sealed class HttpProtocolTests : IAsyncLifetime
         // update_self is deliberately absent: it is gated separately from read-only mode and the test
         // server does not enable it.
         Assert.DoesNotContain("update_self", tools);
-        Assert.Equal(16, tools.Length);
+        Assert.Equal(17, tools.Length);
     }
 
     [Fact]

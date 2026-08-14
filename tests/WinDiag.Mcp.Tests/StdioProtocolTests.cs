@@ -116,8 +116,8 @@ public sealed class StdioProtocolTests : IAsyncLifetime
         [
             "capabilities", "capture_activity", "capture_dump", "effective_access", "event_log_tail",
             "file_signatures", "named_pipes", "network_owners", "path_handle_search", "process_control",
-            "process_list", "query_activity", "service_config", "service_control", "system_overview",
-            "who_locks_path"
+            "process_list", "process_modules", "query_activity", "service_config", "service_control",
+            "system_overview", "who_locks_path"
         ];
 
         Assert.Equal(expected, toolNames.Order(StringComparer.Ordinal).ToArray());

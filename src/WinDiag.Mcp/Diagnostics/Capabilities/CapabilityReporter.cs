@@ -85,6 +85,10 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 null,
                 RequiresElevation: true),
             ["query_activity"] = new("streaming read of a saved capture", null, null),
+            ["process_modules"] = new(
+                "managed process module list plus WinVerifyTrust",
+                null,
+                "cannot read modules of processes owned by other users"),
             ["process_control"] = new(
                 "Win32 process control",
                 null,

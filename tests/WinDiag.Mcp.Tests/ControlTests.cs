@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using WinDiag.Mcp.Diagnostics.Control;
+using WinDiag.Mcp.Diagnostics.Modules;
 using WinDiag.Mcp.Tools;
 
 namespace WinDiag.Mcp.Tests;
@@ -252,5 +253,52 @@ public sealed class ControlRenderingTests
         Assert.Contains("Fax", summary);
         Assert.Contains("PrintNotify", summary);
         Assert.Contains("Start these again individually", summary);
+    }
+}
+
+public sealed class ModuleRenderingTests
+{
+    private static LoadedModule Module(string name, string? verdict = null) =>
+        new(name, $@"C:\Windows\System32\{name}", "0x7FF800000000", 1_234_567, "10.0.19045.1", "Microsoft", verdict, null);
+
+    private static ModuleListResult Result(
+        IReadOnlyList<LoadedModule> modules, string? limitation = null, bool truncated = false, int unsigned = 0) =>
+        new(42, "app", modules, modules.Count, truncated, unsigned, limitation);
+
+    [Fact]
+    public void Leads_with_a_partial_read_because_a_short_list_looks_like_a_small_process()
+    {
+        var summary = ModuleTools.Render(
+            Result([Module("kernel32.dll")], limitation: "Only part of the module list could be read."),
+            null, false);
+
+        Assert.StartsWith("WARNING", summary);
+    }
+
+    [Fact]
+    public void Says_signatures_were_not_checked_rather_than_implying_they_were_clean()
+    {
+        var summary = ModuleTools.Render(Result([Module("kernel32.dll")]), null, verified: false);
+
+        Assert.Contains("Signatures were not checked", summary);
+    }
+
+    [Fact]
+    public void Points_at_the_unsigned_modules_when_verification_ran()
+    {
+        var summary = ModuleTools.Render(
+            Result([Module("evil.dll", "Unsigned")], unsigned: 1), null, verified: true);
+
+        Assert.Contains("[UNSIGNED]", summary);
+        Assert.Contains("worth looking at first", summary);
+    }
+
+    [Fact]
+    public void Confirms_a_clean_result_explicitly()
+    {
+        var summary = ModuleTools.Render(Result([Module("kernel32.dll", "Valid")]), null, verified: true);
+
+        Assert.Contains("signed and trusted", summary);
+        Assert.DoesNotContain("[VALID]", summary);
     }
 }

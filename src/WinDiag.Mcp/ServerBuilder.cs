@@ -80,13 +80,12 @@ public static class ServerBuilder
             .WithTools<ProcessTools>()
             .WithTools<InventoryTools>()
             .WithTools<AccessTools>()
-            .WithTools<ActivityQueryTools>();
+            .WithTools<ActivityQueryTools>()
+            .WithTools<ModuleTools>();
 
         // Write tools are registered here only when the server is not read-only, so a read-only server
-        // does not advertise capabilities it will refuse. Step 7 adds process_control and
-        // service_control to this branch.
-        // Registered only outside read-only mode: capture_dump writes a file that can be several
-        // gigabytes, which is a state change however diagnostic the intent.
+        // does not advertise capabilities it will refuse. capture_dump and capture_activity write files
+        // that can be several gigabytes, which is a state change however diagnostic the intent.
         if (!options.ReadOnly)
         {
             mcp.WithTools<DumpTools>();
@@ -94,16 +93,9 @@ public static class ServerBuilder
             mcp.WithTools<ControlTools>();
         }
 
-        // Separately gated, and off by default. Read-only mode is about not changing the machine;
-        // this is about whether the bearer token may replace an elevated binary and run it, which is a
-        // different question and a much bigger grant.
-        if (options.AllowSelfUpdate)
-        {
-            mcp.WithTools<SelfUpdateTools>();
-        }
-
-        // Separately gated, and off by default: this one lets the caller replace the server's own
-        // elevated binary, which is a different class of authority from anything else here.
+        // Gated twice over, and off by default: this one lets the caller replace the server's own
+        // elevated binary and run it, which is a different class of authority from anything else here.
+        // Read-only still wins -- replacing the binary is the largest change this server can make.
         if (options.AllowSelfUpdate && !options.ReadOnly)
         {
             mcp.WithTools<SelfUpdateTools>();
@@ -133,6 +125,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
+        services.AddSingletonIfMissing<Diagnostics.Modules.IModuleInspector, Diagnostics.Modules.WindowsModuleInspector>();
         // Fully qualified: Diagnostics.Control.IServiceController would otherwise collide with
         // System.ServiceProcess.ServiceController, which the services inspector already brings in.
         services.AddSingletonIfMissing<
@@ -151,6 +144,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<ActivityQueryTools, ActivityQueryTools>();
         services.AddSingletonIfMissing<SelfUpdateTools, SelfUpdateTools>();
         services.AddSingletonIfMissing<ControlTools, ControlTools>();
+        services.AddSingletonIfMissing<ModuleTools, ModuleTools>();
         return services;
     }
 
