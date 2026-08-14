@@ -85,6 +85,11 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 null,
                 RequiresElevation: true),
             ["query_activity"] = new("streaming read of a saved capture", null, null),
+            ["update_self"] = new(
+                "hash-verified replacement of this server's own executable",
+                null,
+                "cannot replace a binary in a protected location without administrator rights",
+                RequiresElevation: false),
             ["event_log_tail"] = new(
                 "Windows EventLogReader",
                 null,

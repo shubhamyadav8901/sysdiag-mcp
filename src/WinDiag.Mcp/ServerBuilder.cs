@@ -12,6 +12,7 @@ using WinDiag.Mcp.Diagnostics.Locks;
 using WinDiag.Mcp.Diagnostics.Network;
 using WinDiag.Mcp.Diagnostics.Pipes;
 using WinDiag.Mcp.Diagnostics.Processes;
+using WinDiag.Mcp.Diagnostics.SelfUpdate;
 using WinDiag.Mcp.Diagnostics.Services;
 using WinDiag.Mcp.Diagnostics.Signatures;
 using WinDiag.Mcp.Diagnostics.SystemInfo;
@@ -88,6 +89,21 @@ public static class ServerBuilder
             mcp.WithTools<ActivityCaptureTools>();
         }
 
+        // Separately gated, and off by default. Read-only mode is about not changing the machine;
+        // this is about whether the bearer token may replace an elevated binary and run it, which is a
+        // different question and a much bigger grant.
+        if (options.AllowSelfUpdate)
+        {
+            mcp.WithTools<SelfUpdateTools>();
+        }
+
+        // Separately gated, and off by default: this one lets the caller replace the server's own
+        // elevated binary, which is a different class of authority from anything else here.
+        if (options.AllowSelfUpdate && !options.ReadOnly)
+        {
+            mcp.WithTools<SelfUpdateTools>();
+        }
+
         return mcp;
     }
 
@@ -111,6 +127,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IAccessInspector, WindowsAccessInspector>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
+        services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
         services.AddSingletonIfMissing<FileLockTools, FileLockTools>();
         services.AddSingletonIfMissing<SystemTools, SystemTools>();
         services.AddSingletonIfMissing<ServiceTools, ServiceTools>();
@@ -121,6 +138,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<DumpTools, DumpTools>();
         services.AddSingletonIfMissing<ActivityCaptureTools, ActivityCaptureTools>();
         services.AddSingletonIfMissing<ActivityQueryTools, ActivityQueryTools>();
+        services.AddSingletonIfMissing<SelfUpdateTools, SelfUpdateTools>();
         return services;
     }
 

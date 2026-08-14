@@ -56,6 +56,15 @@ public sealed record WinDiagOptions
     /// </remarks>
     public string? Token { get; init; }
 
+    /// <summary>Whether the server may replace its own executable on request.</summary>
+    /// <remarks>
+    /// Off unless explicitly enabled, because it changes what the bearer token protects. Without it the
+    /// token guards diagnostics and capture; with it, the token guards the ability to replace an
+    /// elevated binary and run it. That is a different thing to hold, and it should be a deliberate
+    /// choice per deployment rather than a default.
+    /// </remarks>
+    public bool AllowSelfUpdate { get; init; }
+
     /// <summary>Where capture artifacts (dumps, activity traces) are written.</summary>
     /// <remarks>
     /// Defaults under the temp directory rather than beside the executable: the exe is often on a share
@@ -80,6 +89,7 @@ public sealed record WinDiagOptions
         return new WinDiagOptions
         {
             ReadOnly = ReadBoolean(environment, "WINDIAG_READ_ONLY", defaultValue: false),
+            AllowSelfUpdate = ReadBoolean(environment, "WINDIAG_ALLOW_SELF_UPDATE", defaultValue: false),
             ExternalToolTimeout = TimeSpan.FromSeconds(
                 ReadInt32(environment, "WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS", 120, min: 1, max: 3600)),
             MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 200, min: 1, max: 10_000),
@@ -93,7 +103,8 @@ public sealed record WinDiagOptions
     public string Describe() =>
         $"readOnly={ReadOnly}, externalToolTimeout={ExternalToolTimeout.TotalSeconds:0}s, " +
         $"maxResults={MaxResults}, httpBind={HttpBind ?? "(stdio)"}, " +
-        $"token={(Token is null ? "(generated)" : "(configured)")}, artifactDir={ArtifactDirectory}";
+        $"token={(Token is null ? "(generated)" : "(configured)")}, artifactDir={ArtifactDirectory}, " +
+        $"allowSelfUpdate={AllowSelfUpdate}";
 
     /// <summary>Redacted by construction — see the note on the type.</summary>
     public override string ToString() => Describe();
