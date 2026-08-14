@@ -141,6 +141,35 @@ public sealed class AutorunscCsvParserTests
     {
         Assert.Empty(AutorunscCsvParser.Parse(string.Empty));
     }
+
+    [Fact]
+    public void Splits_the_file_not_found_marker_out_of_the_image_path()
+    {
+        // Autoruns writes prose into a path field. Left there it matches no filter, attracts no
+        // signature verdict, and renders as though nothing were wrong.
+        var (path, missing) = AutorunscCsvParser.SplitImagePath("File not found: atmfd.dll");
+
+        Assert.True(missing);
+        Assert.Equal("atmfd.dll", path);
+    }
+
+    [Fact]
+    public void Leaves_a_real_path_alone()
+    {
+        var (path, missing) = AutorunscCsvParser.SplitImagePath(@"C:\Windows\System32dpclip.exe");
+
+        Assert.False(missing);
+        Assert.Equal(@"C:\Windows\System32dpclip.exe", path);
+    }
+
+    [Fact]
+    public void Reports_no_path_and_no_marker_for_an_empty_image_column()
+    {
+        var (path, missing) = AutorunscCsvParser.SplitImagePath("   ");
+
+        Assert.False(missing);
+        Assert.Null(path);
+    }
 }
 
 public sealed class AutostartCategoryTests
@@ -300,7 +329,8 @@ public sealed class AutostartRenderingTests
         bool verified = false,
         int unsigned = 0,
         bool truncated = false) =>
-        new(entries, entries.Count, truncated, elevated, verified, unsigned);
+        new(entries, entries.Count, truncated, elevated, verified, unsigned,
+            entries.Count(e => e.ImageMissing));
 
     [Fact]
     public void Leads_with_the_partial_results_warning_when_unelevated()
@@ -333,12 +363,32 @@ public sealed class AutostartRenderingTests
     }
 
     [Fact]
-    public void Names_an_entry_that_points_at_nothing()
+    public void Names_an_entry_whose_target_file_is_gone()
     {
-        // An autostart with no image on disk is a leftover hook, which is a finding rather than a gap.
+        // autorunsc signals this by writing "File not found: atmfd.dll" into the image column rather
+        // than leaving it empty, so before it was split out the entry rendered as though nothing were
+        // wrong -- quieter than a healthy one, which is backwards. Seen for real on the target: an
+        // Adobe Type Manager font-driver hook pointing at a DLL Windows removed years ago.
+        var orphan = Entry("Adobe Type Manager") with { ImagePath = "atmfd.dll", ImageMissing = true };
+
+        var summary = AutostartTools.Render(Result([orphan]), "all", null);
+
+        Assert.Contains("[FILE NOT FOUND]", summary);
+        Assert.Contains("1 entry points at a file that is not there", summary);
+    }
+
+    [Fact]
+    public void Says_nothing_about_missing_files_when_none_are_missing()
+    {
+        Assert.DoesNotContain("FILE NOT FOUND", AutostartTools.Render(Result([Entry("a")]), "all", null));
+    }
+
+    [Fact]
+    public void Names_an_entry_with_no_image_recorded_at_all()
+    {
         var orphan = Entry("stale") with { ImagePath = null };
 
-        Assert.Contains("(no image on disk)", AutostartTools.Render(Result([orphan]), "all", null));
+        Assert.Contains("(no image recorded)", AutostartTools.Render(Result([orphan]), "all", null));
     }
 
     [Fact]

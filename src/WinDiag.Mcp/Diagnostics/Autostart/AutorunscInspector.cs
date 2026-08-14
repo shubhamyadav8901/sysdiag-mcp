@@ -19,12 +19,15 @@ public sealed class AutorunscInspector : IAutostartInspector
         "simply absent from the report rather than reported as unreadable.";
 
     /// <summary>
-    /// A wider budget than the global default, because this is genuinely slow.
+    /// A wider budget than the global default, because this can outrun it.
     /// </summary>
     /// <remarks>
-    /// Every category with signature verification means an Authenticode check per entry, and there are
-    /// several hundred. The global 120s default is right for a handle search and wrong here; sharing it
-    /// would mean the tool reliably times out rather than reliably answers.
+    /// Every category with signature verification means an Authenticode check per entry. Measured on a
+    /// 32-bit Windows 10 VM, elevated: <c>-a * -s -u</c> took <strong>59s wall</strong> over roughly
+    /// 600 entries. That fits inside the 120s global default with little room, and a machine with more
+    /// installed -- or one checking revocation over a slow link -- would not. Ten minutes is chosen to
+    /// be clearly past any plausible case rather than tuned to this one; the tool answers in a minute
+    /// on the hardware it was measured on.
     /// </remarks>
     private static readonly TimeSpan VerificationBudget = TimeSpan.FromMinutes(10);
 
@@ -122,7 +125,12 @@ public sealed class AutorunscInspector : IAutostartInspector
 
             // Counted over the whole match, not the page: "3 unsigned" must not become "0 unsigned"
             // because the unsigned ones sorted past the row cap.
-            UnsignedCount: ordered.Count(e => e.SignatureVerdict == "Not verified"));
+            UnsignedCount: ordered.Count(e => e.SignatureVerdict == "Not verified"),
+
+            // Also counted over the whole match: an entry pointing at a file that is gone is a finding
+            // in its own right, and it is invisible to the signature count because there is nothing
+            // there to verify.
+            MissingImageCount: ordered.Count(e => e.ImageMissing));
     }
 
     /// <summary>

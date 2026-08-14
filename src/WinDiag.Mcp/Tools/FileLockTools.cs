@@ -193,7 +193,16 @@ public sealed class FileLockTools
             // Say which universe the search was empty over. "No files matched" and "nothing of any
             // kind matched" lead to different next steps, and reporting the first as the second sends
             // the caller away from a registry key that is sitting right there.
-            if (result.IncludedAllObjectTypes)
+            if (result.ProcessScoped)
+            {
+                // A PID was named, so there is no search term to widen and no point suggesting one.
+                builder.Append(result.IncludedAllObjectTypes
+                    ? $"{result.Query} holds no open handles of any object type, which for a live " +
+                      "process is unusual enough to suspect it has exited. Check process_list."
+                    : $"{result.Query} holds no open FILE handles. It may still hold registry keys, " +
+                      "sections or other objects -- call again with includeAllObjectTypes=true.");
+            }
+            else if (result.IncludedAllObjectTypes)
             {
                 builder.Append("No open handles of any object type matched '")
                     .Append(result.Query).Append("'.");

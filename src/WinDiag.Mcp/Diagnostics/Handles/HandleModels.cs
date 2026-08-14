@@ -21,6 +21,11 @@ public sealed record HandleEntry(
 /// fewer results. Carried explicitly so the rendering layer must account for it.
 /// </param>
 /// <param name="Truncated">True when more matches existed than the configured result cap.</param>
+/// <param name="ProcessScoped">
+/// True when the query named a PID rather than an object-name fragment. Carried because the advice
+/// attached to an empty result differs: telling someone who passed a PID to "call again with a
+/// broader search term" is instructions for a tool they did not use.
+/// </param>
 /// <param name="IncludedAllObjectTypes">
 /// False means only file references were searched. Carried so an empty result can say which universe
 /// it was empty over -- "no files matched" and "nothing of any kind matched" are different answers,
@@ -32,4 +37,5 @@ public sealed record HandleSearchResult(
     bool Elevated,
     bool Truncated,
     int TotalMatched,
-    bool IncludedAllObjectTypes);
+    bool IncludedAllObjectTypes,
+    bool ProcessScoped = false);

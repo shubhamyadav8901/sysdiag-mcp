@@ -71,7 +71,8 @@ public sealed class HandleExeInspector : IHandleInspector
         arguments.Add(ToolArgument.Flag("-v"));
         arguments.Add(ToolArgument.Caller(nameFragment));
 
-        return await RunAndParseAsync(arguments, nameFragment, includeAllObjectTypes, cancellationToken)
+        return await RunAndParseAsync(
+                arguments, nameFragment, includeAllObjectTypes, processScoped: false, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -105,6 +106,7 @@ public sealed class HandleExeInspector : IHandleInspector
                 arguments,
                 $"PID {processId}",
                 includeAllObjectTypes,
+                processScoped: true,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -113,6 +115,7 @@ public sealed class HandleExeInspector : IHandleInspector
         IReadOnlyList<ToolArgument> arguments,
         string query,
         bool includeAllObjectTypes,
+        bool processScoped,
         CancellationToken cancellationToken)
     {
         var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
@@ -133,7 +136,7 @@ public sealed class HandleExeInspector : IHandleInspector
             }
 
             return new HandleSearchResult(
-                query, [], _privileges.IsElevated, false, 0, includeAllObjectTypes);
+                query, [], _privileges.IsElevated, false, 0, includeAllObjectTypes, processScoped);
         }
 
         var entries = HandleCsvParser.Parse(result.StandardOutput);
@@ -145,6 +148,7 @@ public sealed class HandleExeInspector : IHandleInspector
             Elevated: _privileges.IsElevated,
             Truncated: truncated,
             TotalMatched: entries.Count,
-            IncludedAllObjectTypes: includeAllObjectTypes);
+            IncludedAllObjectTypes: includeAllObjectTypes,
+            ProcessScoped: processScoped);
     }
 }

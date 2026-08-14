@@ -47,6 +47,9 @@ internal static class AutorunscCsvParser
     private static readonly string[] Required =
         [LocationColumn, EntryColumn, CategoryColumn, ImagePathColumn];
 
+    /// <summary>What Autoruns writes into the image column when the entry points at nothing.</summary>
+    private const string FileNotFoundPrefix = "File not found:";
+
     private const string VerifiedPrefix = "(Verified)";
     private const string NotVerifiedPrefix = "(Not verified)";
 
@@ -145,6 +148,8 @@ internal static class AutorunscCsvParser
         var (verdict, signer) = SplitVerdict(
             Field(fields, columns, SignerColumn) ?? Field(fields, columns, CompanyColumn));
 
+        var (image, missing) = SplitImagePath(Field(fields, columns, ImagePathColumn));
+
         return new AutostartEntry(
             Category: Field(fields, columns, CategoryColumn) ?? "(unknown)",
             Location: Field(fields, columns, LocationColumn) ?? "(unknown)",
@@ -157,11 +162,38 @@ internal static class AutorunscCsvParser
             Profile: Field(fields, columns, ProfileColumn),
             Description: Field(fields, columns, DescriptionColumn),
             Company: signer,
-            ImagePath: Field(fields, columns, ImagePathColumn),
+            ImagePath: image,
             Version: Field(fields, columns, VersionColumn),
             LaunchString: Field(fields, columns, LaunchStringColumn),
             SignatureVerdict: verdict,
-            Timestamp: ParseTimestamp(Field(fields, columns, TimeColumn)));
+            Timestamp: ParseTimestamp(Field(fields, columns, TimeColumn)),
+            ImageMissing: missing);
+    }
+
+    /// <summary>Separates "the file is not there" from the path it is not there at.</summary>
+    /// <remarks>
+    /// Autoruns signals a broken entry by writing <c>File not found: atmfd.dll</c> into the image
+    /// column rather than by leaving it empty. Left as-is that is prose in a path field: no filter
+    /// matches it, no signature verdict attaches to it, and the entry renders more quietly than a
+    /// healthy one -- which is exactly backwards, because a hook pointing at nothing is a finding.
+    /// </remarks>
+    internal static (string? Path, bool Missing) SplitImagePath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return (null, false);
+        }
+
+        var text = value.Trim();
+
+        if (!text.StartsWith(FileNotFoundPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return (text, false);
+        }
+
+        var remainder = text[FileNotFoundPrefix.Length..].Trim();
+
+        return (remainder.Length == 0 ? null : remainder, true);
     }
 
     /// <summary>Separates Autoruns' signature verdict from the publisher name it is prefixed to.</summary>

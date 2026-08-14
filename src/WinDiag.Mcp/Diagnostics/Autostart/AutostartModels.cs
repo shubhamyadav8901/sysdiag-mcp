@@ -6,9 +6,14 @@ namespace WinDiag.Mcp.Diagnostics.Autostart;
 /// <param name="Entry">The value or task name within that location.</param>
 /// <param name="Enabled">False for an entry that is present but switched off.</param>
 /// <param name="ImagePath">
-/// The file that would run. Null when Autoruns could not resolve one, which is itself worth seeing:
-/// an entry pointing at nothing is a leftover, and an entry Autoruns calls "File not found" is the
-/// classic shape of an uninstalled product leaving a hook behind.
+/// The file that would run. Null when Autoruns reported none at all.
+/// </param>
+/// <param name="ImageMissing">
+/// True when the entry names a file that is not there. Autoruns reports this by writing
+/// <c>File not found: &lt;path&gt;</c> into the image column rather than by leaving it empty, so
+/// without splitting it out the field is prose that no path comparison matches and no filter finds —
+/// and the entry renders more quietly than a healthy one, which is backwards. An autostart hook
+/// pointing at nothing is the classic shape of an uninstalled product that did not clean up.
 /// </param>
 /// <param name="SignatureVerdict">Null unless signature verification was requested.</param>
 /// <param name="Timestamp">
@@ -27,7 +32,8 @@ public sealed record AutostartEntry(
     string? Version,
     string? LaunchString,
     string? SignatureVerdict,
-    DateTimeOffset? Timestamp);
+    DateTimeOffset? Timestamp,
+    bool ImageMissing = false);
 
 /// <summary>What to ask Autoruns for.</summary>
 /// <param name="Categories">
@@ -57,7 +63,8 @@ public sealed record AutostartAuditResult(
     bool Truncated,
     bool Elevated,
     bool SignaturesVerified,
-    int UnsignedCount);
+    int UnsignedCount,
+    int MissingImageCount = 0);
 
 /// <summary>Lists what is configured to start on its own.</summary>
 public interface IAutostartInspector
