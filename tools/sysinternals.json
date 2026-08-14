@@ -1,0 +1,65 @@
+{
+  "$comment": [
+    "Pinned Sysinternals binaries that deploy-target.ps1 stages beside the server.",
+    "download.sysinternals.com always serves the latest build, so these hashes are how a version",
+    "change is DETECTED rather than silently accepted. When upstream ships an update the script",
+    "stops and prints the new hash; re-run it with -AcceptUpstreamChange to rewrite this file, and",
+    "commit that as a deliberate version bump.",
+    "ARM64 (*64a.exe) builds are omitted: targets are x86 and x64 VMs."
+  ],
+  "baseUrl": "https://download.sysinternals.com/files/",
+  "pinnedOn": "2026-08-14",
+  "packages": [
+    {
+      "package": "Handle.zip",
+      "files": [
+        {
+          "name": "handle.exe",
+          "version": "5.0",
+          "sizeBytes": 761240,
+          "sha256": "84C22579CA09F4FD8A8D9F56A6348C4AD2A92D4722C9F1213DD73C2F68A381E3"
+        },
+        {
+          "name": "handle64.exe",
+          "version": "5.0",
+          "sizeBytes": 416144,
+          "sha256": "24BAFCC570CC9BBB6B6E6652A57A519E0464E3996891AABA6F55299CCE20B04F"
+        }
+      ]
+    },
+    {
+      "package": "ProcessMonitor.zip",
+      "files": [
+        {
+          "name": "Procmon.exe",
+          "version": "4.05",
+          "sizeBytes": 4199200,
+          "sha256": "A21DC2085F673704F336EE771C61EFC0B70BB7B1A4850F89FE44AB8EF95B3A27"
+        },
+        {
+          "name": "Procmon64.exe",
+          "version": "4.05",
+          "sizeBytes": 2208024,
+          "sha256": "F792C9BE7ECDB5C1EA0B852CEE28AE8093C84E69D9206E307A2A8CD2DF9C85AD"
+        }
+      ]
+    },
+    {
+      "package": "Autoruns.zip",
+      "files": [
+        {
+          "name": "autorunsc.exe",
+          "version": "14.3",
+          "sizeBytes": 1317184,
+          "sha256": "A2394A11272AE38E7FB6EA862E783DAA6D704A3D9C73A51DFE978B7692DF6B1F"
+        },
+        {
+          "name": "autorunsc64.exe",
+          "version": "14.3",
+          "sizeBytes": 1460024,
+          "sha256": "093D1C6B91D280C9644635C667753E0AA0E78C656EB4082147BF30364787D96F"
+        }
+      ]
+    }
+  ]
+}

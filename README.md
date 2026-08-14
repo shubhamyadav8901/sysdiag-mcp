@@ -77,6 +77,33 @@ do not. Rather than remoting into it, the server runs *there* and Claude Code co
 same pattern as `dbgsrv`, but with no remoting layer, no stored credentials, and nothing that
 resembles a lateral-movement primitive.
 
+### One command
+
+`tools/deploy-target.ps1` does the whole thing from the base machine:
+
+```
+.\tools\deploy-target.ps1 -Target 192.168.32.76 -Token $token
+```
+
+It asks the target which architecture it is, publishes that build, downloads the Sysinternals binaries
+pinned in `tools/sysinternals.json`, verifies each one's SHA-256 *and* its Microsoft signature, copies
+everything over the admin share re-checking the hash after each copy, records what it staged in
+`windiag-staged.json` on the target, and then calls `update_self` and waits for the server to come
+back. It finishes by printing any tool that is not fully available.
+
+Without `-Token` it stages everything and prints the command to start the server by hand — which is
+the first-run case, since there is nothing running yet to swap.
+
+Two behaviours are deliberate and worth knowing:
+
+- **A Sysinternals version change stops the deploy.** `download.sysinternals.com` always serves the
+  latest build, so a pinned hash is how a version change gets *noticed* rather than absorbed. Re-run
+  with `-AcceptUpstreamChange` to re-pin, and commit that as a deliberate bump.
+- **`windiag-staged.json` is compared before it is rewritten.** A file someone replaced on the target
+  by hand is reported as drift, not silently overwritten. That report is the point of the file.
+
+The rest of this section is what the script automates, and what to do when it cannot be used.
+
 **1. Publish one file.** Self-contained, so the target needs no .NET runtime:
 
 ```
