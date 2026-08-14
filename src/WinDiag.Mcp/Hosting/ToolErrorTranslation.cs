@@ -8,6 +8,7 @@ using WinDiag.Mcp.Diagnostics.Dumps;
 using WinDiag.Mcp.Diagnostics.EventLogs;
 using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Diagnostics.Locks;
+using WinDiag.Mcp.Diagnostics.Modules;
 using WinDiag.Mcp.Diagnostics.Network;
 using WinDiag.Mcp.Diagnostics.Pipes;
 using WinDiag.Mcp.Diagnostics.SelfUpdate;
@@ -33,8 +34,15 @@ namespace WinDiag.Mcp.Hosting;
 public static class ToolErrorTranslation
 {
     /// <summary>Failures that represent a diagnosis, not a defect, and are safe to report verbatim.</summary>
-    private static bool IsDiagnostic(Exception exception) => exception is
-        ExternalToolException          // a Sysinternals tool is missing, timed out, or was refused
+    /// <remarks>
+    /// <c>ToolErrorTranslationTests.Translates_every_diagnostic_exception_this_assembly_defines</c>
+    /// reflects over the assembly and fails if a new exception type is not listed here. Without that
+    /// guard the omission is invisible until someone triggers the failure on a target and gets back
+    /// "An error occurred invoking 'x'." -- which is how <see cref="ModuleQueryException"/> and
+    /// <see cref="ToolArchitectureException"/> both got missed.
+    /// </remarks>
+    internal static bool IsDiagnostic(Exception exception) => exception is
+        ExternalToolException          // missing, wrong architecture, timed out, or refused
         or LockQueryException
         or AccessQueryException
         or EventLogQueryException
@@ -42,6 +50,7 @@ public static class ToolErrorTranslation
         or NamedPipeQueryException
         or DumpCaptureException
         or ActivityCaptureException
+        or ModuleQueryException
         or ProcessControlException
         or ServiceControlException
         or SelfUpdateRejectedException

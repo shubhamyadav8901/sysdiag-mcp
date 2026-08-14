@@ -1,3 +1,4 @@
+using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Control;
 using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Hosting;
@@ -74,4 +75,39 @@ public sealed class ToolErrorTranslationTests
             Assert.False(string.IsNullOrWhiteSpace(ToolErrorTranslation.Describe(ex)));
         }
     }
+
+    /// <summary>
+    /// Every exception this assembly defines must survive the filter with its message intact.
+    /// </summary>
+    /// <remarks>
+    /// The diagnostic list is hand-maintained and its omissions are invisible: an unlisted type does
+    /// not fail the build or a test, it just reaches a caller on a target machine as "An error occurred
+    /// invoking 'x'." -- with the sentence that would have told them what to do discarded. Both
+    /// ModuleQueryException and ToolArchitectureException were missed exactly that way, and were only
+    /// noticed because a tool was exercised by hand.
+    /// </remarks>
+    [Fact]
+    public void Translates_every_diagnostic_exception_this_assembly_defines()
+    {
+        var undeclared = typeof(ToolErrorTranslation).Assembly.GetTypes()
+            .Where(type => typeof(Exception).IsAssignableFrom(type) && !type.IsAbstract)
+            // Startup configuration is validated before any transport exists, so it can never reach a
+            // tool call. Everything else here can.
+            .Where(type => type != typeof(ConfigurationException))
+            .Where(type => !ToolErrorTranslation.IsDiagnostic(Instantiate(type)))
+            .Select(type => type.Name)
+            .ToArray();
+
+        Assert.Empty(undeclared);
+    }
+
+    /// <summary>Produces an instance of an exception type without running a constructor.</summary>
+    /// <remarks>
+    /// The filter's decision is a type test, so the object only has to exist. Calling constructors
+    /// instead would make this test a survey of constructor signatures -- it already failed once on
+    /// ToolTimeoutException, which takes a TimeSpan -- and every such failure would be about the test
+    /// rather than about the coverage it is checking.
+    /// </remarks>
+    private static Exception Instantiate(Type type) =>
+        (Exception)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
 }

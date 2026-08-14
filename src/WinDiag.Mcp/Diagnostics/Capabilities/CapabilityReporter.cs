@@ -37,7 +37,12 @@ public sealed class CapabilityReporter : ICapabilityReporter
 {
     /// <summary>What each tool needs in order to answer completely.</summary>
     /// <param name="Backing">Implementation, for the reader's benefit.</param>
-    /// <param name="RequiredExecutable">External binary without which the tool cannot run at all.</param>
+    /// <param name="RequiredExecutable">
+    /// Sysinternals tool without which this cannot run at all, given as the BASE name -- <c>handle</c>,
+    /// not <c>handle.exe</c>. The bitness suffix is not part of the requirement because which build is
+    /// correct depends on the machine being asked, and reporting on the wrong one is how a target ends
+    /// up running a build that answers "nothing found" to everything.
+    /// </param>
     /// <param name="ElevationNote">
     /// Set when running unelevated silently reduces coverage rather than failing. Null when elevation
     /// makes no difference.
@@ -59,7 +64,7 @@ public sealed class CapabilityReporter : ICapabilityReporter
             ["who_locks_path"] = new("Windows Restart Manager", null, null),
             ["path_handle_search"] = new(
                 "Sysinternals handle.exe",
-                "handle.exe",
+                "handle",
                 "returns a partial list, silently omitting handles held by other users and by SYSTEM"),
             ["system_overview"] = new("Win32 and .NET runtime information", null, null),
             ["capabilities"] = new("this reporter", null, null),
@@ -81,7 +86,7 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 "can only dump processes owned by the current user; another user's or SYSTEM's will fail"),
             ["capture_activity"] = new(
                 "Sysinternals Procmon, batch mode",
-                "Procmon.exe",
+                "Procmon",
                 null,
                 RequiresElevation: true),
             ["query_activity"] = new("streaming read of a saved capture", null, null),
@@ -132,13 +137,22 @@ public sealed class CapabilityReporter : ICapabilityReporter
 
     private ToolCapability Evaluate(string tool, Requirement requirement)
     {
-        if (requirement.RequiredExecutable is { } executable && !_locator.TryResolve(executable, out _))
+        string? resolvedPath = null;
+
+        if (requirement.RequiredExecutable is { } baseName)
         {
-            return new ToolCapability(
-                tool,
-                requirement.Backing,
-                CapabilityStatus.Unavailable,
-                $"{executable} is not installed on this machine.");
+            // Same decision the tool itself will make when called, so this cannot report Available for
+            // a build the tool would then refuse -- or Unavailable because only the correctly-suffixed
+            // build is present.
+            var choice = SysinternalsArchitecture.Choose(_locator, baseName, ArchitectureSymptom);
+
+            if (choice.ExecutableName is null)
+            {
+                return new ToolCapability(
+                    tool, requirement.Backing, CapabilityStatus.Unavailable, choice.Problem!);
+            }
+
+            resolvedPath = choice.Path;
         }
 
         if (requirement.RequiresElevation && !_privileges.IsElevated)
@@ -160,6 +174,24 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 $"Not elevated, so this tool {note}. Restart the server from an elevated terminal.");
         }
 
-        return new ToolCapability(tool, requirement.Backing, CapabilityStatus.Available, "Ready.");
+        // Naming the resolved path answers the question this report exists for: not "is a copy of
+        // handle.exe somewhere on this machine" but "which one will you run". Two copies of a
+        // Sysinternals tool on one box is the normal case, not the exotic one.
+        return new ToolCapability(
+            tool,
+            requirement.Backing,
+            CapabilityStatus.Available,
+            resolvedPath is null ? "Ready." : $"Ready, using {resolvedPath}.");
     }
+
+    /// <summary>
+    /// Generic stand-in for the per-tool symptom text.
+    /// </summary>
+    /// <remarks>
+    /// The tools themselves pass what their own 32-bit build actually does wrong, because that is what
+    /// makes the refusal actionable. This report only needs to say the build is unusable; if a caller
+    /// wants the detail they will get it the moment they call the tool.
+    /// </remarks>
+    private const string ArchitectureSymptom =
+        "it returns an empty or truncated answer rather than failing, which reads as a clean result.";
 }

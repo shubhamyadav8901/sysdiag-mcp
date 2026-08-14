@@ -10,6 +10,74 @@ internal sealed class FakePrivilegeProbe(bool isElevated) : IPrivilegeProbe
     public bool IsElevated { get; } = isElevated;
 }
 
+/// <summary>
+/// Resolves a fixed set of tool names to a real binary of this machine's own architecture.
+/// </summary>
+/// <remarks>
+/// The path has to be a genuine native image, not a placeholder: architecture-aware resolution reads
+/// the PE machine type of whatever it resolves, and a fabricated path would either fail the read or --
+/// worse, if pointed at a managed assembly, which is stamped I386 even when it runs 64-bit -- be
+/// reported as the wrong architecture. <c>cmd.exe</c> from the system directory always matches the OS.
+/// </remarks>
+internal sealed class FakeToolLocator(params string[] resolvableNames) : IToolLocator
+{
+    private static readonly string NativeImage = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+
+    private readonly HashSet<string> _names = new(resolvableNames, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Every name asked for, so a test can assert which build was looked for first.</summary>
+    public List<string> Requested { get; } = [];
+
+    public string Resolve(string executableName) =>
+        TryResolve(executableName, out var path) ? path : throw new ToolNotFoundException(executableName);
+
+    public bool TryResolve(string executableName, out string fullPath)
+    {
+        Requested.Add(executableName);
+
+        if (_names.Contains(executableName))
+        {
+            fullPath = NativeImage;
+            return true;
+        }
+
+        fullPath = string.Empty;
+        return false;
+    }
+}
+
+/// <summary>
+/// A machine where only the 32-bit build of a tool was staged.
+/// </summary>
+/// <remarks>
+/// Points at the real <c>SysWOW64\cmd.exe</c>, which is genuinely an I386 image on 64-bit Windows, so
+/// the PE machine check under test reads a true header rather than a fixture someone has to keep
+/// honest. Resolves only the unsuffixed name, which is exactly the half-staged state this guards.
+/// </remarks>
+internal sealed class FixedArchitectureLocator(ushort machine) : IToolLocator
+{
+    private static readonly string ThirtyTwoBitImage =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SysWOW64", "cmd.exe");
+
+    public string Resolve(string executableName) =>
+        TryResolve(executableName, out var path) ? path : throw new ToolNotFoundException(executableName);
+
+    public bool TryResolve(string executableName, out string fullPath)
+    {
+        if (executableName.Contains("64", StringComparison.Ordinal))
+        {
+            fullPath = string.Empty;
+            return false;
+        }
+
+        fullPath = machine == PeImageHeader.MachineI386
+            ? ThirtyTwoBitImage
+            : Path.Combine(Environment.SystemDirectory, "cmd.exe");
+
+        return File.Exists(fullPath);
+    }
+}
+
 internal sealed class FakeLockInspector(LockQueryResult result) : ILockInspector
 {
     public LockQueryResult WhoLocks(string path, CancellationToken cancellationToken) =>

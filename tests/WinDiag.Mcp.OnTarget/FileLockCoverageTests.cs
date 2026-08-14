@@ -31,6 +31,7 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
     private static IHandleInspector Handles() =>
         new HandleExeInspector(
             new ExternalToolRunner(new ToolLocator(), new WinDiagOptions(), NullLogger<ExternalToolRunner>.Instance),
+            new ToolLocator(),
             new WindowsPrivilegeProbe(),
             new WinDiagOptions());
 

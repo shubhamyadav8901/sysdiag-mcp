@@ -1,4 +1,5 @@
 using WinDiag.Mcp.Configuration;
+using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Locks;
@@ -132,17 +133,76 @@ public sealed class FileLockToolsTests
     private const string SampleCsv =
         "Process,PID,User,Handle,Type,Share Flags,Name,Access\r\napp.exe,7,File,CONTOSO\\u,0x9,C:\\t\r\n";
 
+    /// <summary>A machine with the complete Handle download staged, which is what deploy-target.ps1 leaves.</summary>
+    private static FakeToolLocator Locator() => new("handle.exe", "handle64.exe");
+
+    /// <summary>The build that must be chosen on the machine this suite is running on.</summary>
+    private static string ExpectedHandleBuild =>
+        Environment.Is64BitOperatingSystem ? "handle64.exe" : "handle.exe";
+
     [Fact]
     public async Task File_only_search_omits_the_expensive_all_types_flag()
     {
         var runner = new StubExternalToolRunner(SampleCsv);
-        var inspector = new HandleExeInspector(runner, new FakePrivilegeProbe(true), new WinDiagOptions());
+        var inspector = new HandleExeInspector(
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
 
         await inspector.SearchAsync("Fonts", includeAllObjectTypes: false, CancellationToken.None);
 
         var (executable, argv) = Assert.Single(runner.Invocations);
-        Assert.Equal("handle.exe", executable);
+        Assert.Equal(ExpectedHandleBuild, executable);
         Assert.Equal(["-accepteula", "-nobanner", "-u", "-v", "Fonts"], argv);
+    }
+
+    [Fact]
+    public async Task Prefers_the_sixty_four_bit_build_where_the_thirty_two_bit_one_would_find_nothing()
+    {
+        // Measured, both unelevated on the same x64 box, same filter:
+        //   handle.exe   -u -v System32  ->  "No matching handles found."
+        //   handle64.exe -u -v System32  ->  526 rows
+        // The 32-bit build does not fail, it answers wrongly -- and an empty handle search reads as
+        // "nothing holds this file", which is the conclusion that ends an investigation.
+        var runner = new StubExternalToolRunner(SampleCsv);
+        var locator = Locator();
+        var inspector = new HandleExeInspector(
+            runner, locator, new FakePrivilegeProbe(true), new WinDiagOptions());
+
+        await inspector.SearchAsync("Fonts", includeAllObjectTypes: false, CancellationToken.None);
+
+        if (Environment.Is64BitOperatingSystem)
+        {
+            Assert.Equal("handle64.exe", Assert.Single(runner.Invocations).Executable);
+            Assert.Contains("handle64.exe", locator.Requested);
+        }
+        else
+        {
+            // On 32-bit Windows there is no 64-bit build to want, and asking for one would be noise.
+            Assert.Equal("handle.exe", Assert.Single(runner.Invocations).Executable);
+            Assert.DoesNotContain("handle64.exe", locator.Requested);
+        }
+    }
+
+    [Fact]
+    public async Task Refuses_a_thirty_two_bit_handle_on_sixty_four_bit_windows()
+    {
+        if (!Environment.Is64BitOperatingSystem)
+        {
+            return; // Nothing to refuse: the 32-bit build is the right one here.
+        }
+
+        // Only the 32-bit build staged. Refusing beats running it, because running it returns an empty
+        // result that is indistinguishable from a genuine "nothing holds this path".
+        var runner = new StubExternalToolRunner(SampleCsv);
+        var thirtyTwoBit = new FixedArchitectureLocator(PeImageHeader.MachineI386);
+        var inspector = new HandleExeInspector(
+            runner, thirtyTwoBit, new FakePrivilegeProbe(true), new WinDiagOptions());
+
+        var ex = await Assert.ThrowsAsync<ToolArchitectureException>(
+            () => inspector.SearchAsync("Fonts", includeAllObjectTypes: false, CancellationToken.None));
+
+        Assert.Contains("handle64.exe", ex.Message);
+        Assert.Contains("No matching handles found", ex.Message);
+        Assert.Empty(runner.Invocations);
     }
 
     [Fact]
@@ -152,7 +212,8 @@ public sealed class FileLockToolsTests
         // description promises. It is opt-in because a machine-wide -a search had produced 223 rows,
         // all still Files, after 6m40s.
         var runner = new StubExternalToolRunner(SampleCsv);
-        var inspector = new HandleExeInspector(runner, new FakePrivilegeProbe(true), new WinDiagOptions());
+        var inspector = new HandleExeInspector(
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
 
         await inspector.SearchAsync("CurrentVersion", includeAllObjectTypes: true, CancellationToken.None);
 
@@ -190,7 +251,8 @@ public sealed class FileLockToolsTests
         // handle.exe -c closes a handle and can destabilise the machine. This must never be reachable
         // from a caller-supplied value.
         var runner = new StubExternalToolRunner();
-        var inspector = new HandleExeInspector(runner, new FakePrivilegeProbe(true), new WinDiagOptions());
+        var inspector = new HandleExeInspector(
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
 
         await Assert.ThrowsAsync<UnsafeArgumentException>(
             () => inspector.SearchAsync("-c", includeAllObjectTypes: false, CancellationToken.None));

@@ -410,52 +410,13 @@ public sealed class ProcmonActivityInspector : IActivityInspector
     /// <para>Hence the PE machine check rather than trusting the file name: a name cannot distinguish
     /// the two, and getting it wrong produces a plausible wrong answer instead of an error.</para>
     /// </remarks>
-    private string ResolveProcmon()
-    {
-        if (Environment.Is64BitOperatingSystem && _locator.TryResolve("Procmon64.exe", out _))
-        {
-            return "Procmon64.exe";
-        }
-
-        if (!_locator.TryResolve("Procmon.exe", out var path))
-        {
-            throw new ToolNotFoundException(Environment.Is64BitOperatingSystem ? "Procmon64.exe" : "Procmon.exe");
-        }
-
-        if (Environment.Is64BitOperatingSystem && ReadPeMachine(path) == ImageFileMachineI386)
-        {
-            throw new ActivityCaptureException(
-                $"'{path}' is the 32-bit Process Monitor, which cannot capture on 64-bit Windows — it " +
-                "only extracts and launches the 64-bit build, then exits. Driving it would look like an " +
-                "instant capture over a trace that is still being written. Place Procmon64.exe alongside " +
-                "it (it ships in the same ProcessMonitor.zip) or install the Sysinternals Suite package.");
-        }
-
-        return "Procmon.exe";
-    }
-
-    private const ushort ImageFileMachineI386 = 0x014C;
-
-    /// <summary>Reads the PE header's machine type. Returns 0 when the file cannot be read as a PE.</summary>
-    private static ushort ReadPeMachine(string path)
-    {
-        try
-        {
-            using var stream = File.OpenRead(path);
-            using var reader = new BinaryReader(stream);
-
-            stream.Position = 0x3C;
-            stream.Position = reader.ReadInt32() + 4; // past the "PE\0\0" signature
-            return reader.ReadUInt16();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or EndOfStreamException
-                                       or ArgumentOutOfRangeException)
-        {
-            // Unreadable architecture is not itself a reason to refuse; the capture will report a real
-            // failure if there is one.
-            return 0;
-        }
-    }
+    private string ResolveProcmon() =>
+        SysinternalsArchitecture.ResolveName(
+            _locator,
+            "Procmon",
+            "it only extracts and launches the 64-bit build and then exits, so the capture looks like it " +
+            "finished in a second over a trace that is still being written, and reports 0 events as a " +
+            "success.");
 
     /// <summary>
     /// Resolves the Procmon configuration for <c>/LoadConfig</c>, preferring one placed on disk.

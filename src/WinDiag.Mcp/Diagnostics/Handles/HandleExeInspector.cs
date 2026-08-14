@@ -11,15 +11,35 @@ namespace WinDiag.Mcp.Diagnostics.Handles;
 /// </remarks>
 public sealed class HandleExeInspector : IHandleInspector
 {
-    internal const string Executable = "handle.exe";
+    internal const string BaseName = "handle";
+    internal const string Executable = BaseName + ".exe";
+
+    /// <summary>
+    /// What the 32-bit build does on 64-bit Windows, for the refusal message.
+    /// </summary>
+    /// <remarks>
+    /// Measured on an x64 workstation: <c>handle.exe -u -v System32</c> printed "No matching handles
+    /// found." while <c>handle64.exe</c> with the same arguments returned 526 rows. That is the worst
+    /// possible failure for this tool -- an empty handle search reads as "nothing holds this file",
+    /// which is the answer that ends an investigation.
+    /// </remarks>
+    private const string WrongArchitectureSymptom =
+        "it reports 'No matching handles found.' for every search instead of failing, which reads as " +
+        "'nothing holds this file' and would end the investigation there.";
 
     private readonly IExternalToolRunner _runner;
+    private readonly IToolLocator _locator;
     private readonly IPrivilegeProbe _privileges;
     private readonly WinDiagOptions _options;
 
-    public HandleExeInspector(IExternalToolRunner runner, IPrivilegeProbe privileges, WinDiagOptions options)
+    public HandleExeInspector(
+        IExternalToolRunner runner,
+        IToolLocator locator,
+        IPrivilegeProbe privileges,
+        WinDiagOptions options)
     {
         _runner = runner;
+        _locator = locator;
         _privileges = privileges;
         _options = options;
     }
@@ -50,8 +70,10 @@ public sealed class HandleExeInspector : IHandleInspector
         arguments.Add(ToolArgument.Flag("-v"));
         arguments.Add(ToolArgument.Caller(nameFragment));
 
+        var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
+
         var result = await _runner
-            .RunAsync(Executable, arguments, ExternalToolPolicy.ConsoleTool, cancellationToken)
+            .RunAsync(executable, arguments, ExternalToolPolicy.ConsoleTool, cancellationToken)
             .ConfigureAwait(false);
 
         // handle.exe reports "no matches" via empty output, not an exit code, and writes access-denied
