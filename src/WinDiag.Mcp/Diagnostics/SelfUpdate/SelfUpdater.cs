@@ -158,16 +158,33 @@ public sealed class SelfUpdater : ISelfUpdater
             .AppendLine($"tasklist /FI \"PID eq {Environment.ProcessId}\" 2>nul | find \"{Environment.ProcessId}\" >nul")
             .AppendLine("if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto waitforexit)")
             .AppendLine($">>\"{log}\" echo [%time%] server exited; re-verifying")
+
+            // Cleared first, and deliberately. "if not defined" never assigns when the variable is
+            // already set, and this helper inherits its environment from the server -- which was itself
+            // started by the PREVIOUS helper, which left this variable set. Without the reset each
+            // update compares against the hash from the update before it, so the mechanism poisons
+            // itself forward and every second update refuses a mismatch that is not real.
+            .AppendLine("set \"WINDIAG_STAGED_HASH=\"")
             .AppendLine($"for /f \"skip=1 tokens=* delims=\" %%H in ('certutil -hashfile \"{staged}\" SHA256') do (")
-            .AppendLine("  if not defined GOT set \"GOT=%%H\"")
+            .AppendLine("  if not defined WINDIAG_STAGED_HASH set \"WINDIAG_STAGED_HASH=%%H\"")
             .AppendLine(")")
-            .AppendLine("set \"GOT=!GOT: =!\"")
-            .AppendLine($"if /i not \"!GOT!\"==\"{sha256}\" (")
-            .AppendLine($"  >>\"{log}\" echo [%time%] ABORT hash changed: !GOT!")
+            .AppendLine("set \"WINDIAG_STAGED_HASH=!WINDIAG_STAGED_HASH: =!\"")
+            .AppendLine($"if /i not \"!WINDIAG_STAGED_HASH!\"==\"{sha256}\" (")
+            .AppendLine($"  >>\"{log}\" echo [%time%] ABORT hash mismatch: !WINDIAG_STAGED_HASH!")
+
+            // A failed update must NOT leave the machine with no server. The live executable is
+            // untouched at this point, so put it back up -- otherwise a refused update costs a trip to
+            // the console, which is the exact thing this mechanism exists to avoid.
+            .AppendLine($"  >>\"{log}\" echo [%time%] restarting the existing build instead")
+            .AppendLine($"  start \"windiag\" \"{live}\" {arguments}")
             .AppendLine("  exit /b 2")
             .AppendLine(")")
             .AppendLine($"move /y \"{staged}\" \"{live}\" >nul")
-            .AppendLine($"if errorlevel 1 (>>\"{log}\" echo [%time%] ABORT move failed & exit /b 3)")
+            .AppendLine("if errorlevel 1 (")
+            .AppendLine($"  >>\"{log}\" echo [%time%] ABORT move failed; restarting the existing build")
+            .AppendLine($"  start \"windiag\" \"{live}\" {arguments}")
+            .AppendLine("  exit /b 3")
+            .AppendLine(")")
             .AppendLine($">>\"{log}\" echo [%time%] swapped; relaunching")
             .AppendLine($"start \"windiag\" \"{live}\" {arguments}")
             .AppendLine($">>\"{log}\" echo [%time%] done")

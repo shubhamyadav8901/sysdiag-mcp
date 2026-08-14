@@ -16,6 +16,7 @@ using WinDiag.Mcp.Diagnostics.SelfUpdate;
 using WinDiag.Mcp.Diagnostics.Services;
 using WinDiag.Mcp.Diagnostics.Signatures;
 using WinDiag.Mcp.Diagnostics.SystemInfo;
+using WinDiag.Mcp.Hosting;
 using WinDiag.Mcp.Tools;
 
 namespace WinDiag.Mcp;
@@ -69,6 +70,9 @@ public static class ServerBuilder
 
         var mcp = services
             .AddMcpServer()
+
+            // Before any tool: a refusal the caller cannot read is a refusal they will retry into.
+            .WithReadableToolErrors()
             .WithTools<FileLockTools>()
             .WithTools<SystemTools>()
             .WithTools<ServiceTools>()
