@@ -256,6 +256,14 @@ public sealed class ProcmonActivityInspector : IActivityInspector
             ToolArgument.Flag(config),
             ToolArgument.Flag("/OpenLog"),
             ToolArgument.Flag(pml),
+
+            // Without this the configuration's exclusions are loaded and then ignored: Procmon's filter
+            // is a DISPLAY filter, so /SaveAs writes every captured event regardless. Measured on a
+            // real capture before this flag was added - 126,015 of 228,949 exported events were
+            // Procmon observing itself, including 1,077 operations on its own backing file, and 25,322
+            // were the IRP_MJ_ traffic the stock filter excludes.
+            ToolArgument.Flag("/SaveApplyFilter"),
+
             ToolArgument.Flag("/SaveAs"),
             ToolArgument.Flag(csv)
         ];
