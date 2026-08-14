@@ -85,6 +85,15 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 null,
                 RequiresElevation: true),
             ["query_activity"] = new("streaming read of a saved capture", null, null),
+            ["process_control"] = new(
+                "Win32 process control",
+                null,
+                "can only act on processes owned by the current user"),
+            ["service_control"] = new(
+                "Service Control Manager",
+                null,
+                "cannot start or stop most services without administrator rights",
+                RequiresElevation: false),
             ["update_self"] = new(
                 "hash-verified replacement of this server's own executable",
                 null,

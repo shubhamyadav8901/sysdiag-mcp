@@ -87,6 +87,7 @@ public static class ServerBuilder
         {
             mcp.WithTools<DumpTools>();
             mcp.WithTools<ActivityCaptureTools>();
+            mcp.WithTools<ControlTools>();
         }
 
         // Separately gated, and off by default. Read-only mode is about not changing the machine;
@@ -128,6 +129,12 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
+        // Fully qualified: Diagnostics.Control.IServiceController would otherwise collide with
+        // System.ServiceProcess.ServiceController, which the services inspector already brings in.
+        services.AddSingletonIfMissing<
+            Diagnostics.Control.IProcessController, Diagnostics.Control.WindowsProcessController>();
+        services.AddSingletonIfMissing<
+            Diagnostics.Control.IServiceController, Diagnostics.Control.WindowsServiceControllerAdapter>();
         services.AddSingletonIfMissing<FileLockTools, FileLockTools>();
         services.AddSingletonIfMissing<SystemTools, SystemTools>();
         services.AddSingletonIfMissing<ServiceTools, ServiceTools>();
@@ -139,6 +146,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<ActivityCaptureTools, ActivityCaptureTools>();
         services.AddSingletonIfMissing<ActivityQueryTools, ActivityQueryTools>();
         services.AddSingletonIfMissing<SelfUpdateTools, SelfUpdateTools>();
+        services.AddSingletonIfMissing<ControlTools, ControlTools>();
         return services;
     }
 

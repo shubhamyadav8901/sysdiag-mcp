@@ -165,7 +165,12 @@ public sealed class HttpProtocolTests : IAsyncLifetime
         Assert.Contains("who_locks_path", tools);
         Assert.Contains("capture_dump", tools);
         Assert.Contains("capture_activity", tools);
-        Assert.Equal(14, tools.Length);
+        Assert.Contains("process_control", tools);
+
+        // update_self is deliberately absent: it is gated separately from read-only mode and the test
+        // server does not enable it.
+        Assert.DoesNotContain("update_self", tools);
+        Assert.Equal(16, tools.Length);
     }
 
     [Fact]
