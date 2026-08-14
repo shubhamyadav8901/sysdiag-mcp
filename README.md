@@ -173,7 +173,12 @@ driver: `capture_activity`/`query_activity` and `path_handle_search`. Their unit
 stubbed process runner, so they prove the arguments are composed correctly and nothing more.
 
 `tools/verify-on-target.ps1` proves they actually work. It drives the **published** server over stdio
-exactly as Claude Code does, so the machine under test needs no .NET SDK — just the one exe:
+exactly as Claude Code does, so the machine under test needs no .NET SDK — just the one exe.
+
+**Run it on both a 32- and a 64-bit target.** Several answers here differ by bitness, and the ones
+that differ *silently* are why the script exists: three of its checks only mean anything on 64-bit
+Windows. Unelevated it still runs everything that can answer without administrator rights and reports
+the rest as `SKIP` with the reason, so a machine where nobody has admin can still be verified.
 
 ```
 powershell -ExecutionPolicy Bypass -File verify-on-target.ps1 -ServerPath .\WinDiag.Mcp.exe
