@@ -37,7 +37,10 @@ public sealed class ModuleTools
         "is not the build you shipped. " +
         "Set verifySignatures to check each one's Authenticode signature, which finds unsigned or " +
         "tampered modules loaded into a signed process. That is slower, so it applies only to the " +
-        "modules actually returned - filter by name first if you know what you are looking for.")]
+        "modules actually returned - filter by name first if you know what you are looking for. " +
+        "Each module also reports the base address it asked for against the one it got, and flags a " +
+        "module that was built for a fixed address and got moved anyway - a base collision, which " +
+        "costs it its shared pages.")]
     public ProcessModulesResult ProcessModules(
         [Description("Process id. Get a current one from process_list; PIDs are reused.")]
         int processId,
@@ -88,6 +91,11 @@ public sealed class ModuleTools
                 builder.Append("  [").Append(verdict.ToUpperInvariant()).Append(']');
             }
 
+            if (module.BaseCollision)
+            {
+                builder.Append("  [REBASED from ").Append(module.PreferredBase).Append(']');
+            }
+
             builder.AppendLine();
         }
 
@@ -107,6 +115,16 @@ public sealed class ModuleTools
         {
             builder.AppendLine().Append("Signatures were not checked. Pass verifySignatures to find " +
                                         "unsigned or tampered modules.");
+        }
+
+        if (result.CollisionCount > 0)
+        {
+            // Said only when it happened. Every other module in the list was moved by ASLR too, and
+            // flagging those would bury the ones where the move actually cost something.
+            builder.AppendLine().Append(result.CollisionCount == 1 ? "1 module was" : $"{result.CollisionCount} modules were")
+                .Append(" built to load at a fixed address and had to be moved anyway, so something " +
+                        "already occupied that range. Marked [REBASED]; it costs them their shared " +
+                        "pages and is worth chasing if this process is using more memory than expected.");
         }
 
         if (result.Truncated)

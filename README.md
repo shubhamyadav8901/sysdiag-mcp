@@ -8,10 +8,11 @@ process; this server sees the machine.
 
 ## Status
 
-Steps 1–5 and 7 of the build order: the server spine, seventeen tools, both transports (stdio locally,
-authenticated Streamable HTTP for running on a target), dump capture, Procmon-backed activity tracing,
-and the process/service control write tools. Still to come: the remaining Sysinternals shell-outs
-(step 6) — `autostart_audit` and `process_handles`.
+Steps 1–5 and 7 of the build order, and `process_modules` from step 6: the server spine, seventeen
+tools plus an opt-in eighteenth (`update_self`), both transports (stdio locally, authenticated
+Streamable HTTP for running on a target), dump capture, Procmon-backed activity tracing, and the
+process/service control write tools. Still to come: the two remaining step-6 shell-outs,
+`autostart_audit` and `process_handles`.
 
 All but two are backed by native Windows APIs; only `path_handle_search` and `capture_activity` shell
 out to Sysinternals.
@@ -23,7 +24,7 @@ out to Sysinternals.
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
-| `process_modules` | `Process.Modules` + `WinVerifyTrust` | Which DLL version actually loaded, from where, and whether anything unsigned got in |
+| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLL version actually loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision |
 | `named_pipes` | `NtQueryDirectoryFile` | IPC pipes, and whether any is at its instance limit |
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
