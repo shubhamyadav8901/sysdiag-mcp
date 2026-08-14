@@ -58,7 +58,9 @@ public sealed class RegistryTools
     {
         var builder = new StringBuilder();
 
-        builder.Append(contents.Path).Append("  [").Append(contents.View).AppendLine(" view]");
+        // "view: x" rather than "[x view]": the descriptions are noun phrases, and gluing a word on
+        // the end of one produced "[32-bit Windows, single view view]" on the target.
+        builder.Append(contents.Path).Append("  [view: ").Append(contents.View).AppendLine("]");
 
         if (contents.Values.Count == 0)
         {

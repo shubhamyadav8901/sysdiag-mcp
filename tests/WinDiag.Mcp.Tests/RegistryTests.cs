@@ -98,7 +98,7 @@ public sealed class RegistryPathTests
         else
         {
             Assert.DoesNotContain("WOW6432Node", described);
-            Assert.Contains("single view", described);
+            Assert.Contains("only one", described);
         }
     }
 
@@ -274,12 +274,27 @@ public sealed class RegistryRenderingTests
             subKeys?.Count ?? 0, truncated);
 
     [Fact]
+    public void Never_glues_a_word_onto_the_end_of_a_view_description()
+    {
+        // The descriptions are noun phrases of varying shape, and appending "view" to one produced
+        // "[32-bit Windows, single view view]" on the live target.
+        foreach (var view in new[] { "64-bit", "32-bit (WOW6432Node)", "32-bit Windows, which has only one" })
+        {
+            var summary = RegistryTools.Render(
+                Contents([new RegistryValue("A", "REG_SZ", "x", false, 2)], view: view), null);
+
+            Assert.Contains($"[view: {view}]", summary);
+            Assert.DoesNotContain("view view", summary);
+        }
+    }
+
+    [Fact]
     public void Names_the_view_in_the_first_line()
     {
         var summary = RegistryTools.Render(
             Contents([new RegistryValue("Path", "REG_SZ", @"C:\App", false, 12)]), null);
 
-        Assert.Contains("[64-bit view]", summary);
+        Assert.Contains("[view: 64-bit]", summary);
     }
 
     [Fact]

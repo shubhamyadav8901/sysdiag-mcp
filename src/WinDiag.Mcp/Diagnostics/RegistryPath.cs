@@ -109,7 +109,7 @@ internal static class RegistryPath
     {
         if (!Environment.Is64BitOperatingSystem)
         {
-            return "32-bit Windows, single view";
+            return "32-bit Windows, which has only one";
         }
 
         return view switch
