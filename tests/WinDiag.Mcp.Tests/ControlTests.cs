@@ -434,6 +434,44 @@ public sealed class PeImageReaderTests
     {
         Assert.Null(PeImageReader.TryRead(Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.dll")));
     }
+
+    [Fact]
+    public void Sees_an_image_that_did_not_opt_into_aslr()
+    {
+        // Everything on a modern Windows install is /DYNAMICBASE, so the positive assertion above would
+        // pass just as happily if the offset were wrong and the read were picking up some other
+        // always-nonzero field. This clears exactly that bit in a copy of a real image and requires the
+        // reader to notice -- and requires ImageBase to come back unchanged, which is what proves the
+        // byte that moved was the one intended.
+        var source = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var before = PeImageReader.TryRead(source);
+        Assert.NotNull(before);
+        Assert.True(before!.Value.DynamicBase);
+
+        var copy = Path.Combine(Path.GetTempPath(), $"windiag-noaslr-{Guid.NewGuid():N}.dll");
+        File.Copy(source, copy, overwrite: true);
+
+        try
+        {
+            var bytes = File.ReadAllBytes(copy);
+            var peOffset = BitConverter.ToInt32(bytes, 0x3C);
+            var dllCharacteristics = peOffset + 4 + 20 + 70;
+
+            var flags = BitConverter.ToUInt16(bytes, dllCharacteristics);
+            BitConverter.TryWriteBytes(bytes.AsSpan(dllCharacteristics), (ushort)(flags & ~0x0040));
+            File.WriteAllBytes(copy, bytes);
+
+            var after = PeImageReader.TryRead(copy);
+
+            Assert.NotNull(after);
+            Assert.False(after!.Value.DynamicBase);
+            Assert.Equal(before.Value.ImageBase, after.Value.ImageBase);
+        }
+        finally
+        {
+            File.Delete(copy);
+        }
+    }
 }
 
 /// <summary>
