@@ -29,7 +29,9 @@
     guessing it wrong produces a server that starts and then answers wrongly.
 
 .PARAMETER RemotePath
-    Directory on the target, as the target sees it. Its admin share equivalent is derived from it.
+    Directory on the target, as the target sees it; its admin share equivalent is derived from it.
+    Defaults to wherever the running server already lives, which is asked for rather than assumed --
+    a wrong default here does not fail, it stages a complete install into a directory nobody is using.
 
 .PARAMETER AcceptUpstreamChange
     Rewrite tools/sysinternals.json when Sysinternals has shipped a new build. Without this the script
@@ -47,7 +49,7 @@ param(
     [Parameter(Mandatory)] [string] $Target,
     [string] $Token,
     [ValidateSet('x86', 'x64')] [string] $Architecture,
-    [string] $RemotePath = 'C:\Users\admin\Desktop\WinDiag',
+    [string] $RemotePath,
     [int] $Port = 4024,
 
     # Sysinternals only; leaves the server binary alone. Useful when the target is already running the
@@ -68,12 +70,6 @@ $manifestPath = Join-Path $PSScriptRoot 'sysinternals.json'
 $cacheDir = Join-Path $repo 'artifacts\sysinternals'
 $address = "http://${Target}:${Port}"
 
-# The admin share is derived rather than asked for, so the two paths cannot disagree.
-if ($RemotePath -notmatch '^([A-Za-z]):\\(.*)$') {
-    throw "-RemotePath must be a local path on the target, e.g. C:\WinDiag. Got: $RemotePath"
-}
-$remoteShare = "\\$Target\$($Matches[1])`$\$($Matches[2])"
-
 function Write-Step($text) { Write-Host "==> $text" -ForegroundColor Cyan }
 function Write-Note($text) { Write-Host "    $text" -ForegroundColor DarkGray }
 
@@ -91,19 +87,34 @@ function Copy-Verified {
     param([string] $Source, [string] $Destination, [int] $Attempts = 3)
 
     $expected = Get-Sha256 $Source
+    $name = Split-Path -Leaf $Source
 
     for ($i = 1; $i -le $Attempts; $i++) {
-        Copy-Item -LiteralPath $Source -Destination $Destination -Force
+        try {
+            # -ErrorAction Stop explicitly: catch [type] only fires on a terminating error, and relying
+            # on $ErrorActionPreference for that would make this depend on a setting far away.
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+        }
+        catch [System.IO.IOException] {
+            # A Sysinternals binary that is mid-run is locked, and retrying will not help. Saying
+            # "could not be copied intact" here would send someone looking for a corrupt transfer when
+            # the actual answer is that a capture or a handle scan is still going.
+            throw "$name is in use on the target and cannot be replaced ($($_.Exception.Message)). " +
+                  "A capture_activity or path_handle_search is most likely still running -- a handle " +
+                  "scan takes minutes. Wait for it to finish and re-run."
+        }
+
         $actual = Get-Sha256 $Destination
 
         if ($actual -eq $expected) {
             return $expected
         }
 
-        Write-Warning "$(Split-Path -Leaf $Source): attempt $i landed as $actual, expected $expected. Retrying."
+        Write-Warning "${name}: attempt $i landed as $actual, expected $expected. Retrying."
     }
 
-    throw "$(Split-Path -Leaf $Source) could not be copied to $Destination intact after $Attempts attempts."
+    throw "$name could not be copied to $Destination intact after $Attempts attempts. This is a " +
+          "corrupt transfer, not a lock: the copy succeeded each time and the contents were wrong."
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -142,6 +153,49 @@ function Resolve-Architecture {
 }
 
 $Architecture = Resolve-Architecture
+
+<#
+.SYNOPSIS
+    Finds where the server already lives on the target, rather than assuming a layout.
+.DESCRIPTION
+    A wrong directory is the one mistake here that does not announce itself: the script would create it,
+    stage a complete and correct install into it, and then fail to find anything to update -- or worse,
+    succeed while the machine carries on running the copy in the real directory. Asking the server for
+    its own path removes the guess entirely, and the answer is exactly what update_self will replace.
+#>
+function Resolve-RemotePath {
+    if ($RemotePath) { return $RemotePath }
+
+    if (-not $Token) {
+        throw "-RemotePath is required when -Token is not supplied. With nothing running to ask, the " +
+              "alternative is a guessed directory, which would stage a complete install somewhere " +
+              "nobody is looking. Pass the folder the server will live in, e.g. C:\WinDiag."
+    }
+
+    $processes = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token `
+        -Tool process_list -Arguments @{ nameFilter = 'WinDiag' } -Raw | ConvertFrom-Json
+
+    $commandLine = ($processes.processes | Where-Object { $_.commandLine } | Select-Object -First 1).commandLine
+
+    if (-not ($commandLine -match '^"?([A-Za-z]:\\[^"]*WinDiag\.Mcp\.exe)"?')) {
+        throw "Could not read the server's own path from process_list (command line: '$commandLine'). " +
+              "Pass -RemotePath explicitly."
+    }
+
+    $resolved = Split-Path -Parent $Matches[1]
+    Write-Note "server lives in $resolved"
+    return $resolved
+}
+
+Write-Step 'Locating the server on the target'
+$RemotePath = Resolve-RemotePath
+
+# Derived rather than asked for, so the local path and the share path cannot disagree.
+if ($RemotePath -notmatch '^([A-Za-z]):\\(.*)$') {
+    throw "-RemotePath must be a local path on the target, e.g. C:\WinDiag. Got: $RemotePath"
+}
+$remoteShare = "\\$Target\$($Matches[1])`$\$($Matches[2])"
+
 $rid = "win-$Architecture"
 
 # ---------------------------------------------------------------------------------------------------

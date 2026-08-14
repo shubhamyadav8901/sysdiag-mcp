@@ -137,6 +137,32 @@ a 64-bit process and cannot capture activity at all (the 32-bit Procmon refuses 
 both failures surface much later, looking like tool bugs rather than a wrong download. The server
 therefore warns about it at startup and in `system_overview`.
 
+**The same trap applies to the Sysinternals binaries, and there it is worse.** Each download ships two
+builds whose names differ by one character, and on 64-bit Windows the 32-bit one does not fail — it
+answers wrongly. Measured on an x64 workstation, both unelevated, same filter:
+
+```
+handle.exe   -u -v System32  ->  "No matching handles found."
+handle64.exe -u -v System32  ->  526 rows
+```
+
+An empty handle search reads as *"nothing holds this file"*, which is the answer that ends an
+investigation. Procmon fails as quietly by a different route: its 32-bit build is a launcher that
+starts the 64-bit one and exits, so a capture appears to finish in a second over a trace that is still
+being written.
+
+So the server does not resolve `handle.exe`; it resolves *handle*, prefers `handle64.exe` on a 64-bit
+OS, and if only the unsuffixed build is present it reads that file's PE machine type and **refuses**
+rather than running it. `capabilities` makes the same decision ahead of time and reports the path it
+would use, because two copies of a Sysinternals tool on one machine is the normal case:
+
+```
+- path_handle_search [Available] Sysinternals handle.exe - Ready, using C:\WinDiag\handle64.exe.
+```
+
+`deploy-target.ps1` stages both builds of every tool, so the refusal only fires on a machine someone
+set up by hand.
+
 ## Verifying on a target
 
 Two capabilities cannot be covered by `dotnet test`, because they need administrator rights and a kernel
