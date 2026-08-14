@@ -105,19 +105,24 @@ public sealed class WindowsServiceControllerAdapter : IServiceController
     {
         var stopped = new List<string>();
 
-        foreach (var dependent in service.DependentServices)
-        {
-            using (dependent)
-            {
-                if (dependent.Status == ServiceControllerStatus.Stopped)
-                {
-                    continue;
-                }
+        // Names first, then a freshly opened controller for each. The instances handed back by
+        // DependentServices share native state with the parent, so disposing one invalidates the
+        // parent too - which surfaced as "Cannot access a disposed object" on the very next call,
+        // after the dependents had already been stopped.
+        var dependents = service.DependentServices.Select(d => d.ServiceName).ToArray();
 
-                dependent.Stop();
-                dependent.WaitForStatus(ServiceControllerStatus.Stopped, StateTimeout);
-                stopped.Add(dependent.ServiceName);
+        foreach (var name in dependents)
+        {
+            using var dependent = new ServiceController(name);
+
+            if (dependent.Status == ServiceControllerStatus.Stopped)
+            {
+                continue;
             }
+
+            dependent.Stop();
+            dependent.WaitForStatus(ServiceControllerStatus.Stopped, StateTimeout);
+            stopped.Add(name);
         }
 
         if (service.Status != ServiceControllerStatus.Stopped)
