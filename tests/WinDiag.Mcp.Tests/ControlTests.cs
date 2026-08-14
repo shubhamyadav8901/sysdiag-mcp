@@ -290,7 +290,18 @@ public sealed class ModuleRenderingTests
             Result([Module("evil.dll", "Unsigned")], unsigned: 1), null, verified: true);
 
         Assert.Contains("[UNSIGNED]", summary);
+        Assert.Contains("1 of the modules returned is unsigned", summary);
         Assert.Contains("worth looking at first", summary);
+    }
+
+    [Fact]
+    public void Counts_several_unsigned_modules_without_mangling_the_sentence()
+    {
+        var summary = ModuleTools.Render(
+            Result([Module("a.dll", "Unsigned"), Module("b.dll", "Untrusted")], unsigned: 2),
+            null, verified: true);
+
+        Assert.Contains("2 of the modules returned are unsigned", summary);
     }
 
     [Fact]

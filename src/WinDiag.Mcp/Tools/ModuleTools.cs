@@ -94,10 +94,14 @@ public sealed class ModuleTools
         if (verified)
         {
             builder.AppendLine();
-            builder.Append(result.UnsignedCount == 0
-                ? "Every module returned is signed and trusted."
-                : $"{result.UnsignedCount} of the modules returned are unsigned or untrusted - those are " +
-                  "the ones worth looking at first.");
+            builder.Append(result.UnsignedCount switch
+            {
+                0 => "Every module returned is signed and trusted.",
+                1 => "1 of the modules returned is unsigned or untrusted - that is the one worth looking " +
+                     "at first.",
+                var n => $"{n} of the modules returned are unsigned or untrusted - those are the ones " +
+                         "worth looking at first."
+            });
         }
         else
         {
