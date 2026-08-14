@@ -1,35 +1,56 @@
 using System.Globalization;
-using System.Text;
 
 namespace WinDiag.Mcp.Diagnostics.Handles;
 
-/// <summary>Parses the CSV that <c>handle.exe -u -v</c> writes.</summary>
+/// <summary>Parses the CSV that <c>handle.exe -u -v</c> writes, in either of its two layouts.</summary>
 /// <remarks>
-/// <para><strong>handle.exe's CSV header does not describe its own data rows.</strong> Verified against
-/// Sysinternals Suite 2026.6.0.0 on Windows 11 (fixture
-/// <c>tests/WinDiag.Mcp.Tests/Fixtures/handle-u-v-fonts.csv</c>), <c>-u -v</c> emits:</para>
+/// <para><strong>handle.exe emits a different row layout depending on how it was invoked</strong>, and
+/// in one of the two the header does not describe its own rows. Both measured against Handle 5.0:</para>
 /// <code>
-/// header: Process,PID,User,Handle,Type,Share Flags,Name,Access      (8 columns)
-/// row   : explorer.exe,3628,File,CONTOSO\user,0x0000068C,C:\Windows\Fonts\StaticCache.dat  (6 fields)
+/// name search   handle -u -v Fonts
+///   header: Process,PID,User,Handle,Type,Share Flags,Name,Access      (8 columns)
+///   row   : explorer.exe,3628,File,CONTOSO\user,0x68C,C:\...\StaticCache.dat   (6 fields)
+///   actual: Process, PID, TYPE, USER, HANDLE, Name        <-- header order is wrong
+///
+/// process scope handle -a -p 14032 -u -v
+///   header: Process,PID,User,Handle,Type,Share Flags,Name             (7 columns)
+///   row   : explorer.exe,14032,CONTOSO\user,0x0C,Key,,HKLM\SOFTWARE\...          (7 fields)
+///   actual: Process, PID, User, Handle, Type, Share Flags, Name       <-- header order is right
 /// </code>
-/// <para>The real row layout is <c>Process, PID, Type, User, Handle, Name</c>. Share flags and granted
-/// access are advertised by the header but never emitted.</para>
-/// <para>Consequently this parser reads <em>by position</em>. Mapping by header name -- the obvious
-/// defensive choice -- would read Type as User, User as Handle, Handle as Type and Name as Share
-/// Flags, silently attributing every field to the wrong column. The header is used only to recognise
-/// that the output is handle.exe CSV at all.</para>
+/// <para>So neither "always read by position" nor "always map by name" is correct. The layout is
+/// identified from the header and the field positions chosen to match, and an unrecognised header is
+/// refused outright.</para>
+/// <para>That refusal is not theoretical caution: it is how the process-scoped layout was discovered.
+/// The name-search indices were applied to a <c>-p</c> capture whose 7-field rows comfortably passed
+/// a "long enough" check, and every field would have been attributed one column out -- user name
+/// reported as the object type, handle value as the user -- with nothing in the result to show it.</para>
 /// </remarks>
 internal static class HandleCsvParser
 {
-    private const int ProcessIndex = 0;
-    private const int PidIndex = 1;
-    private const int TypeIndex = 2;
-    private const int UserIndex = 3;
-    private const int HandleIndex = 4;
-    private const int NameIndex = 5;
+    /// <summary>Where each value actually sits in a row, for one of handle.exe's layouts.</summary>
+    private sealed record Layout(
+        string Name,
+        int Process,
+        int Pid,
+        int Type,
+        int User,
+        int Handle,
+        int ObjectName,
+        int MinimumFields);
 
-    /// <summary>Minimum fields in a usable row, given the pinned <c>-u -v</c> flag set.</summary>
-    private const int RequiredFieldCount = 6;
+    /// <summary>
+    /// <c>handle -u -v &lt;name&gt;</c>: 8-column header ending in Access, above 6-field rows whose
+    /// order the header misstates.
+    /// </summary>
+    private static readonly Layout NameSearch =
+        new("name search", Process: 0, Pid: 1, Type: 2, User: 3, Handle: 4, ObjectName: 5, MinimumFields: 6);
+
+    /// <summary>
+    /// <c>handle -p &lt;pid&gt; -u -v</c>: 7-column header with no Access, above 7-field rows that do
+    /// follow it.
+    /// </summary>
+    private static readonly Layout ProcessScoped =
+        new("process scope", Process: 0, Pid: 1, Type: 4, User: 2, Handle: 3, ObjectName: 6, MinimumFields: 7);
 
     public static IReadOnlyList<HandleEntry> Parse(string csv)
     {
@@ -39,7 +60,7 @@ internal static class HandleCsvParser
         }
 
         var entries = new List<HandleEntry>();
-        var sawHeader = false;
+        Layout? layout = null;
 
         using var reader = new StringReader(csv);
         string? line;
@@ -50,16 +71,15 @@ internal static class HandleCsvParser
                 continue;
             }
 
-            var fields = SplitCsvLine(line);
+            var fields = DelimitedLine.Split(line);
 
-            if (!sawHeader && IsHeader(fields))
+            if (layout is null && IsHeader(fields))
             {
-                RequireSupportedLayout(fields);
-                sawHeader = true;
+                layout = IdentifyLayout(fields);
                 continue;
             }
 
-            if (fields.Count < RequiredFieldCount)
+            if (layout is null || fields.Count < layout.MinimumFields)
             {
                 // Unelevated runs interleave diagnostics such as
                 // "Error obtaining handle information: Access denied" with the data. Those are not
@@ -67,21 +87,23 @@ internal static class HandleCsvParser
                 continue;
             }
 
-            if (!int.TryParse(fields[PidIndex].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid))
+            if (!int.TryParse(
+                    fields[layout.Pid].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid))
             {
                 continue;
             }
 
             entries.Add(new HandleEntry(
-                ProcessName: fields[ProcessIndex].Trim(),
+                ProcessName: fields[layout.Process].Trim(),
                 ProcessId: pid,
-                Type: fields[TypeIndex].Trim(),
-                User: NullIfEmpty(fields[UserIndex]),
-                HandleValue: fields[HandleIndex].Trim(),
+                Type: fields[layout.Type].Trim(),
+                User: NullIfEmpty(fields[layout.User]),
+                HandleValue: fields[layout.Handle].Trim(),
 
                 // Paths carry a trailing space in the captured output, and a path may itself contain
-                // commas, so anything past the name index belongs to the name.
-                Name: string.Join(',', fields.Skip(NameIndex)).TrimEnd()));
+                // commas that handle.exe does not quote, so everything from the name column onwards
+                // belongs to the name. The name is last in both layouts, so this is safe in both.
+                Name: string.Join(',', fields.Skip(layout.ObjectName)).TrimEnd()));
         }
 
         return entries;
@@ -92,89 +114,38 @@ internal static class HandleCsvParser
                          && string.Equals(fields[1].Trim(), "PID", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Refuses to parse any layout other than the name-search one this parser was written against.
+    /// Picks the field positions for the layout in hand, or refuses if it is neither known one.
     /// </summary>
     /// <remarks>
-    /// handle.exe's row layout depends on how it was invoked, not only on its flags. The name search
-    /// used here emits an 8-column header ending in <c>Access</c> above 6-field rows. Process-scoped
-    /// invocation (<c>-p</c>) instead emits a 7-column header with no <c>Access</c> above 7-field rows
-    /// that <em>do</em> follow header order -- and those rows have enough fields to satisfy
-    /// <see cref="RequiredFieldCount"/>, so positional parsing would accept them and silently place
-    /// the user name in <c>Type</c>, the handle in <c>User</c>, and so on.
-    /// <para>Failing loudly here is what stops a future "just add -p scoping" change from quietly
-    /// producing wrong attributions instead of an error.</para>
+    /// The presence of the trailing <c>Access</c> column is the discriminator, and it is a reliable
+    /// one: it is what handle.exe adds in name-search mode, and it is exactly the mode whose rows do
+    /// not follow the header. Refusing an unknown third layout is what keeps a future Sysinternals
+    /// change from producing mis-attributed fields rather than an error.
     /// </remarks>
-    private static void RequireSupportedLayout(IReadOnlyList<string> header)
+    private static Layout IdentifyLayout(IReadOnlyList<string> header)
     {
-        var isNameSearchLayout = header.Count == 8
-                                 && string.Equals(header[7].Trim(), "Access", StringComparison.OrdinalIgnoreCase);
+        var trimmed = header.Select(h => h.Trim()).ToArray();
 
-        if (!isNameSearchLayout)
+        if (trimmed.Length == 8 && string.Equals(trimmed[7], "Access", StringComparison.OrdinalIgnoreCase))
         {
-            throw new FormatException(
-                "handle.exe produced a CSV layout this parser was not written for (header: " +
-                Truncate(string.Join(',', header.Select(h => h.Trim())), 200) +
-                "). The expected name-search layout is an 8-column header ending in 'Access'. " +
-                "Row field order is layout-dependent, so parsing this would mis-attribute every field.");
+            return NameSearch;
         }
+
+        if (trimmed.Length == 7 && string.Equals(trimmed[6], "Name", StringComparison.OrdinalIgnoreCase))
+        {
+            return ProcessScoped;
+        }
+
+        throw new FormatException(
+            "handle.exe produced a CSV layout this parser was not written for (header: " +
+            Truncate(string.Join(',', trimmed), 200) +
+            "). Two layouts are known: an 8-column name-search header ending in 'Access', and a " +
+            "7-column process-scoped header ending in 'Name'. Row field order differs between them, " +
+            "so parsing an unrecognised one would mis-attribute every field.");
     }
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max] + "...";
-
-    /// <summary>Splits one CSV line, honouring double-quoted fields and doubled quote escapes.</summary>
-    /// <remarks>
-    /// Hand-rolled rather than taking a CSV dependency: the grammar needed is one line and one
-    /// delimiter, and the only awkward case -- a comma inside a path -- is handled here and again by
-    /// the name-rejoining above, since handle.exe does not quote such paths.
-    /// </remarks>
-    internal static List<string> SplitCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = new StringBuilder();
-        var inQuotes = false;
-
-        for (var i = 0; i < line.Length; i++)
-        {
-            var c = line[i];
-
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"')
-                    {
-                        current.Append('"');
-                        i++;
-                    }
-                    else
-                    {
-                        inQuotes = false;
-                    }
-                }
-                else
-                {
-                    current.Append(c);
-                }
-            }
-            else if (c == '"')
-            {
-                inQuotes = true;
-            }
-            else if (c == ',')
-            {
-                fields.Add(current.ToString());
-                current.Clear();
-            }
-            else
-            {
-                current.Append(c);
-            }
-        }
-
-        fields.Add(current.ToString());
-        return fields;
-    }
 
     private static string? NullIfEmpty(string value)
     {

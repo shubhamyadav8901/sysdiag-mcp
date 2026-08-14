@@ -1,4 +1,5 @@
 using WinDiag.Mcp.Diagnostics;
+using WinDiag.Mcp.Diagnostics.Autostart;
 using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Locks;
@@ -87,6 +88,7 @@ internal sealed class FakeLockInspector(LockQueryResult result) : ILockInspector
 internal sealed class FakeHandleInspector(HandleSearchResult result) : IHandleInspector
 {
     public bool? LastIncludeAllObjectTypes { get; private set; }
+    public int? LastProcessId { get; private set; }
 
     public Task<HandleSearchResult> SearchAsync(
         string nameFragment,
@@ -94,6 +96,27 @@ internal sealed class FakeHandleInspector(HandleSearchResult result) : IHandleIn
         CancellationToken cancellationToken)
     {
         LastIncludeAllObjectTypes = includeAllObjectTypes;
+        return Task.FromResult(result);
+    }
+
+    public Task<HandleSearchResult> ListForProcessAsync(
+        int processId,
+        bool includeAllObjectTypes,
+        CancellationToken cancellationToken)
+    {
+        LastProcessId = processId;
+        LastIncludeAllObjectTypes = includeAllObjectTypes;
+        return Task.FromResult(result);
+    }
+}
+
+internal sealed class FakeAutostartInspector(AutostartAuditResult result) : IAutostartInspector
+{
+    public AutostartQuery? LastQuery { get; private set; }
+
+    public Task<AutostartAuditResult> AuditAsync(AutostartQuery query, CancellationToken cancellationToken)
+    {
+        LastQuery = query;
         return Task.FromResult(result);
     }
 }

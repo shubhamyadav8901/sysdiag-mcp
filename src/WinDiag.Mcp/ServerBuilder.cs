@@ -3,6 +3,7 @@ using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Access;
 using WinDiag.Mcp.Diagnostics.Activity;
+using WinDiag.Mcp.Diagnostics.Autostart;
 using WinDiag.Mcp.Diagnostics.Capabilities;
 using WinDiag.Mcp.Diagnostics.Dumps;
 using WinDiag.Mcp.Diagnostics.EventLogs;
@@ -81,7 +82,8 @@ public static class ServerBuilder
             .WithTools<InventoryTools>()
             .WithTools<AccessTools>()
             .WithTools<ActivityQueryTools>()
-            .WithTools<ModuleTools>();
+            .WithTools<ModuleTools>()
+            .WithTools<AutostartTools>();
 
         // Write tools are registered here only when the server is not read-only, so a read-only server
         // does not advertise capabilities it will refuse. capture_dump and capture_activity write files
@@ -113,6 +115,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IExternalToolRunner, ExternalToolRunner>();
         services.AddSingletonIfMissing<ILockInspector, RestartManagerLockInspector>();
         services.AddSingletonIfMissing<IHandleInspector, HandleExeInspector>();
+        services.AddSingletonIfMissing<IAutostartInspector, AutorunscInspector>();
         services.AddSingletonIfMissing<ISystemInspector, WindowsSystemInspector>();
         services.AddSingletonIfMissing<ICapabilityReporter, CapabilityReporter>();
         services.AddSingletonIfMissing<IServiceInspector, WindowsServiceInspector>();
@@ -145,6 +148,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<SelfUpdateTools, SelfUpdateTools>();
         services.AddSingletonIfMissing<ControlTools, ControlTools>();
         services.AddSingletonIfMissing<ModuleTools, ModuleTools>();
+        services.AddSingletonIfMissing<AutostartTools, AutostartTools>();
         return services;
     }
 

@@ -24,6 +24,9 @@ namespace WinDiag.Mcp.Diagnostics.External;
 /// </remarks>
 public sealed class ExternalToolRunner : IExternalToolRunner
 {
+    /// <summary>U+FEFF, as it appears once a BOM has been decoded out of the stream.</summary>
+    private const char ByteOrderMark = '\uFEFF';
+
     private readonly IToolLocator _locator;
     private readonly WinDiagOptions _options;
     private readonly ILogger<ExternalToolRunner> _logger;
@@ -63,7 +66,11 @@ public sealed class ExternalToolRunner : IExternalToolRunner
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardOutputEncoding = ConsoleToolEncoding,
+
+            // stdout follows the tool's policy; stderr stays on the console default. autorunsc writes
+            // its data as UTF-16 but its diagnostics as console text, so decoding both the same way
+            // would fix one and break the other.
+            StandardOutputEncoding = policy.OutputEncoding ?? ConsoleToolEncoding,
             StandardErrorEncoding = ConsoleToolEncoding
         };
 
@@ -111,7 +118,10 @@ public sealed class ExternalToolRunner : IExternalToolRunner
             throw;
         }
 
-        var stdout = await DrainAsync(stdoutTask).ConfigureAwait(false);
+        // Trimmed here rather than in each parser: a byte-order mark decoded from the stream arrives as
+        // a real U+FEFF character, and it would otherwise become part of the first column name -- so
+        // every header match fails for a reason that nothing in the visible output shows.
+        var stdout = (await DrainAsync(stdoutTask).ConfigureAwait(false)).TrimStart(ByteOrderMark);
         var stderr = await DrainAsync(stderrTask).ConfigureAwait(false);
         stopwatch.Stop();
 

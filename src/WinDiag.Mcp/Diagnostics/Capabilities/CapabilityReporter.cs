@@ -66,6 +66,14 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 "Sysinternals handle.exe",
                 "handle",
                 "returns a partial list, silently omitting handles held by other users and by SYSTEM"),
+            ["process_handles"] = new(
+                "Sysinternals handle.exe, scoped to one process",
+                "handle",
+                "returns a partial list, silently omitting handles the current account cannot see"),
+            ["autostart_audit"] = new(
+                "Sysinternals autorunsc",
+                "autorunsc",
+                "cannot read other users' profiles or protected keys, so entries are silently absent"),
             ["system_overview"] = new("Win32 and .NET runtime information", null, null),
             ["capabilities"] = new("this reporter", null, null),
             ["service_config"] = new("Service Control Manager and the services registry key", null, null),

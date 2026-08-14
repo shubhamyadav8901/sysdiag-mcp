@@ -1,0 +1,8 @@
+Process,PID,User,Handle,Type,Share Flags,Name 
+explorer.exe,14032,CONTOSO\testuser,0x0000000C,Key,,HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options 
+explorer.exe,14032,CONTOSO\testuser,0x00000058,File,,C:\Windows\System32 
+explorer.exe,14032,CONTOSO\testuser,0x00000004,Event,, 
+explorer.exe,14032,CONTOSO\testuser,0x0000006C,Mutant,,\Sessions\1\BaseNamedObjects\SM0:14032:304:WilStaging_02 
+explorer.exe,14032,CONTOSO\testuser,0x00000360,Section,,\Sessions\1\BaseNamedObjects\SessionImmersiveColorPreference 
+explorer.exe,14032,CONTOSO\testuser,0x00000048,Directory,,\KnownDlls 
+explorer.exe,14032,CONTOSO\testuser,0x00001028,Token,,CONTOSO\testuser:28e9dc 

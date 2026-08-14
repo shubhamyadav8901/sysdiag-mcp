@@ -19,4 +19,15 @@ public interface IHandleInspector
         string nameFragment,
         bool includeAllObjectTypes,
         CancellationToken cancellationToken);
+
+    /// <summary>Lists every handle held by one process.</summary>
+    /// <remarks>
+    /// The opposite question to <see cref="SearchAsync"/>, and much cheaper: scoped to one process,
+    /// <c>-a</c> costs almost nothing, so this returns every object type by default where the
+    /// machine-wide search cannot afford to.
+    /// </remarks>
+    Task<HandleSearchResult> ListForProcessAsync(
+        int processId,
+        bool includeAllObjectTypes,
+        CancellationToken cancellationToken);
 }

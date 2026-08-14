@@ -1,3 +1,4 @@
+using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Handles;
 
 namespace WinDiag.Mcp.Tests;
@@ -74,21 +75,29 @@ public sealed class HandleCsvParserTests
     }
 
     [Fact]
-    public void Refuses_the_process_scoped_layout_instead_of_mis_attributing_every_field()
+    public void Reads_the_process_scoped_layout_by_its_own_column_order()
     {
         // handle.exe -p emits a 7-column header with no Access, above 7-field rows that DO follow
-        // header order. Those rows have enough fields to satisfy the positional parser, so without an
-        // explicit layout check this would parse "cleanly" and put the user name in Type, the handle
-        // in User, and so on -- wrong data with no error. Nothing passes -p today; this is the
-        // tripwire for the day someone adds it.
+        // header order -- the opposite of the name search above. Those rows have enough fields to
+        // satisfy the positional parser, so before the layout check existed this parsed "cleanly" and
+        // put the user name in Type and the handle in User: wrong data, no error.
+        //
+        // This test was originally written as a tripwire asserting a refusal, for "the day someone
+        // adds -p". That day came with process_handles, and the refusal fired exactly as intended --
+        // which is how the second layout was discovered rather than shipped.
         const string csv = """
             Process,PID,User,Handle,Type,Share Flags,Name
             explorer.exe,3628,CONTOSO\user,0x00000054,File,,C:\Windows\System32
             """;
 
-        var ex = Assert.Throws<FormatException>(() => HandleCsvParser.Parse(csv));
+        var entry = Assert.Single(HandleCsvParser.Parse(csv));
 
-        Assert.Contains("layout", ex.Message);
+        Assert.Equal("explorer.exe", entry.ProcessName);
+        Assert.Equal(3628, entry.ProcessId);
+        Assert.Equal("File", entry.Type);
+        Assert.Equal(@"CONTOSO\user", entry.User);
+        Assert.Equal("0x00000054", entry.HandleValue);
+        Assert.Equal(@"C:\Windows\System32", entry.Name);
     }
 
     [Fact]
@@ -112,8 +121,79 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Splits_quoted_fields_and_doubled_quote_escapes()
     {
-        var fields = HandleCsvParser.SplitCsvLine("a,\"b,c\",\"say \"\"hi\"\"\",d");
+        var fields = DelimitedLine.Split("a,\"b,c\",\"say \"\"hi\"\"\",d");
 
         Assert.Equal(["a", "b,c", "say \"hi\"", "d"], fields);
+    }
+}
+
+/// <summary>
+/// The second layout handle.exe emits, and the reason the parser cannot pick one rule and keep it.
+/// </summary>
+/// <remarks>
+/// Captured from <c>handle64 -a -p &lt;pid&gt; -u -v</c> against Explorer on Windows 11, Handle 5.0.
+/// Unlike the name-search layout, this header DOES describe its rows -- so applying the name-search
+/// indices here places the user name in Type and the handle value in User, on rows long enough to pass
+/// any "enough fields" check. That is how this layout was found: the guard refused it rather than
+/// answering wrongly.
+/// </remarks>
+public sealed class ProcessScopedHandleLayoutTests
+{
+    private static string Fixture() =>
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv"));
+
+    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture());
+
+    [Fact]
+    public void Reads_the_process_scoped_layout()
+    {
+        var entries = Parsed();
+
+        Assert.NotEmpty(entries);
+        Assert.All(entries, e => Assert.Equal("explorer.exe", e.ProcessName));
+        Assert.All(entries, e => Assert.Equal(14032, e.ProcessId));
+    }
+
+    [Fact]
+    public void Attributes_every_field_to_the_column_it_belongs_to()
+    {
+        // The whole point. Under the name-search indices these three would be Type="CONTOSO\testuser",
+        // User="0x0000000C" and Handle="Key" -- all plausible-looking, none correct.
+        var key = Parsed().Single(e => e.Type == "Key");
+
+        Assert.Equal(@"CONTOSO\testuser", key.User);
+        Assert.Equal("0x0000000C", key.HandleValue);
+        Assert.StartsWith(@"HKLM\SOFTWARE\Microsoft", key.Name);
+    }
+
+    [Fact]
+    public void Covers_the_object_types_that_justify_scoping_to_one_process()
+    {
+        // Mutants, sections and tokens are most of the reason to ask about a single process, and none
+        // of them appears in a file-only name search.
+        var types = Parsed().Select(e => e.Type).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("Mutant", types);
+        Assert.Contains("Section", types);
+        Assert.Contains("Token", types);
+        Assert.Contains("Key", types);
+    }
+
+    [Fact]
+    public void Keeps_an_unnamed_object_rather_than_dropping_it()
+    {
+        // An Event with no name is still a handle the process holds, and dropping it would make the
+        // count wrong.
+        Assert.Contains(Parsed(), e => e.Type == "Event" && string.IsNullOrEmpty(e.Name));
+    }
+
+    [Fact]
+    public void Still_refuses_a_layout_that_is_neither_of_the_two_known_ones()
+    {
+        var unknown = "Process,PID,Something,Else" + Environment.NewLine + "explorer.exe,1,a,b";
+
+        var ex = Assert.Throws<FormatException>(() => HandleCsvParser.Parse(unknown));
+
+        Assert.Contains("Two layouts are known", ex.Message);
     }
 }

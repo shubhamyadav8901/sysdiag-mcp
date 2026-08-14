@@ -1,3 +1,4 @@
+using System.Globalization;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.External;
 
@@ -70,6 +71,50 @@ public sealed class HandleExeInspector : IHandleInspector
         arguments.Add(ToolArgument.Flag("-v"));
         arguments.Add(ToolArgument.Caller(nameFragment));
 
+        return await RunAndParseAsync(arguments, nameFragment, includeAllObjectTypes, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<HandleSearchResult> ListForProcessAsync(
+        int processId,
+        bool includeAllObjectTypes,
+        CancellationToken cancellationToken)
+    {
+        if (processId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(processId), processId, "A process id must be positive. Get one from process_list.");
+        }
+
+        //   -p  restrict to one process. handle.exe also accepts a NAME here, which would kill the
+        //       whole point of taking a PID -- so the value is formatted from an int and never from
+        //       caller text, and cannot name more than the one process the caller asked about.
+        var arguments = new List<ToolArgument>(5);
+
+        if (includeAllObjectTypes)
+        {
+            arguments.Add(ToolArgument.Flag("-a"));
+        }
+
+        arguments.Add(ToolArgument.Flag("-p"));
+        arguments.Add(ToolArgument.Flag(processId.ToString(CultureInfo.InvariantCulture)));
+        arguments.Add(ToolArgument.Flag("-u"));
+        arguments.Add(ToolArgument.Flag("-v"));
+
+        return await RunAndParseAsync(
+                arguments,
+                $"PID {processId}",
+                includeAllObjectTypes,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<HandleSearchResult> RunAndParseAsync(
+        IReadOnlyList<ToolArgument> arguments,
+        string query,
+        bool includeAllObjectTypes,
+        CancellationToken cancellationToken)
+    {
         var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
 
         var result = await _runner
@@ -88,14 +133,14 @@ public sealed class HandleExeInspector : IHandleInspector
             }
 
             return new HandleSearchResult(
-                nameFragment, [], _privileges.IsElevated, false, 0, includeAllObjectTypes);
+                query, [], _privileges.IsElevated, false, 0, includeAllObjectTypes);
         }
 
         var entries = HandleCsvParser.Parse(result.StandardOutput);
         var truncated = entries.Count > _options.MaxResults;
 
         return new HandleSearchResult(
-            Query: nameFragment,
+            Query: query,
             Entries: truncated ? entries.Take(_options.MaxResults).ToArray() : entries,
             Elevated: _privileges.IsElevated,
             Truncated: truncated,

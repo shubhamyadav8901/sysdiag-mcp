@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
 using ModelContextProtocol.Server;
+using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Pipes;
 using WinDiag.Mcp.Diagnostics.Processes;
 
@@ -31,11 +32,50 @@ public sealed class ProcessTools
 {
     private readonly IProcessInspector _processes;
     private readonly INamedPipeInspector _pipes;
+    private readonly IHandleInspector _handles;
 
-    public ProcessTools(IProcessInspector processes, INamedPipeInspector pipes)
+    public ProcessTools(IProcessInspector processes, INamedPipeInspector pipes, IHandleInspector handles)
     {
         _processes = processes;
         _pipes = pipes;
+        _handles = handles;
+    }
+
+    [McpServerTool(
+        Name = "process_handles",
+        Title = "Everything one process has open",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "List every kernel object one process has open - files, directories, registry keys, sections, " +
+        "mutants, events, tokens. " +
+        "Use it to answer what a process is actually touching: which log it is writing, which key it " +
+        "read at startup, which named object two processes are both holding. It is also the way to " +
+        "find the mutant behind a 'already running' refusal, and the file a process is keeping open " +
+        "after it should have closed it. " +
+        "Scoped to one process, so it is far cheaper than path_handle_search - which has to walk every " +
+        "process on the machine - and returns all object types by default for the same reason.")]
+    public async Task<PathHandleSearchResult> ProcessHandles(
+        [Description("Process id. Get a current one from process_list; PIDs are reused.")]
+        int processId,
+        [Description("Set false for file handles only, which is faster on a process holding thousands")]
+        bool includeAllObjectTypes = true,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _handles
+            .ListForProcessAsync(processId, includeAllObjectTypes, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new PathHandleSearchResult(
+            FileLockTools.RenderHandleSummary(result),
+            result.Query,
+            result.Entries,
+            result.Elevated,
+            result.Truncated,
+            result.TotalMatched);
     }
 
     [McpServerTool(

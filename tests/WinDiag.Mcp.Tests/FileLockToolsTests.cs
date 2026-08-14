@@ -246,6 +246,56 @@ public sealed class FileLockToolsTests
     }
 
     [Fact]
+    public async Task Listing_one_process_scopes_by_pid_and_covers_every_object_type()
+    {
+        // -a is on by default here where it is opt-in for the machine-wide search, because scoped to
+        // one process it costs almost nothing -- and the objects it adds, mutants and sections and
+        // registry keys, are most of the reason to ask about a single process at all.
+        var runner = new StubExternalToolRunner(SampleCsv);
+        var inspector = new HandleExeInspector(
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+
+        await inspector.ListForProcessAsync(4321, includeAllObjectTypes: true, CancellationToken.None);
+
+        var (executable, argv) = Assert.Single(runner.Invocations);
+
+        Assert.Equal(ExpectedHandleBuild, executable);
+        Assert.Equal(["-accepteula", "-nobanner", "-a", "-p", "4321", "-u", "-v"], argv);
+    }
+
+    [Fact]
+    public async Task A_pid_reaches_handle_exe_as_a_number_and_never_as_caller_text()
+    {
+        // handle.exe -p also accepts a process NAME, which would silently widen a request about one
+        // process into one about every process sharing its name. Formatting from an int is what stops
+        // that being reachable at all.
+        var runner = new StubExternalToolRunner(SampleCsv);
+        var inspector = new HandleExeInspector(
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+
+        await inspector.ListForProcessAsync(7, includeAllObjectTypes: false, CancellationToken.None);
+
+        var (_, argv) = Assert.Single(runner.Invocations);
+
+        Assert.Equal("7", argv.SkipWhile(a => a != "-p").Skip(1).First());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task A_pid_that_cannot_be_real_is_refused_before_the_process_starts(int processId)
+    {
+        var runner = new StubExternalToolRunner(SampleCsv);
+        var inspector = new HandleExeInspector(
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => inspector.ListForProcessAsync(processId, true, CancellationToken.None));
+
+        Assert.Empty(runner.Invocations);
+    }
+
+    [Fact]
     public async Task A_search_term_shaped_like_a_switch_is_refused_before_the_process_starts()
     {
         // handle.exe -c closes a handle and can destabilise the machine. This must never be reachable
