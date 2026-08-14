@@ -74,6 +74,10 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 "Sysinternals autorunsc",
                 "autorunsc",
                 "cannot read other users' profiles or protected keys, so entries are silently absent"),
+            ["registry_read"] = new(
+                "managed registry API, native view",
+                null,
+                @"cannot read keys that deny read access to this account, such as parts of HKLM\SECURITY"),
             ["system_overview"] = new("Win32 and .NET runtime information", null, null),
             ["capabilities"] = new("this reporter", null, null),
             ["service_config"] = new("Service Control Manager and the services registry key", null, null),

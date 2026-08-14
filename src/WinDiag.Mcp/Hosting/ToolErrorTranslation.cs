@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Access;
 using WinDiag.Mcp.Diagnostics.Activity;
 using WinDiag.Mcp.Diagnostics.Control;
@@ -11,6 +12,7 @@ using WinDiag.Mcp.Diagnostics.Locks;
 using WinDiag.Mcp.Diagnostics.Modules;
 using WinDiag.Mcp.Diagnostics.Network;
 using WinDiag.Mcp.Diagnostics.Pipes;
+using WinDiag.Mcp.Diagnostics.RegistryInspection;
 using WinDiag.Mcp.Diagnostics.SelfUpdate;
 
 namespace WinDiag.Mcp.Hosting;
@@ -51,6 +53,8 @@ public static class ToolErrorTranslation
         or DumpCaptureException
         or ActivityCaptureException
         or ModuleQueryException
+        or RegistryQueryException
+        or RegistryPathException
         or ProcessControlException
         or ServiceControlException
         or SelfUpdateRejectedException

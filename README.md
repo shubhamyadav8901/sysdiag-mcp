@@ -8,7 +8,7 @@ process; this server sees the machine.
 
 ## Status
 
-**The build order is complete.** Nineteen tools plus an opt-in twentieth (`update_self`), both
+**The build order is complete.** Twenty tools plus an opt-in twenty-first (`update_self`), both
 transports (stdio locally, authenticated Streamable HTTP for running on a target), dump capture,
 Procmon-backed activity tracing, the Sysinternals shell-outs, and the process/service control write
 tools.
@@ -33,6 +33,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
+| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |
 | `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg |
 | `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |

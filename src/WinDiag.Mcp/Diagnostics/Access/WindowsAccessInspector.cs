@@ -27,12 +27,7 @@ public sealed class WindowsAccessInspector : IAccessInspector
             : InspectFileSystem(path, account, probeWrite);
     }
 
-    internal static bool IsRegistryPath(string path) =>
-        path.StartsWith("HKLM", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("HKCU", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("HKCR", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("HKU", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("HKEY_", StringComparison.OrdinalIgnoreCase);
+    internal static bool IsRegistryPath(string path) => RegistryPath.IsRegistryPath(path);
 
     private AccessReport InspectFileSystem(string path, string? account, bool probeWrite)
     {
@@ -78,7 +73,11 @@ public sealed class WindowsAccessInspector : IAccessInspector
     {
         var (hive, subKey) = SplitRegistryPath(path);
 
-        using var root = RegistryKey.OpenBaseKey(hive, RegistryView.Default);
+        // NativeView, not RegistryView.Default. Default means "whatever bitness this process is", so
+        // the win-x86 build would silently report on HKLM\SOFTWARE\WOW6432Node when asked about
+        // HKLM\SOFTWARE -- a real key, with a real ACL, that is not the one anybody meant. The same
+        // trap as the 32-bit handle.exe, in a different disguise.
+        using var root = RegistryKey.OpenBaseKey(hive, RegistryPath.NativeView);
         using var key = OpenRegistryKey(root, subKey, path);
 
         RegistrySecurity security;
