@@ -175,6 +175,21 @@ stubbed process runner, so they prove the arguments are composed correctly and n
 `tools/verify-on-target.ps1` proves they actually work. It drives the **published** server over stdio
 exactly as Claude Code does, so the machine under test needs no .NET SDK — just the one exe.
 
+**Verified on both.** A 32-bit Windows 10 VM and a 64-bit Windows 11 VM, both elevated, both running
+the build from this tree:
+
+| Check | 32-bit target | 64-bit target |
+|---|---|---|
+| Sysinternals build chosen | `handle.exe`, `Procmon.exe`, `autorunsc.exe` | `handle64.exe`, `Procmon64.exe`, `autorunsc64.exe` |
+| `path_handle_search` | 106 handles | 217 handles, including ones held by `NT AUTHORITY\SYSTEM` |
+| `process_handles` | attributed correctly | 506 handles, 17 object types, 0 rows misattributed |
+| `capture_activity` + `query_activity` | 84,764 events | 419,767 events; 16,651 against a file `capture_dump` wrote *during* the window |
+| `capture_dump` | verified | 3.4 MB mini dump of a 64-bit process |
+| `registry_read` views | one view, labelled as such | 64-bit: 37 subkeys, WOW6432Node: 25 |
+
+The handle counts are the point. Before the architecture-aware resolution, the 64-bit target would
+have run the 32-bit `handle.exe` and answered *"No matching handles found."* to all 217.
+
 **Run it on both a 32- and a 64-bit target.** Several answers here differ by bitness, and the ones
 that differ *silently* are why the script exists: three of its checks only mean anything on 64-bit
 Windows. Unelevated it still runs everything that can answer without administrator rights and reports
