@@ -119,4 +119,91 @@ public sealed class RelayTargetsFileTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Upsert_creates_the_file_when_it_does_not_exist()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("srv1", "http://192.168.36.46:4024", "secret", null));
+
+            var entries = RelayTargetsFile.Load(path);
+            var only = Assert.Single(entries!);
+            Assert.Equal("srv1", only.As);
+            Assert.Equal("http://192.168.36.46:4024", only.Target);
+            Assert.Equal("secret", only.Token);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Upsert_appends_a_new_target_and_keeps_the_others()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, """{"targets":[{"as":"w11","target":"192.168.32.93","token":"t"}]}""");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("srv1", "192.168.36.46", "secret", null));
+
+            var entries = RelayTargetsFile.Load(path)!;
+            Assert.Equal(2, entries.Count);
+            Assert.Contains(entries, e => e.As == "w11");
+            Assert.Contains(entries, e => e.As == "srv1" && e.Token == "secret");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Upsert_replaces_an_existing_alias_case_insensitively_a_repoint()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, """{"targets":[{"as":"w11","target":"10.0.0.1","token":"old"}]}""");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("W11", "10.0.0.2", "new", null));
+
+            var only = Assert.Single(RelayTargetsFile.Load(path)!);
+            Assert.Equal("10.0.0.2", only.Target);
+            Assert.Equal("new", only.Token);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Upsert_refuses_to_overwrite_a_malformed_file()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, "{ this is not json");
+        try
+        {
+            Assert.Throws<RelayException>(() =>
+                RelayTargetsFile.Upsert(path, new RelayTargetEntry("srv1", "192.168.36.46", "secret", null)));
+
+            // the broken file is left untouched, not replaced with a half-file
+            Assert.Equal("{ this is not json", File.ReadAllText(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Upsert_requires_an_alias()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+
+        Assert.ThrowsAny<ArgumentException>(() =>
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry(null, "192.168.36.46", "secret", null)));
+    }
 }

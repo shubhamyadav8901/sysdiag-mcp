@@ -157,10 +157,47 @@ public static class RelayServer
         var (used, count) = await state.ConnectAsync(alias, address, token, ct).ConfigureAwait(false);
         await NotifyToolsChanged(ctx, ct).ConfigureAwait(false);
 
+        // Only reached once the connect succeeded, so a wrong token (which 401s above) never writes a
+        // dud entry to the file. Persist so a relay restart pre-connects this target and its tools are
+        // callable from the first tools/list - which is the fix for a client that only reads the tool
+        // list at startup and so cannot see a target connected mid-session.
+        var persist = OptionalBool(args, "persist") ?? true;
+        var sep = RelayState.AliasSeparator;
+
         return Text(
-            $"Connected to {address} as '{used}'. Its {count} tools are listed here as " +
-            $"{used}{RelayState.AliasSeparator}<tool> and calls forward to it. Connect more targets under " +
-            "other aliases to drive several at once; 'connect' the same alias again to repoint it.");
+            $"Connected to {address} as '{used}'. Its {count} tools forward as {used}{sep}<tool>. " +
+            Persisted(used, address, token, persist) + "\n" +
+            $"If {used}{sep}* are not callable yet, this client only reads its tool list at startup: " +
+            "reconnect windiag (/mcp) or start a fresh session and they will be pre-connected. " +
+            "Connect more targets under other aliases to drive several at once; connect the same alias to repoint.");
+    }
+
+    /// <summary>Saves a just-connected target to the targets file, or explains why it could not.</summary>
+    private static string Persisted(string alias, string address, string token, bool persist)
+    {
+        if (!persist)
+        {
+            return "Not saved to the targets file (persist=false), so it lasts only until the relay restarts.";
+        }
+
+        var path = RelayTargetsFile.DefaultPath();
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry(alias, address, token, null));
+            return $"Saved to {path} (its bearer token included), so a restart pre-connects it.";
+        }
+        catch (RelayException ex)
+        {
+            // Parse failed: the file is malformed, so it was NOT overwritten - and the same broken file
+            // means pre-connect is already skipping every target in it. Say that, not a vague "could not save".
+            return $"NOT saved: {path} is malformed ({Describe(ex)}) - fix it, or pre-connect will keep " +
+                   "skipping every target in it. This connection still works this session.";
+        }
+        catch (Exception ex)
+        {
+            return $"Could not save it to {path} ({Describe(ex)}); it works this session, but add it there " +
+                   "by hand so a restart pre-connects it.";
+        }
     }
 
     /// <summary>
@@ -259,14 +296,18 @@ public static class RelayServer
                 "bearer token. Its tools are listed as <alias>__<tool> - the alias defaults to the host, " +
                 "or set 'as' to name it. Connect several targets under different aliases to drive them " +
                 "at once; connect the same alias again to repoint it. No restart or config change when " +
-                "an IP moves - the address is just this argument.",
+                "an IP moves - the address is just this argument. On success the target (with its token) " +
+                "is saved to the targets file so a session restart pre-connects it; if this client will " +
+                "not make the <alias>__* tools callable now, reconnect or start a fresh session and they " +
+                "will be there. Pass persist=false for a one-off connection you do not want written to disk.",
             InputSchema = RelayState.Schema("""
                 {"type":"object",
                  "properties":{
                    "target":{"type":"string","description":"Target host or IP, or a full http URL, e.g. 192.168.32.93 or http://192.168.32.93:4024"},
                    "token":{"type":"string","description":"The target server's WINDIAG_TOKEN bearer token"},
                    "as":{"type":"string","description":"Alias for this connection, prefixing its tools. Letters, digits, single _ or -, no __. Defaults to the host."},
-                   "port":{"type":"integer","description":"Port, if target is a bare host and not the default 4024"}},
+                   "port":{"type":"integer","description":"Port, if target is a bare host and not the default 4024"},
+                   "persist":{"type":"boolean","description":"Save this target (with its token) to the targets file so a restart pre-connects it. Default true; set false for a one-off connection."}},
                  "required":["target","token"]}
                 """)
         };
@@ -275,7 +316,9 @@ public static class RelayServer
         {
             Name = DisconnectName,
             Title = "Drop a connected target",
-            Description = "Disconnect one target by its alias, or all targets if no alias is given. Their tools stop being listed.",
+            Description = "Disconnect one target by its alias, or all targets if no alias is given. Their tools stop " +
+                "being listed. This is session-only and does NOT edit the targets file - the file is the durable " +
+                "pre-connect set, so a target you drop here comes back on the next restart unless you remove it there.",
             InputSchema = RelayState.Schema("""
                 {"type":"object",
                  "properties":{"alias":{"type":"string","description":"Alias to drop; omit to disconnect every target"}}}
@@ -325,6 +368,17 @@ public static class RelayServer
             && value.TryGetInt32(out var n))
         {
             return n;
+        }
+
+        return null;
+    }
+
+    private static bool? OptionalBool(IDictionary<string, JsonElement>? args, string key)
+    {
+        if (args is not null && args.TryGetValue(key, out var value)
+            && value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return value.GetBoolean();
         }
 
         return null;

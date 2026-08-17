@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WinDiag.Mcp.Relay;
 
@@ -78,11 +79,60 @@ internal static class RelayTargetsFile
         return result;
     }
 
+    /// <summary>
+    /// Adds or replaces one target in the file, keeping every other entry, so a target connected at
+    /// runtime survives a relay restart and is pre-connected next launch.
+    /// </summary>
+    /// <remarks>
+    /// A matching alias is replaced (a repoint), otherwise the target is appended. The file is parsed
+    /// first, not blindly appended to, so a malformed file throws here rather than being overwritten
+    /// with a half-file that would lose whatever it already held.
+    /// </remarks>
+    public static void Upsert(string path, RelayTargetEntry entry)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.As);
+
+        var entries = File.Exists(path)
+            ? new List<RelayTargetEntry>(Parse(File.ReadAllText(path)))
+            : new List<RelayTargetEntry>();
+
+        var index = entries.FindIndex(e => string.Equals(e.As, entry.As, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            entries[index] = entry;
+        }
+        else
+        {
+            entries.Add(entry);
+        }
+
+        File.WriteAllText(path, Serialize(entries));
+    }
+
+    private static string Serialize(IReadOnlyList<RelayTargetEntry> entries)
+    {
+        var document = new RelayTargetsDocument
+        {
+            Targets = entries
+                .Select(e => new RelayTargetEntryDto { As = e.As, Target = e.Target, Token = e.Token, Port = e.Port })
+                .ToList()
+        };
+
+        return JsonSerializer.Serialize(document, WriteOptions);
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true
+    };
+
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
     private sealed class RelayTargetsDocument
