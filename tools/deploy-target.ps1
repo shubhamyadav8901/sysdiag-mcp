@@ -624,6 +624,29 @@ if (-not $Token) {
     return
 }
 
+# A server started without WINDIAG_ALLOW_SELF_UPDATE has no update_self to call. The binary is staged
+# and verified; the swap just has to happen at the console once -- and that restart is the moment to
+# enable the flag so it never has to happen again. Detected rather than surfaced as a bare
+# "Unknown tool", which says nothing about what to do.
+$hasUpdateSelf = ($null -ne ($tools_now = & (Join-Path $PSScriptRoot 'mcp-call.ps1') `
+        -Address $address -Token $Token -Tool capabilities -Raw | ConvertFrom-Json) ) -and
+    ($tools_now.tools.tool -contains 'update_self')
+
+if (-not $hasUpdateSelf) {
+    Write-Step 'Staged and verified, but this server cannot swap itself: update_self is not enabled.'
+    Write-Host ""
+    Write-Host "  On $Target, from the ELEVATED terminal running the server:" -ForegroundColor Yellow
+    Write-Host "    (stop the server)"
+    Write-Host "    cd `"$RemotePath`""
+    Write-Host "    move /y WinDiag.Mcp.new.exe WinDiag.Mcp.exe"
+    Write-Host "    set WINDIAG_TOKEN=$Token"
+    Write-Host "    set WINDIAG_ALLOW_SELF_UPDATE=1    (so future updates need no console step)"
+    Write-Host "    WinDiag.Mcp.exe --http http://${Target}:${Port}"
+    Write-Host ""
+    Write-Note "the staged build is verified as $serverHash"
+    return
+}
+
 Write-Step "Installing via update_self"
 
 & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool update_self `
