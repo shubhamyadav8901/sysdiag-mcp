@@ -115,6 +115,11 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 null,
                 "cannot start or stop most services without administrator rights",
                 RequiresElevation: false),
+            ["run_command"] = new(
+                "arbitrary command execution on the host",
+                null,
+                "runs commands as the current account, so an unelevated server cannot touch anything " +
+                "that account cannot"),
             ["update_self"] = new(
                 "hash-verified replacement of this server's own executable",
                 null,

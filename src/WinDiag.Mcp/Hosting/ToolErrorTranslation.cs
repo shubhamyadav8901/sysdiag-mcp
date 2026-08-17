@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Access;
 using WinDiag.Mcp.Diagnostics.Activity;
+using WinDiag.Mcp.Diagnostics.Commands;
 using WinDiag.Mcp.Diagnostics.Control;
 using WinDiag.Mcp.Diagnostics.Dumps;
 using WinDiag.Mcp.Diagnostics.EventLogs;
@@ -55,6 +56,7 @@ public static class ToolErrorTranslation
         or ModuleQueryException
         or RegistryQueryException
         or RegistryPathException
+        or CommandExecutionException
         or ProcessControlException
         or ServiceControlException
         or SelfUpdateRejectedException

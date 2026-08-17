@@ -30,11 +30,13 @@ public sealed class ToolRegistrationTests
             .ToArray();
     }
 
-    private static WinDiagOptions Options(bool readOnly = false, bool allowSelfUpdate = false) =>
+    private static WinDiagOptions Options(
+        bool readOnly = false, bool allowSelfUpdate = false, bool allowCommands = false) =>
         WinDiagOptions.FromEnvironment(new System.Collections.Hashtable
         {
             ["WINDIAG_READ_ONLY"] = readOnly ? "1" : "0",
-            ["WINDIAG_ALLOW_SELF_UPDATE"] = allowSelfUpdate ? "1" : "0"
+            ["WINDIAG_ALLOW_SELF_UPDATE"] = allowSelfUpdate ? "1" : "0",
+            ["WINDIAG_ALLOW_COMMAND_EXECUTION"] = allowCommands ? "1" : "0"
         });
 
     [Fact]
@@ -78,5 +80,23 @@ public sealed class ToolRegistrationTests
         // Replacing the server's own elevated binary is the largest change this server can make, so
         // read-only wins over the self-update grant rather than the other way round.
         Assert.DoesNotContain("update_self", ToolNames(Options(readOnly: true, allowSelfUpdate: true)));
+    }
+
+    [Fact]
+    public void Keeps_run_command_off_unless_it_is_asked_for()
+    {
+        // The default server is not a shell. run_command turns the bearer token into arbitrary code
+        // execution, so it must never appear without the deployment explicitly granting it.
+        Assert.DoesNotContain("run_command", ToolNames(Options()));
+        Assert.DoesNotContain("run_command", ToolNames(Options(allowSelfUpdate: true)));
+        Assert.Contains("run_command", ToolNames(Options(allowCommands: true)));
+    }
+
+    [Fact]
+    public void Refuses_run_command_in_read_only_mode_even_when_allowed()
+    {
+        // A read-only server must never be a shell, whatever else it was granted -- the same
+        // precedence update_self follows.
+        Assert.DoesNotContain("run_command", ToolNames(Options(readOnly: true, allowCommands: true)));
     }
 }

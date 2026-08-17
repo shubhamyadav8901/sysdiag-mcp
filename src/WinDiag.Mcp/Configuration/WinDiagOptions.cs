@@ -65,6 +65,19 @@ public sealed record WinDiagOptions
     /// </remarks>
     public bool AllowSelfUpdate { get; init; }
 
+    /// <summary>Whether the server may run an arbitrary command line on request.</summary>
+    /// <remarks>
+    /// <para>Off unless explicitly enabled, and the most consequential flag here. Every other tool
+    /// answers a specific question or performs a bounded action; this one turns the bearer token into
+    /// arbitrary code execution as whatever account the server runs under — SYSTEM or an administrator
+    /// on a target machine. It is the one capability the diagnostics design otherwise excludes on
+    /// purpose.</para>
+    /// <para>It is gated the same way <see cref="AllowSelfUpdate"/> is, and <see cref="ReadOnly"/>
+    /// overrides it: a read-only server must never be a shell. Enabling it is a deliberate per-deployment
+    /// grant — "this token may run anything here" — not a default.</para>
+    /// </remarks>
+    public bool AllowCommandExecution { get; init; }
+
     /// <summary>Where capture artifacts (dumps, activity traces) are written.</summary>
     /// <remarks>
     /// Defaults under the temp directory rather than beside the executable: the exe is often on a share
@@ -90,6 +103,7 @@ public sealed record WinDiagOptions
         {
             ReadOnly = ReadBoolean(environment, "WINDIAG_READ_ONLY", defaultValue: false),
             AllowSelfUpdate = ReadBoolean(environment, "WINDIAG_ALLOW_SELF_UPDATE", defaultValue: false),
+            AllowCommandExecution = ReadBoolean(environment, "WINDIAG_ALLOW_COMMAND_EXECUTION", defaultValue: false),
             ExternalToolTimeout = TimeSpan.FromSeconds(
                 ReadInt32(environment, "WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS", 120, min: 1, max: 3600)),
             MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 200, min: 1, max: 10_000),
@@ -104,7 +118,7 @@ public sealed record WinDiagOptions
         $"readOnly={ReadOnly}, externalToolTimeout={ExternalToolTimeout.TotalSeconds:0}s, " +
         $"maxResults={MaxResults}, httpBind={HttpBind ?? "(stdio)"}, " +
         $"token={(Token is null ? "(generated)" : "(configured)")}, artifactDir={ArtifactDirectory}, " +
-        $"allowSelfUpdate={AllowSelfUpdate}";
+        $"allowSelfUpdate={AllowSelfUpdate}, allowCommandExecution={AllowCommandExecution}";
 
     /// <summary>Redacted by construction — see the note on the type.</summary>
     public override string ToString() => Describe();

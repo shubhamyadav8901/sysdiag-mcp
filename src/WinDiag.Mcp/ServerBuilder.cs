@@ -5,6 +5,7 @@ using WinDiag.Mcp.Diagnostics.Access;
 using WinDiag.Mcp.Diagnostics.Activity;
 using WinDiag.Mcp.Diagnostics.Autostart;
 using WinDiag.Mcp.Diagnostics.Capabilities;
+using WinDiag.Mcp.Diagnostics.Commands;
 using WinDiag.Mcp.Diagnostics.Dumps;
 using WinDiag.Mcp.Diagnostics.EventLogs;
 using WinDiag.Mcp.Diagnostics.External;
@@ -41,6 +42,8 @@ public static class ServerBuilder
 
         Environment:
           WINDIAG_READ_ONLY                       1/true to drop all state-changing tools (default: false)
+          WINDIAG_ALLOW_COMMAND_EXECUTION         1/true to register run_command, an arbitrary shell
+                                                  as the server's account (default: false; read-only wins)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
           WINDIAG_MAX_RESULTS                     Row cap per tool call, 1..10000 (default: 200)
           WINDIAG_HTTP_BIND                       Address to serve on; same as --http
@@ -105,6 +108,15 @@ public static class ServerBuilder
             mcp.WithTools<SelfUpdateTools>();
         }
 
+        // The heaviest grant of all, and the only tool that is a general shell. Gated behind its own
+        // flag and refused under read-only for the same reason update_self is: turning the bearer token
+        // into arbitrary code execution on an elevated host is a deliberate per-deployment decision, not
+        // something a default server should quietly offer.
+        if (options.AllowCommandExecution && !options.ReadOnly)
+        {
+            mcp.WithTools<CommandTools>();
+        }
+
         return mcp;
     }
 
@@ -128,6 +140,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<ISignatureInspector, WinTrustSignatureInspector>();
         services.AddSingletonIfMissing<IAccessInspector, WindowsAccessInspector>();
         services.AddSingletonIfMissing<IRegistryInspector, WindowsRegistryInspector>();
+        services.AddSingletonIfMissing<ICommandRunner, WindowsCommandRunner>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
@@ -153,6 +166,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<ModuleTools, ModuleTools>();
         services.AddSingletonIfMissing<AutostartTools, AutostartTools>();
         services.AddSingletonIfMissing<RegistryTools, RegistryTools>();
+        services.AddSingletonIfMissing<CommandTools, CommandTools>();
         return services;
     }
 
