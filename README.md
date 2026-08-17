@@ -91,21 +91,27 @@ resembles a lateral-movement primitive.
 ```
 
 It asks the target which architecture it is, publishes that build, downloads the Sysinternals binaries
-pinned in `tools/sysinternals.json`, verifies each one's SHA-256 *and* its Microsoft signature, copies
-everything over the admin share re-checking the hash after each copy, records what it staged in
-`windiag-staged.json` on the target, and then calls `update_self` and waits for the server to come
+pinned in `tools/sysinternals.json`, verifies each one's SHA-256 *and* its Microsoft signature, stages
+everything **over the running server's own `put_file` channel** — no SMB share — records what it staged
+in `windiag-staged.json` on the target, and then calls `update_self` and waits for the server to come
 back. It finishes by printing any tool that is not fully available.
 
-Without `-Token` it stages everything and prints the command to start the server by hand — which is
-the first-run case, since there is nothing running yet to swap.
+Without `-Token` (the first-ever deploy, when nothing is running to receive a `put_file`) it stages
+over the SMB admin share instead and prints the command to start the server by hand. That first hop is
+the one no tool on the target can remove; everything after it rides HTTP.
 
-Two behaviours are deliberate and worth knowing:
+Three behaviours are deliberate and worth knowing:
 
 - **A Sysinternals version change stops the deploy.** `download.sysinternals.com` always serves the
   latest build, so a pinned hash is how a version change gets *noticed* rather than absorbed. Re-run
   with `-AcceptUpstreamChange` to re-pin, and commit that as a deliberate bump.
 - **`windiag-staged.json` is compared before it is rewritten.** A file someone replaced on the target
   by hand is reported as drift, not silently overwritten. That report is the point of the file.
+- **`-Smb` forces the share even with a server running.** Needed once to land a build whose `put_file`
+  protocol the *running* server does not yet speak (chunked/append support arrived this way), and as a
+  fallback if an HTTP transfer will not go through. The large server binary is sent in hash-verified
+  4&#160;MB chunks over HTTP — a single ~57&#160;MB base64 body is more than a 32-bit server can decode
+  at once, and a per-chunk hash catches a corrupt chunk on a lossy link at the chunk, not minutes later.
 
 The rest of this section is what the script automates, and what to do when it cannot be used.
 
