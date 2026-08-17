@@ -40,6 +40,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting |
 | `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand |
+| `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
 
 ## Build and test
 
@@ -293,6 +294,7 @@ level through an ordinary tool call. The token is the whole boundary.
 |---|---|---|
 | `WINDIAG_READ_ONLY` | `false` | `1`/`true` drops all state-changing tools from registration |
 | `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`. Gated separately because it lets the bearer token replace an elevated binary; `WINDIAG_READ_ONLY` still overrides it |
+| `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
 | `WINDIAG_MAX_RESULTS` | `200` | Row cap per tool call (1–10000) |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
