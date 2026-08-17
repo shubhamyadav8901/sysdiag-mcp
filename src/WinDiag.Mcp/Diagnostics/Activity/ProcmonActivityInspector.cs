@@ -384,7 +384,8 @@ public sealed class ProcmonActivityInspector : IActivityInspector
 
         if (!Contains(e.ProcessName, filter.ProcessName)
             || !Contains(e.Path, filter.PathContains)
-            || !Contains(e.Operation, filter.Operation))
+            || !Contains(e.Operation, filter.Operation)
+            || !Contains(e.Detail, filter.DetailContains))
         {
             return false;
         }

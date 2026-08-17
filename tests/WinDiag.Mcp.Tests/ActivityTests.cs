@@ -229,6 +229,32 @@ public sealed class ActivityQueryTests
     }
 
     [Fact]
+    public void Filters_by_a_detail_substring_such_as_disposition()
+    {
+        // The fixture carries one 'Disposition: OpenIf' among several 'Disposition: Open', so this proves
+        // the Detail predicate is applied server-side and discriminates one disposition from another.
+        var result = Inspector().Query(
+            FixturePath, new ActivityFilter(DetailContains: "Disposition: OpenIf"), CancellationToken.None);
+
+        Assert.Equal(40, result.Scanned);
+        Assert.Equal(1, result.Matched);
+        Assert.All(result.Events, e => Assert.Contains("OpenIf", e.Detail));
+    }
+
+    [Fact]
+    public void The_rendered_events_show_the_detail_column()
+    {
+        // Detail used to be in structuredContent only, so a reader of the summary could not see the
+        // disposition they had just filtered on.
+        var filter = new ActivityFilter(DetailContains: "Disposition: OpenIf");
+        var result = Inspector().Query(FixturePath, filter, CancellationToken.None);
+
+        var summary = WinDiag.Mcp.Tools.ActivityRendering.RenderQuery(result, filter);
+
+        Assert.Contains("Disposition: OpenIf", summary);
+    }
+
+    [Fact]
     public void Explains_a_capture_path_that_does_not_exist()
     {
         var missing = Path.Combine(Path.GetTempPath(), $"windiag-absent-{Guid.NewGuid():N}.csv");
@@ -260,8 +286,9 @@ public sealed class ActivityFilterTests
         int pid = 42,
         string operation = "CreateFile",
         string path = @"C:\Users\me\doc.docx",
-        string result = "SUCCESS") =>
-        new("10:00:00", process, pid, operation, path, result, string.Empty);
+        string result = "SUCCESS",
+        string detail = "") =>
+        new("10:00:00", process, pid, operation, path, result, detail);
 
     [Fact]
     public void An_unfiltered_query_matches_everything()
@@ -307,6 +334,27 @@ public sealed class ActivityFilterTests
         var filter = new ActivityFilter(ProcessName: "winword", Operation: "RegQueryValue");
 
         Assert.False(ProcmonActivityInspector.Matches(Event(), filter));
+    }
+
+    [Fact]
+    public void Matches_a_detail_substring_case_insensitively()
+    {
+        var e = Event(detail: "Desired Access: Generic Write, Disposition: OverwriteIf, ShareMode: None");
+
+        Assert.True(ProcmonActivityInspector.Matches(e, new ActivityFilter(DetailContains: "Disposition: OverwriteIf")));
+        Assert.True(ProcmonActivityInspector.Matches(e, new ActivityFilter(DetailContains: "disposition: overwriteif")));
+        Assert.False(ProcmonActivityInspector.Matches(e, new ActivityFilter(DetailContains: "Disposition: Supersede")));
+    }
+
+    [Fact]
+    public void The_detail_filter_separates_a_creating_open_from_a_plain_open()
+    {
+        // The whole point: keep a CreateFile that CREATES the file, drop one that only opens it - the
+        // predicate lives in Detail, so path/operation alone cannot tell them apart.
+        var filter = new ActivityFilter(Operation: "CreateFile", DetailContains: "Disposition: OverwriteIf");
+
+        Assert.True(ProcmonActivityInspector.Matches(Event(detail: "Disposition: OverwriteIf"), filter));
+        Assert.False(ProcmonActivityInspector.Matches(Event(detail: "Disposition: Open"), filter));
     }
 }
 

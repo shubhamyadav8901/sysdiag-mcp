@@ -47,7 +47,12 @@ public sealed record ActivityFilter(
     string? PathContains = null,
     string? Operation = null,
     bool ProblemsOnly = false,
-    int MaxEvents = 100);
+    int MaxEvents = 100,
+    // A substring of the Detail column, matched server-side. Detail is Procmon's operation-specific
+    // text ("Desired Access: ..., Disposition: OverwriteIf, ShareMode: ..."), so this is how a predicate
+    // that lives only in Detail -- Disposition, Desired Access, ShareMode -- gets pushed to the scan
+    // instead of pulled back and filtered by the caller.
+    string? DetailContains = null);
 
 /// <summary>Captures file and registry activity, and queries what was captured.</summary>
 public interface IActivityInspector

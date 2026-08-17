@@ -84,8 +84,9 @@ public sealed class ActivityQueryTools
         "Filter a trace saved by capture_activity. This is where the answer usually is: set " +
         "problemsOnly to see only operations that failed - ACCESS DENIED, NAME NOT FOUND, PATH NOT " +
         "FOUND, SHARING VIOLATION - which is exactly what a human does in the Process Monitor GUI. " +
-        "Also filters by process, path substring and operation, and always reports the busiest paths " +
-        "and processes among the matches so you can see where activity is concentrated.")]
+        "Also filters by process, path substring, operation and a substring of the Detail column, and " +
+        "always reports the busiest paths and processes among the matches so you can see where activity " +
+        "is concentrated.")]
     public QueryActivityResult QueryActivity(
         [Description("The csvPath returned by capture_activity")]
         string capturePath,
@@ -99,6 +100,10 @@ public sealed class ActivityQueryTools
         string? pathContains = null,
         [Description("Only this operation, e.g. 'CreateFile' or 'RegQueryValue'")]
         string? operation = null,
+        [Description("Only events whose Detail column contains this text. Detail holds operation-specific " +
+            "fields as literal text, so this is how you filter on them - e.g. 'Disposition: OverwriteIf' to " +
+            "keep only a CreateFile that creates the file rather than opens it, or 'Desired Access: Generic Write'.")]
+        string? detailContains = null,
         [Description("Maximum events to return; the summary counts cover every match regardless")]
         int maxEvents = 100,
         CancellationToken cancellationToken = default)
@@ -111,7 +116,8 @@ public sealed class ActivityQueryTools
             PathContains: pathContains,
             Operation: operation,
             ProblemsOnly: problemsOnly,
-            MaxEvents: Math.Clamp(maxEvents, 1, _options.MaxResults));
+            MaxEvents: Math.Clamp(maxEvents, 1, _options.MaxResults),
+            DetailContains: detailContains);
 
         var result = _activity.Query(capturePath, filter, cancellationToken);
 
@@ -224,7 +230,17 @@ internal static class ActivityRendering
             builder.Append("- ").Append(e.Time).Append(' ').Append(e.ProcessName)
                 .Append(" (").Append(e.ProcessId).Append(") ").Append(e.Operation)
                 .Append(' ').Append(Truncate(e.Path, 160))
-                .Append(" -> ").Append(e.Result).AppendLine();
+                .Append(" -> ").Append(e.Result);
+
+            // Detail carries the operation-specific fields (Disposition, Desired Access, ShareMode) that
+            // are the whole point of a detailContains filter - and used to be in structuredContent only,
+            // so a reader of this summary could not see what they had just filtered on.
+            if (!string.IsNullOrEmpty(e.Detail))
+            {
+                builder.Append("  [").Append(Truncate(e.Detail, 160)).Append(']');
+            }
+
+            builder.AppendLine();
         }
 
         if (result.Truncated)
