@@ -59,6 +59,7 @@ Sysinternals installed, rather than failing or silently passing.
 ```
 dotnet run --project src/WinDiag.Mcp                      # stdio
 dotnet run --project src/WinDiag.Mcp -- --http http://127.0.0.1:7777
+dotnet run --project src/WinDiag.Mcp -- --relay           # local relay to any target (see below)
 WinDiag.Mcp --help
 ```
 
@@ -74,6 +75,34 @@ Locally over stdio:
   }
 }
 ```
+
+### One stable MCP entry for a fleet of targets — the relay
+
+The targets are lab VMs whose IP changes every time, so a fixed `--http <url>` registration goes stale
+on every reboot. `--relay` solves that: it runs a **local stdio** MCP server on the base machine — no
+address of its own, so the registration never changes — that forwards to whichever target you point it
+at *at runtime*.
+
+Register it once:
+
+```json
+{ "mcpServers": { "windiag": { "type": "stdio",
+    "command": "…/artifacts/relay/WinDiag.Mcp.exe", "args": ["--relay"] } } }
+```
+
+It exposes three control tools — `connect`, `disconnect`, `status`. Call `connect` with the target's
+current address and token, and that target's full tool set appears here (via a `tools/list_changed`
+notification) and every call forwards to it. `connect` again with a different address to repoint — no
+config edit, no restart. One registration, any target, IP as runtime data:
+
+```
+connect { target: "192.168.32.93", token: "…" }   → 23 tools from that target appear
+process_list { … }                                → forwarded to .93
+connect { target: "192.168.32.76", token: "…" }    → repointed; now forwards to .76
+```
+
+The relay is a client of the real servers, not a diagnostics server itself — it holds no privileges and
+runs unelevated on the base machine.
 
 ## Deploying to a target machine
 

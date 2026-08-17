@@ -94,6 +94,9 @@ public sealed class ToolErrorTranslationTests
             // Startup configuration is validated before any transport exists, so it can never reach a
             // tool call. Everything else here can.
             .Where(type => type != typeof(ConfigurationException))
+            // The relay is a separate stdio server with its own call handler that catches and formats
+            // RelayException itself; it never flows through this filter, which serves the main server.
+            .Where(type => type != typeof(WinDiag.Mcp.Relay.RelayException))
             .Where(type => !ToolErrorTranslation.IsDiagnostic(Instantiate(type)))
             .Select(type => type.Name)
             .ToArray();

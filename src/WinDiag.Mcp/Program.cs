@@ -12,6 +12,14 @@ if (args.Any(a => a is "--help" or "-h" or "/?"))
     return 0;
 }
 
+// Relay mode: a local stdio server that forwards to whichever target windiag it is pointed at, so one
+// fixed MCP registration reaches any target at a runtime-chosen address. It is a client of the real
+// servers, not a diagnostics server itself, so it shares none of the tool wiring below.
+if (args.Any(a => a is "--relay"))
+{
+    return await WinDiag.Mcp.Relay.RelayServer.RunAsync(defaultPort: 4024).ConfigureAwait(false);
+}
+
 WinDiagOptions options;
 string? bind;
 try
