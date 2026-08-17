@@ -100,17 +100,23 @@ function Copy-Verified {
             # -ErrorAction Stop explicitly: catch [type] only fires on a terminating error, and relying
             # on $ErrorActionPreference for that would make this depend on a setting far away.
             Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+            $actual = Get-Sha256 $Destination
         }
         catch [System.IO.IOException] {
-            # A Sysinternals binary that is mid-run is locked, and retrying will not help. Saying
-            # "could not be copied intact" here would send someone looking for a corrupt transfer when
-            # the actual answer is that a capture or a handle scan is still going.
-            throw "$name is in use on the target and cannot be replaced ($($_.Exception.Message)). " +
-                  "A capture_activity or path_handle_search is most likely still running -- a handle " +
-                  "scan takes minutes. Wait for it to finish and re-run."
+            # Two very different IOExceptions land here. A dropped share session ("network name is no
+            # longer available") is transient on a slow link and usually recovers on the next access --
+            # Windows re-establishes the connection -- so it is worth retrying. A genuine lock (a running
+            # binary) will not recover by retrying, but telling the two apart up front is unreliable, so
+            # retry either way and let the exhausted-attempts message name both causes.
+            if ($i -lt $Attempts) {
+                Write-Warning "${name}: $($_.Exception.Message.Trim()) -- retrying (attempt $i/$Attempts)"
+                Start-Sleep -Seconds 3
+                continue
+            }
+            throw "$name could not be copied to $Destination after $Attempts attempts: " +
+                  "$($_.Exception.Message.Trim()) Either the link kept dropping the share session, or a " +
+                  "running binary holds it locked (wait for a capture or handle scan to finish)."
         }
-
-        $actual = Get-Sha256 $Destination
 
         if ($actual -eq $expected) {
             return $expected
