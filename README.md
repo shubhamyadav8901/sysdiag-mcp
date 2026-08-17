@@ -124,6 +124,13 @@ missing or malformed file just means "pre-connect nothing"; an unreachable targe
 5-second total budget so a powered-off VM never stalls startup) with the `connect` line to retry it
 logged to stderr. The file holds bearer tokens in plaintext, so keep it readable only by your account.
 
+You rarely edit it by hand: a successful `connect` **writes the target (with its token) into this file**
+by default, so the naive fix — reconnect `windiag` or start a fresh session — actually works, because
+the relaunch pre-connects what the last `connect` saved. (A plain reconnect *without* that would drop a
+runtime connection and surface only the three control tools — which is the trap to avoid.) Pass
+`persist: false` for a one-off connection you do not want written to disk; `disconnect` is session-only
+and never edits the file, so this file stays the durable set.
+
 The relay is a client of the real servers, not a diagnostics server itself — it holds no privileges and
 runs unelevated on the base machine.
 
@@ -166,6 +173,32 @@ Three behaviours are deliberate and worth knowing:
   at once, and a per-chunk hash catches a corrupt chunk on a lossy link at the chunk, not minutes later.
 
 The rest of this section is what the script automates, and what to do when it cannot be used.
+
+### Reaching the admin share
+
+Both the first-deploy hop and `-Smb` write to `\\<target>\C$`, which only opens to an administrator whose
+token is *not* filtered. Two different failures turn up here, and they mean different things:
+
+- **`The password is invalid`** — authentication was rejected. A wrong password, or the wrong account
+  *scope*: `/user:<host>\name` names a **local** account, but a domain-joined target wants `DOMAIN\name`.
+  Repeated misses can lock the account, which then surfaces as the next error instead.
+- **`System error 5 … Access is denied`** — the credential authenticated but is not authorised for `C$`.
+  For a **local** admin this is UAC remote token filtering: over the network a local admin is handed a
+  filtered standard-user token and `C$`/`ADMIN$` are denied even with the right password. Set this **on
+  the target** once, at the console or over RDP — it cannot be set over the channel it is blocking — and
+  new sessions get through with no reboot:
+  ```
+  reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" ^
+    /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
+  ```
+  This is the same prerequisite the lab VMs needed. The built-in `Administrator` (RID 500) is exempt from
+  filtering, so `net use \\<target>\C$ /user:<target>\Administrator` connects without the policy where
+  that account is enabled.
+
+Confirm the share opens before deploying over it:
+```
+net use \\<target>\C$ /user:<target>\admin
+```
 
 **1. Publish one file.** Self-contained, so the target needs no .NET runtime:
 
