@@ -9,6 +9,21 @@
     <AssemblyName>WinDiag.Mcp</AssemblyName>
     <RootNamespace>WinDiag.Mcp</RootNamespace>
 
+    <!-- Icon and version metadata, so the exe is identifiable in Explorer, Task Manager and endpoint
+         reports rather than a nameless binary. file_signatures and process_modules surface Company and
+         the versions below; the icon is the Windows-magnifier logo in Resources. -->
+    <ApplicationIcon>Resources\windiag.ico</ApplicationIcon>
+    <Company>Shubham Yadav</Company>
+    <Product>WinDiag</Product>
+    <AssemblyTitle>WinDiag MCP Server</AssemblyTitle>
+    <Description>Windows enterprise-debugging MCP server, backed by Sysinternals.</Description>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Copyright>Copyright © 2026 Shubham Yadav</Copyright>
+    <!-- Keep ProductVersion a clean 1.0.0 rather than 1.0.0+<commit>, which is what file_signatures reports. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
     <!--
       Step 3 ships this as a single self-contained exe to copy onto a target machine, published with
       SelfContained, PublishSingleFile and IncludeNativeLibrariesForSelfExtract set on the command
