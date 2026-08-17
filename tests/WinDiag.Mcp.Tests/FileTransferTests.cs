@@ -217,6 +217,37 @@ public sealed class FileReceiverTests : IDisposable
     }
 
     [Fact]
+    public void Rejects_a_chunk_that_fails_its_own_hash_before_touching_disk()
+    {
+        // The per-chunk check: a chunk corrupted in transit is caught in memory, and because nothing is
+        // written the file is left exactly as it was -- so the caller can re-send that chunk. Here the
+        // first chunk lands, then a second chunk arrives with a hash that does not match its bytes.
+        var target = Path.Combine(_artifactDir, "chunk-guard.bin");
+        var recv = Receiver();
+        recv.Receive(new FileWriteRequest(target, Bytes("good first chunk"), Append: false), CancellationToken.None);
+        var before = File.ReadAllBytes(target);
+
+        var ex = Assert.Throws<FileTransferException>(() => recv.Receive(
+            new FileWriteRequest(target, Bytes("second chunk"), Append: true, ChunkSha256: Sha(Bytes("wrong"))),
+            CancellationToken.None));
+
+        Assert.Contains("arrived corrupted", ex.Message);
+        Assert.Equal(before, File.ReadAllBytes(target));   // the rejected chunk changed nothing
+    }
+
+    [Fact]
+    public void Accepts_a_chunk_whose_hash_matches_its_bytes()
+    {
+        var target = Path.Combine(_artifactDir, "chunk-ok.bin");
+        var content = Bytes("verified chunk");
+
+        Receiver().Receive(
+            new FileWriteRequest(target, content, Append: false, ChunkSha256: Sha(content)), CancellationToken.None);
+
+        Assert.Equal(content, File.ReadAllBytes(target));
+    }
+
+    [Fact]
     public void An_append_chunk_is_still_bound_by_scope()
     {
         // Chunking must not become a scope bypass: an append outside the owned dirs is refused just like

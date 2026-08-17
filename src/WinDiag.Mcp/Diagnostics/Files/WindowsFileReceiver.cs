@@ -51,6 +51,20 @@ public sealed class WindowsFileReceiver : IFileReceiver
                 "one of those directories. (run_command can also place a file anywhere if it is enabled.)");
         }
 
+        // Checked in memory before any disk write, so a chunk corrupted on a lossy link is rejected at
+        // the chunk -- and because nothing has been written, the file is untouched and the caller can
+        // re-send that chunk safely.
+        if (request.ChunkSha256 is { } chunkExpected)
+        {
+            var chunkSha = Convert.ToHexString(SHA256.HashData(request.Content));
+            if (!chunkSha.Equals(chunkExpected.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new FileTransferException(
+                    $"This chunk arrived corrupted (SHA-256 {chunkSha}, expected {chunkExpected}). " +
+                    "Nothing was written; re-send it.");
+            }
+        }
+
         var existed = File.Exists(full);
         if (existed && !request.Overwrite && !request.Append)
         {

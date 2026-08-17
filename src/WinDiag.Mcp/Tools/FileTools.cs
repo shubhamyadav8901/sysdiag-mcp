@@ -67,6 +67,8 @@ public sealed class FileTools
         bool overwrite = true,
         [Description("Append to the file instead of replacing it - used for the second and later chunks of a large file.")]
         bool append = false,
+        [Description("SHA-256 of THIS call's bytes, checked before writing so a chunk corrupted in transit is caught at the chunk. Safe to re-send on failure.")]
+        string? chunkSha256 = null,
         CancellationToken cancellationToken = default)
     {
         var content = Decode(contentBase64);
@@ -80,7 +82,7 @@ public sealed class FileTools
         }
 
         var result = _receiver.Receive(
-            new FileWriteRequest(path, content, expectedSha256, overwrite, append), cancellationToken);
+            new FileWriteRequest(path, content, expectedSha256, overwrite, append, chunkSha256), cancellationToken);
 
         return new PutFileResult(Render(result), result);
     }

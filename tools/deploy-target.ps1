@@ -59,7 +59,13 @@ param(
 
     # Reuse whatever is already in artifacts/ rather than publishing again.
     [switch] $SkipBuild,
-    [switch] $AcceptUpstreamChange
+    [switch] $AcceptUpstreamChange,
+
+    # Force staging over the SMB admin share even when a server is running. The staging default is the
+    # server's own HTTP channel; this is the escape hatch for the one case HTTP cannot cover -- landing
+    # a build whose put_file protocol the RUNNING server does not yet speak (the chunk/append support
+    # had to arrive this way once) -- and a fallback if the HTTP transfer will not go through.
+    [switch] $Smb
 )
 
 $ErrorActionPreference = 'Stop'
@@ -123,8 +129,8 @@ function Copy-Verified {
 
 # A running server we can push to means we can stage over put_file and never touch the admin share.
 # The first deploy has no server to receive anything, so it falls back to SMB -- the one hop no tool
-# on the target can remove.
-$script:UseHttp = [bool]$Token
+# on the target can remove -- and -Smb forces that same fallback for a running server when needed.
+$script:UseHttp = [bool]$Token -and -not $Smb
 
 <#
 .SYNOPSIS
@@ -167,9 +173,13 @@ function Get-RemoteHash([string] $Name) {
 # JSON pipeline. Small enough for that, large enough that a 43 MB binary is ~11 chunks, not hundreds.
 $script:ChunkBytes = 4 * 1024 * 1024
 
+function Get-Sha256Bytes([byte[]] $Bytes) {
+    return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)) -replace '-', '')
+}
+
 function Invoke-PutFile([string] $Target, [byte[]] $Bytes, [string] $ExpectedSha, [bool] $Append) {
     $b64 = [Convert]::ToBase64String($Bytes)
-    $callArgs = @{ path = $Target; contentBase64 = $b64; append = $Append }
+    $callArgs = @{ path = $Target; contentBase64 = $b64; append = $Append; chunkSha256 = (Get-Sha256Bytes $Bytes) }
     if ($ExpectedSha) { $callArgs.expectedSha256 = $ExpectedSha }
 
     # 300s base plus size; a single chunk is small, but the same formula covers a small file sent whole.
@@ -183,37 +193,57 @@ function Invoke-PutFile([string] $Target, [byte[]] $Bytes, [string] $ExpectedSha
     }
 }
 
+<#
+.SYNOPSIS
+    Sends a whole file over put_file, chunked and retried, verified end to end.
+.DESCRIPTION
+    Each chunk carries its own hash so a corruption on a lossy link fails at that chunk, not as an
+    opaque whole-file mismatch minutes later; the last chunk also carries the finished file's hash,
+    which the server checks against the assembled file. On any failure the whole send restarts from
+    chunk 0 -- which truncates, so a half-written attempt is wiped and the retry is unambiguous. The
+    lab link drops chunks often enough that this retry is not theoretical.
+#>
+function Send-OverHttp([string] $Target, [byte[]] $Bytes, [string] $ExpectedSha, [int] $Attempts = 3) {
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            if ($Bytes.Length -le $script:ChunkBytes) {
+                Invoke-PutFile -Target $Target -Bytes $Bytes -ExpectedSha $ExpectedSha -Append $false
+                return
+            }
+
+            $total = [Math]::Ceiling($Bytes.Length / $script:ChunkBytes)
+            if ($attempt -eq 1) {
+                Write-Note ("sending {0:N1} MB in {1} chunks (the link to a lab VM is slow; this takes a few minutes)" -f ($Bytes.Length / 1MB), $total)
+            }
+            else {
+                Write-Warning "transfer of $(Split-Path -Leaf $Target) failed; restarting from the first chunk (attempt $attempt/$Attempts)"
+            }
+
+            for ($i = 0; $i -lt $total; $i++) {
+                $offset = $i * $script:ChunkBytes
+                $len = [Math]::Min($script:ChunkBytes, $Bytes.Length - $offset)
+                $chunk = New-Object byte[] $len
+                [Array]::Copy($Bytes, $offset, $chunk, 0, $len)
+
+                $shaForChunk = if ($i -eq $total - 1) { $ExpectedSha } else { '' }
+                Invoke-PutFile -Target $Target -Bytes $chunk -ExpectedSha $shaForChunk -Append ($i -gt 0)
+                Write-Note ("  chunk {0}/{1}" -f ($i + 1), $total)
+            }
+            return
+        }
+        catch {
+            if ($attempt -eq $Attempts) { throw }
+        }
+    }
+}
+
 function Send-Staged([string] $Source, [string] $Name, [string] $ExpectedSha) {
     if (-not $script:UseHttp) {
         Copy-Verified -Source $Source -Destination (Join-Path $remoteShare $Name) | Out-Null
         return
     }
 
-    $target = Join-Path $RemotePath $Name
-    $bytes = [IO.File]::ReadAllBytes($Source)
-
-    # Small enough for one message: send it whole, with the hash checked on that single call.
-    if ($bytes.Length -le $script:ChunkBytes) {
-        Invoke-PutFile -Target $target -Bytes $bytes -ExpectedSha $ExpectedSha -Append $false
-        return
-    }
-
-    # Otherwise chunk it. First chunk writes fresh; the rest append; only the last carries the hash of
-    # the whole assembled file, which the server verifies against the finished file and rolls back on
-    # mismatch -- so a bad chunk anywhere is caught, and a corrupt transfer never reaches update_self.
-    $total = [Math]::Ceiling($bytes.Length / $script:ChunkBytes)
-    Write-Note ("sending {0:N1} MB in {1} chunks (the link to a lab VM is slow; this takes a few minutes)" -f ($bytes.Length / 1MB), $total)
-
-    for ($i = 0; $i -lt $total; $i++) {
-        $offset = $i * $script:ChunkBytes
-        $len = [Math]::Min($script:ChunkBytes, $bytes.Length - $offset)
-        $chunk = New-Object byte[] $len
-        [Array]::Copy($bytes, $offset, $chunk, 0, $len)
-
-        $shaForChunk = if ($i -eq $total - 1) { $ExpectedSha } else { '' }
-        Invoke-PutFile -Target $target -Bytes $chunk -ExpectedSha $shaForChunk -Append ($i -gt 0)
-        Write-Note ("  chunk {0}/{1}" -f ($i + 1), $total)
-    }
+    Send-OverHttp -Target (Join-Path $RemotePath $Name) -Bytes ([IO.File]::ReadAllBytes($Source)) -ExpectedSha $ExpectedSha
 }
 
 <#

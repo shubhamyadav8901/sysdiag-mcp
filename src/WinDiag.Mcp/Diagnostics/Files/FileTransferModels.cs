@@ -26,12 +26,20 @@ public enum WriteScope
 /// to decode in one go, so the caller splits it — and the integrity check moves to the last chunk,
 /// which passes <see cref="ExpectedSha256"/> for the assembled whole.
 /// </param>
+/// <param name="ChunkSha256">
+/// The hash of <em>this call's</em> bytes, checked in memory before anything is written. It catches a
+/// chunk corrupted in transit at the chunk itself rather than as an opaque whole-file mismatch minutes
+/// later — and because the check happens before the append, a rejected chunk leaves the file exactly
+/// as it was, so re-sending that chunk is safe. Distinct from <see cref="ExpectedSha256"/>, which is
+/// the finished file's hash.
+/// </param>
 public sealed record FileWriteRequest(
     string Path,
     byte[] Content,
     string? ExpectedSha256 = null,
     bool Overwrite = true,
-    bool Append = false);
+    bool Append = false,
+    string? ChunkSha256 = null);
 
 /// <summary>What writing a file produced.</summary>
 /// <param name="Scope">
