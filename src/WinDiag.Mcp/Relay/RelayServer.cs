@@ -27,6 +27,14 @@ public static class RelayServer
     private const string DisconnectName = "disconnect";
     private const string StatusName = "status";
 
+    /// <summary>
+    /// The whole time budget for pre-connecting the targets file, awaited before the host answers.
+    /// A target that is off is the normal case for a fleet of lab VMs, so pre-connect must never hold
+    /// the MCP handshake open for long; whatever does not connect inside this window is skipped with a
+    /// logged retry line, and the relay comes up with the control tools regardless.
+    /// </summary>
+    private static readonly TimeSpan PreConnectBudget = TimeSpan.FromSeconds(5);
+
     public static async Task<int> RunAsync(int defaultPort)
     {
         var builder = Host.CreateApplicationBuilder();
@@ -49,6 +57,12 @@ public static class RelayServer
             .WithCallToolHandler((ctx, ct) => CallTool(state, defaultPort, ctx, ct));
 
         var host = builder.Build();
+
+        // Pre-connect the targets file before the host answers, so the very first tools/list a client
+        // enumerates already carries each target's alias__tool tools. This is awaited in full -- firing
+        // it in the background would let the first tools/list race a half-populated connection set and
+        // enumerate one VM instead of two. Bounded so an off target cannot stall the handshake.
+        await PreConnectAsync(state, defaultPort).ConfigureAwait(false);
 
         Console.Error.WriteLine(
             "[windiag-relay] stdio relay started. Call 'connect' with a target windiag address and token; " +
@@ -133,13 +147,8 @@ public static class RelayServer
     {
         var target = RequireString(args, "target");
         var token = RequireString(args, "token");
-        var port = OptionalInt(args, "port") ?? defaultPort;
 
-        // Accept either a full URL or a bare host[:port]. A bare host is the common case -- the caller
-        // has an IP from wherever the VM was assigned one -- so the relay builds the URL around it.
-        var address = target.Contains("://", StringComparison.Ordinal)
-            ? target
-            : $"http://{target}:{port}";
+        var address = BuildAddress(target, OptionalInt(args, "port"), defaultPort);
 
         // The alias names this connection so several targets can be live at once. Default it to the
         // host so a single-target caller need not think about it.
@@ -153,6 +162,81 @@ public static class RelayServer
             $"{used}{RelayState.AliasSeparator}<tool> and calls forward to it. Connect more targets under " +
             "other aliases to drive several at once; 'connect' the same alias again to repoint it.");
     }
+
+    /// <summary>
+    /// Connects every target listed in the targets file, within one shared time budget, before the host
+    /// starts. Absent file means nothing to do; a malformed one is logged and skipped so a typo never
+    /// costs the operator the control tools; an unreachable target is logged with the call to retry it.
+    /// </summary>
+    private static async Task PreConnectAsync(RelayState state, int defaultPort)
+    {
+        var path = RelayTargetsFile.DefaultPath();
+
+        IReadOnlyList<RelayTargetEntry>? entries;
+        try
+        {
+            entries = RelayTargetsFile.Load(path);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[windiag-relay] ignoring the targets file {path}: {Describe(ex)} " +
+                "Starting with no pre-connected targets; use 'connect' to add them.");
+            return;
+        }
+
+        if (entries is null || entries.Count == 0)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine(
+            $"[windiag-relay] pre-connecting {entries.Count} target(s) from {path} " +
+            $"(up to {PreConnectBudget.TotalSeconds:0}s)...");
+
+        using var budget = new CancellationTokenSource(PreConnectBudget);
+        await Task.WhenAll(entries.Select(entry => PreConnectOneAsync(state, entry, defaultPort, budget.Token)))
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Connects one target, turning any failure into a logged retry line rather than a throw.</summary>
+    private static async Task PreConnectOneAsync(
+        RelayState state, RelayTargetEntry entry, int defaultPort, CancellationToken ct)
+    {
+        var address = BuildAddress(entry.Target, entry.Port, defaultPort);
+        var alias = entry.As ?? RelayState.DefaultAlias(address);
+
+        try
+        {
+            var (used, count) = await state.ConnectAsync(alias, address, entry.Token, ct).ConfigureAwait(false);
+            Console.Error.WriteLine($"[windiag-relay] pre-connected {address} as '{used}' ({count} tools).");
+        }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine(
+                $"[windiag-relay] pre-connect to {address} (as '{alias}') timed out. " +
+                $"Retry once it is up with: connect target={entry.Target} token=<token>{AsArgument(entry)}.");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[windiag-relay] could not pre-connect {address} (as '{alias}'): {Describe(ex)} " +
+                $"Retry with: connect target={entry.Target} token=<token>{AsArgument(entry)}.");
+        }
+    }
+
+    private static string AsArgument(RelayTargetEntry entry) =>
+        entry.As is null ? string.Empty : $" as={entry.As}";
+
+    /// <summary>Builds the target URL from a bare host[:port] or passes a full URL through unchanged.</summary>
+    /// <remarks>
+    /// A bare host is the common case -- the caller has an IP from wherever the VM was assigned one -- so
+    /// the relay wraps it in http://host:port, falling back to the default port when none is given.
+    /// </remarks>
+    private static string BuildAddress(string target, int? port, int defaultPort) =>
+        target.Contains("://", StringComparison.Ordinal)
+            ? target
+            : $"http://{target}:{port ?? defaultPort}";
 
     /// <summary>Tells the client the tool list changed so it re-fetches after a connect or disconnect.</summary>
     private static async ValueTask NotifyToolsChanged(RequestContext<CallToolRequestParams> ctx, CancellationToken ct)

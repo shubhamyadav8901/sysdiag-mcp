@@ -101,6 +101,29 @@ process_list { … }                                → forwarded to .93
 connect { target: "192.168.32.76", token: "…" }    → repointed; now forwards to .76
 ```
 
+Connect several targets under different aliases (`connect { target, token, as: "w11" }`) to drive a
+whole fleet at once — each target's tools are then listed as `w11__process_list`, `w10__system_overview`
+and so on, and calls route by that prefix.
+
+**Pre-connecting at launch.** Some MCP clients (Claude Code among them) fix the callable tool set when
+they first enumerate the server, so a target you `connect` mid-session isn't picked up until a reload —
+and a reload restarts the relay and drops the connection. To make a target's tools available from the
+start, list it in `%USERPROFILE%\.windiag-targets.json` and the relay connects it *before* it answers,
+putting its `alias__tool` tools in the very first `tools/list`:
+
+```json
+{ "targets": [
+  { "as": "w11", "target": "192.168.32.93", "token": "…" },
+  { "as": "w10", "target": "192.168.32.76", "token": "…" }
+] }
+```
+
+`as` and `port` are optional (`as` defaults to the host, `port` to 4024). Changing the fleet is an edit
+to this file plus a fresh session — the addresses still live in data, never in the MCP registration. A
+missing or malformed file just means "pre-connect nothing"; an unreachable target is skipped (within a
+5-second total budget so a powered-off VM never stalls startup) with the `connect` line to retry it
+logged to stderr. The file holds bearer tokens in plaintext, so keep it readable only by your account.
+
 The relay is a client of the real servers, not a diagnostics server itself — it holds no privileges and
 runs unelevated on the base machine.
 
