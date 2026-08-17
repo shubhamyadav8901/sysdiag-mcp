@@ -174,17 +174,33 @@ function Resolve-RemotePath {
 
     $processes = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token `
         -Tool process_list -Arguments @{ nameFilter = 'WinDiag' } -Raw | ConvertFrom-Json
+    $server = $processes.processes | Where-Object { $_.name -match 'WinDiag\.Mcp' } | Select-Object -First 1
 
-    $commandLine = ($processes.processes | Where-Object { $_.commandLine } | Select-Object -First 1).commandLine
-
-    if (-not ($commandLine -match '^"?([A-Za-z]:\\[^"]*WinDiag\.Mcp\.exe)"?')) {
-        throw "Could not read the server's own path from process_list (command line: '$commandLine'). " +
-              "Pass -RemotePath explicitly."
+    # First try the command line. It carries a full path only when the server was launched by one --
+    # `cd <dir>; WinDiag.Mcp.exe --http ...` records just the bare exe name, which is exactly how the
+    # enable-a-flag restart tends to be run, so this misses more often than it looks.
+    if ($server.commandLine -match '^"?([A-Za-z]:\\[^"]*WinDiag\.Mcp\.exe)"?') {
+        $resolved = Split-Path -Parent $Matches[1]
+        Write-Note "server lives in $resolved (from command line)"
+        return $resolved
     }
 
-    $resolved = Split-Path -Parent $Matches[1]
-    Write-Note "server lives in $resolved"
-    return $resolved
+    # Fall back to the module path, which is absolute however the process was started. The server's own
+    # image is a loaded module of its own process, so process_modules on its PID always yields the full
+    # path -- the robust source the command line only sometimes is.
+    if ($server.processId) {
+        $modules = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token `
+            -Tool process_modules -Arguments @{ processId = $server.processId } -Raw | ConvertFrom-Json
+        $exe = $modules.modules.modules | Where-Object { $_.name -match 'WinDiag\.Mcp\.exe' } | Select-Object -First 1
+        if ($exe.path) {
+            $resolved = Split-Path -Parent $exe.path
+            Write-Note "server lives in $resolved (from module path)"
+            return $resolved
+        }
+    }
+
+    throw "Could not read the server's own path from process_list or process_modules " +
+          "(command line: '$($server.commandLine)'). Pass -RemotePath explicitly."
 }
 
 Write-Step 'Locating the server on the target'
