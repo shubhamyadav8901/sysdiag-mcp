@@ -115,6 +115,10 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 null,
                 "cannot start or stop most services without administrator rights",
                 RequiresElevation: false),
+            ["put_file"] = new(
+                "hash-verified file write over the server's own channel",
+                null,
+                "an unelevated server can only write where the current account already can"),
             ["run_command"] = new(
                 "arbitrary command execution on the host",
                 null,

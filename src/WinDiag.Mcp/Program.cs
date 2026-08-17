@@ -59,6 +59,14 @@ async Task<int> RunHttp(WinDiagOptions opts, string address)
     var builder = WebApplication.CreateBuilder();
     ConfigureLogging(builder.Logging);
 
+    // Kestrel caps request bodies at 30 MB by default, which would reject a put_file carrying a
+    // base64'd server binary (~64 MB encoded). Raised to sit above put_file's own 128 MB decoded limit
+    // plus base64 inflation, so the tool -- not the transport -- gives the size error, with a message
+    // that names the cap. Configured through DI rather than builder.WebHost.ConfigureKestrel to avoid
+    // depending on the hosting extension namespace.
+    builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(
+        kestrel => kestrel.Limits.MaxRequestBodySize = 220L * 1024 * 1024);
+
     ServerBuilder.ConfigureServices(builder.Services, opts).WithHttpTransport();
 
     var app = builder.Build();

@@ -1,0 +1,239 @@
+using System.Collections;
+using System.Security.Cryptography;
+using Microsoft.Extensions.Logging.Abstractions;
+using WinDiag.Mcp.Configuration;
+using WinDiag.Mcp.Diagnostics.Files;
+using WinDiag.Mcp.Tools;
+
+namespace WinDiag.Mcp.Tests;
+
+/// <summary>
+/// The scope boundary is the security-critical part: a write lands freely only inside a windiag-owned
+/// directory, and anywhere else needs the arbitrary-write grant.
+/// </summary>
+public sealed class FileReceiverTests : IDisposable
+{
+    private readonly string _artifactDir;
+    private readonly string _outsideDir;
+
+    public FileReceiverTests()
+    {
+        _artifactDir = Path.Combine(Path.GetTempPath(), $"windiag-artifacts-{Guid.NewGuid():N}");
+        _outsideDir = Path.Combine(Path.GetTempPath(), $"windiag-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_artifactDir);
+        Directory.CreateDirectory(_outsideDir);
+    }
+
+    public void Dispose()
+    {
+        foreach (var dir in new[] { _artifactDir, _outsideDir })
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    private WindowsFileReceiver Receiver(bool allowArbitrary = false) =>
+        new(WinDiagOptions.FromEnvironment(new Hashtable
+            {
+                ["WINDIAG_ARTIFACT_DIR"] = _artifactDir,
+                ["WINDIAG_ALLOW_ARBITRARY_WRITE"] = allowArbitrary ? "1" : "0"
+            }),
+            NullLogger<WindowsFileReceiver>.Instance);
+
+    private static byte[] Bytes(string s) => System.Text.Encoding.UTF8.GetBytes(s);
+
+    private static string Sha(byte[] b) => Convert.ToHexString(SHA256.HashData(b));
+
+    [Fact]
+    public void Writes_freely_into_the_artifact_directory_with_no_flag()
+    {
+        var target = Path.Combine(_artifactDir, "staged.bin");
+        var content = Bytes("hello windiag");
+
+        var result = Receiver().Receive(new FileWriteRequest(target, content), CancellationToken.None);
+
+        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.True(File.Exists(target));
+        Assert.Equal(content, File.ReadAllBytes(target));
+        Assert.Equal(Sha(content), result.Sha256);
+    }
+
+    [Fact]
+    public void Creates_missing_subdirectories_under_an_owned_directory()
+    {
+        // Staging often targets a nested path that does not exist yet.
+        var target = Path.Combine(_artifactDir, "nested", "deep", "staged.bin");
+
+        var result = Receiver().Receive(new FileWriteRequest(target, Bytes("x")), CancellationToken.None);
+
+        Assert.True(File.Exists(target));
+        Assert.Equal(WriteScope.WinDiag, result.Scope);
+    }
+
+    [Fact]
+    public void Refuses_a_write_outside_owned_directories_without_the_grant()
+    {
+        var target = Path.Combine(_outsideDir, "evil.dll");
+
+        var ex = Assert.Throws<FileTransferException>(
+            () => Receiver(allowArbitrary: false).Receive(new FileWriteRequest(target, Bytes("x")), CancellationToken.None));
+
+        Assert.Contains("WINDIAG_ALLOW_ARBITRARY_WRITE", ex.Message);
+        Assert.False(File.Exists(target), "the file must not have been written when the write was refused");
+    }
+
+    [Fact]
+    public void Allows_a_write_anywhere_with_the_grant()
+    {
+        var target = Path.Combine(_outsideDir, "planted.txt");
+
+        var result = Receiver(allowArbitrary: true).Receive(
+            new FileWriteRequest(target, Bytes("anywhere")), CancellationToken.None);
+
+        Assert.Equal(WriteScope.Arbitrary, result.Scope);
+        Assert.True(File.Exists(target));
+    }
+
+    [Fact]
+    public void Judges_a_dotdot_escape_by_where_it_actually_lands()
+    {
+        // The classic scope bypass: a path spelled to look like it is under the artifact dir but which
+        // climbs out. GetFullPath resolves it, so it is judged as the outside path it really is and
+        // refused without the grant.
+        var escape = Path.Combine(_artifactDir, "..", Path.GetFileName(_outsideDir), "escaped.txt");
+
+        var ex = Assert.Throws<FileTransferException>(
+            () => Receiver(allowArbitrary: false).Receive(new FileWriteRequest(escape, Bytes("x")), CancellationToken.None));
+
+        Assert.Contains("outside the directories", ex.Message);
+    }
+
+    [Fact]
+    public void Does_not_treat_a_sibling_with_a_shared_prefix_as_inside()
+    {
+        // C:\...\windiag-artifacts-XXXX-extra must not count as being under the artifact dir just
+        // because the name starts the same way. This is why the check appends a separator.
+        var sibling = _artifactDir + "-extra";
+        Directory.CreateDirectory(sibling);
+        try
+        {
+            var target = Path.Combine(sibling, "f.bin");
+
+            Assert.Throws<FileTransferException>(
+                () => Receiver(allowArbitrary: false).Receive(new FileWriteRequest(target, Bytes("x")), CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(sibling, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Verifies_the_hash_and_rolls_back_on_mismatch()
+    {
+        var target = Path.Combine(_artifactDir, "checked.bin");
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+            new FileWriteRequest(target, Bytes("real content"), ExpectedSha256: Sha(Bytes("different"))),
+            CancellationToken.None));
+
+        Assert.Contains("has been deleted", ex.Message);
+        Assert.False(File.Exists(target), "a file that failed verification must not be left behind");
+    }
+
+    [Fact]
+    public void Accepts_a_matching_hash()
+    {
+        var target = Path.Combine(_artifactDir, "verified.bin");
+        var content = Bytes("exact");
+
+        var result = Receiver().Receive(
+            new FileWriteRequest(target, content, ExpectedSha256: Sha(content)), CancellationToken.None);
+
+        Assert.Equal(Sha(content), result.Sha256);
+        Assert.True(File.Exists(target));
+    }
+
+    [Fact]
+    public void Refuses_to_overwrite_when_told_not_to()
+    {
+        var target = Path.Combine(_artifactDir, "existing.bin");
+        File.WriteAllBytes(target, Bytes("original"));
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+            new FileWriteRequest(target, Bytes("replacement"), Overwrite: false), CancellationToken.None));
+
+        Assert.Contains("already exists", ex.Message);
+        Assert.Equal("original", File.ReadAllText(target));
+    }
+
+    [Fact]
+    public void Reports_that_it_replaced_an_existing_file()
+    {
+        var target = Path.Combine(_artifactDir, "replaced.bin");
+        File.WriteAllBytes(target, Bytes("old"));
+
+        var result = Receiver().Receive(new FileWriteRequest(target, Bytes("new")), CancellationToken.None);
+
+        Assert.True(result.Overwrote);
+        Assert.Equal("new", File.ReadAllText(target));
+    }
+}
+
+public sealed class PutFileToolTests
+{
+    private sealed class StubReceiver : IFileReceiver
+    {
+        public FileWriteRequest? Last { get; private set; }
+
+        public FileWriteResult Receive(FileWriteRequest request, CancellationToken cancellationToken)
+        {
+            Last = request;
+            return new FileWriteResult(request.Path, request.Content.LongLength, "ABC", WriteScope.WinDiag, false);
+        }
+    }
+
+    [Fact]
+    public void Decodes_base64_into_the_bytes_the_receiver_writes()
+    {
+        var stub = new StubReceiver();
+        var tool = new FileTools(stub);
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("windiag"));
+
+        tool.PutFile(@"C:\WinDiag\x.bin", payload);
+
+        Assert.Equal("windiag", System.Text.Encoding.UTF8.GetString(stub.Last!.Content));
+    }
+
+    [Fact]
+    public void Rejects_malformed_base64_with_an_actionable_message()
+    {
+        var tool = new FileTools(new StubReceiver());
+
+        var ex = Assert.Throws<FileTransferException>(
+            () => tool.PutFile(@"C:\WinDiag\x.bin", "not base64!!!"));
+
+        Assert.Contains("base64", ex.Message);
+    }
+
+    [Fact]
+    public void Rejects_an_empty_payload()
+    {
+        var tool = new FileTools(new StubReceiver());
+
+        Assert.Throws<FileTransferException>(() => tool.PutFile(@"C:\WinDiag\x.bin", ""));
+    }
+
+    [Fact]
+    public void Render_states_the_hash_and_flags_an_arbitrary_write()
+    {
+        var scoped = FileTools.Render(new FileWriteResult(@"C:\WinDiag\a", 10, "HASH", WriteScope.WinDiag, false));
+        Assert.Contains("Wrote", scoped);
+        Assert.Contains("HASH", scoped);
+        Assert.DoesNotContain("arbitrary-write grant", scoped);
+
+        var arbitrary = FileTools.Render(new FileWriteResult(@"C:\Windows\b", 10, "HASH", WriteScope.Arbitrary, true));
+        Assert.Contains("Replaced", arbitrary);
+        Assert.Contains("arbitrary-write grant", arbitrary);
+    }
+}

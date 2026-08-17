@@ -99,4 +99,22 @@ public sealed class ToolRegistrationTests
         // precedence update_self follows.
         Assert.DoesNotContain("run_command", ToolNames(Options(readOnly: true, allowCommands: true)));
     }
+
+    [Fact]
+    public void Offers_put_file_on_a_writable_server_with_no_flag()
+    {
+        // Unlike run_command and update_self, put_file needs no opt-in: confined to windiag's own
+        // directories it grants nothing new, and its point is to remove SMB from staging. The
+        // arbitrary-write flag only widens where it may write, which is a call-time decision, not a
+        // registration one.
+        Assert.Contains("put_file", ToolNames(Options()));
+    }
+
+    [Fact]
+    public void Drops_put_file_in_read_only_mode()
+    {
+        // Writing a file is a state change, so a read-only server does not offer it -- the same rule
+        // capture_dump and the control tools follow.
+        Assert.DoesNotContain("put_file", ToolNames(Options(readOnly: true)));
+    }
 }

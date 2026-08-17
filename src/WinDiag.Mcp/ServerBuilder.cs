@@ -9,6 +9,7 @@ using WinDiag.Mcp.Diagnostics.Commands;
 using WinDiag.Mcp.Diagnostics.Dumps;
 using WinDiag.Mcp.Diagnostics.EventLogs;
 using WinDiag.Mcp.Diagnostics.External;
+using WinDiag.Mcp.Diagnostics.Files;
 using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Locks;
 using WinDiag.Mcp.Diagnostics.Network;
@@ -44,6 +45,9 @@ public static class ServerBuilder
           WINDIAG_READ_ONLY                       1/true to drop all state-changing tools (default: false)
           WINDIAG_ALLOW_COMMAND_EXECUTION         1/true to register run_command, an arbitrary shell
                                                   as the server's account (default: false; read-only wins)
+          WINDIAG_ALLOW_ARBITRARY_WRITE           1/true to let put_file write outside the server's own
+                                                  directories (default: false; put_file itself is always
+                                                  available on a writable server, scoped to those dirs)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
           WINDIAG_MAX_RESULTS                     Row cap per tool call, 1..10000 (default: 200)
           WINDIAG_HTTP_BIND                       Address to serve on; same as --http
@@ -98,6 +102,12 @@ public static class ServerBuilder
             mcp.WithTools<DumpTools>();
             mcp.WithTools<ActivityCaptureTools>();
             mcp.WithTools<ControlTools>();
+
+            // Always available on a writable server, not behind a flag: confined to windiag's own
+            // directories it grants nothing SMB-to-those-folders plus update_self did not already, and
+            // its whole purpose is to remove SMB from the staging loop. The WINDIAG_ALLOW_ARBITRARY_WRITE
+            // flag only widens WHERE it may write, and is enforced per-call, not here.
+            mcp.WithTools<FileTools>();
         }
 
         // Gated twice over, and off by default: this one lets the caller replace the server's own
@@ -141,6 +151,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IAccessInspector, WindowsAccessInspector>();
         services.AddSingletonIfMissing<IRegistryInspector, WindowsRegistryInspector>();
         services.AddSingletonIfMissing<ICommandRunner, WindowsCommandRunner>();
+        services.AddSingletonIfMissing<IFileReceiver, WindowsFileReceiver>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
@@ -167,6 +178,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<AutostartTools, AutostartTools>();
         services.AddSingletonIfMissing<RegistryTools, RegistryTools>();
         services.AddSingletonIfMissing<CommandTools, CommandTools>();
+        services.AddSingletonIfMissing<FileTools, FileTools>();
         return services;
     }
 

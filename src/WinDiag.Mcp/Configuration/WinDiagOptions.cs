@@ -78,6 +78,19 @@ public sealed record WinDiagOptions
     /// </remarks>
     public bool AllowCommandExecution { get; init; }
 
+    /// <summary>Whether <c>put_file</c> may write outside the server's own directories.</summary>
+    /// <remarks>
+    /// <para><c>put_file</c> itself is always available on a writable server, but confined to the two
+    /// directories windiag already owns — its own folder and the artifact directory. That covers the
+    /// job it exists for (staging a server update for <see cref="AllowSelfUpdate"/>, staging the
+    /// Sysinternals binaries, receiving capture inputs) and grants nothing SMB-to-those-folders plus the
+    /// existing tools did not already allow, so it needs no flag.</para>
+    /// <para>This flag widens it to write <em>anywhere</em> as the server's account. That is a genuine
+    /// escalation — an arbitrary file written as SYSTEM is a step from code execution — so it is off by
+    /// default and, like the other grants, overridden by <see cref="ReadOnly"/>.</para>
+    /// </remarks>
+    public bool AllowArbitraryWrite { get; init; }
+
     /// <summary>Where capture artifacts (dumps, activity traces) are written.</summary>
     /// <remarks>
     /// Defaults under the temp directory rather than beside the executable: the exe is often on a share
@@ -104,6 +117,7 @@ public sealed record WinDiagOptions
             ReadOnly = ReadBoolean(environment, "WINDIAG_READ_ONLY", defaultValue: false),
             AllowSelfUpdate = ReadBoolean(environment, "WINDIAG_ALLOW_SELF_UPDATE", defaultValue: false),
             AllowCommandExecution = ReadBoolean(environment, "WINDIAG_ALLOW_COMMAND_EXECUTION", defaultValue: false),
+            AllowArbitraryWrite = ReadBoolean(environment, "WINDIAG_ALLOW_ARBITRARY_WRITE", defaultValue: false),
             ExternalToolTimeout = TimeSpan.FromSeconds(
                 ReadInt32(environment, "WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS", 120, min: 1, max: 3600)),
             MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 200, min: 1, max: 10_000),
@@ -118,7 +132,8 @@ public sealed record WinDiagOptions
         $"readOnly={ReadOnly}, externalToolTimeout={ExternalToolTimeout.TotalSeconds:0}s, " +
         $"maxResults={MaxResults}, httpBind={HttpBind ?? "(stdio)"}, " +
         $"token={(Token is null ? "(generated)" : "(configured)")}, artifactDir={ArtifactDirectory}, " +
-        $"allowSelfUpdate={AllowSelfUpdate}, allowCommandExecution={AllowCommandExecution}";
+        $"allowSelfUpdate={AllowSelfUpdate}, allowCommandExecution={AllowCommandExecution}, " +
+        $"allowArbitraryWrite={AllowArbitraryWrite}";
 
     /// <summary>Redacted by construction — see the note on the type.</summary>
     public override string ToString() => Describe();
