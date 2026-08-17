@@ -389,7 +389,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
 | `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write outside the server's own directories. `put_file` itself is always available on a writable server, scoped to those dirs; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
-| `WINDIAG_MAX_RESULTS` | `200` | Row cap per tool call (1–10000) |
+| `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |

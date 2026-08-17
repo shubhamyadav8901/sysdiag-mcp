@@ -23,7 +23,7 @@ public sealed class WinDiagOptionsTests
 
         Assert.False(options.ReadOnly);
         Assert.Equal(TimeSpan.FromSeconds(120), options.ExternalToolTimeout);
-        Assert.Equal(200, options.MaxResults);
+        Assert.Equal(50_000, options.MaxResults);
     }
 
     [Theory]
@@ -71,6 +71,6 @@ public sealed class WinDiagOptionsTests
 
         Assert.Contains("readOnly=True", description);
         Assert.Contains("externalToolTimeout=120s", description);
-        Assert.Contains("maxResults=200", description);
+        Assert.Contains("maxResults=50000", description);
     }
 }

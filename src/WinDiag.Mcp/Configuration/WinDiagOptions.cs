@@ -39,7 +39,13 @@ public sealed record WinDiagOptions
     public TimeSpan ExternalToolTimeout { get; init; } = TimeSpan.FromSeconds(120);
 
     /// <summary>Upper bound on rows returned by a single tool call.</summary>
-    public int MaxResults { get; init; } = 200;
+    /// <remarks>
+    /// 50000 so high-cardinality tools -- process_handles and path_handle_search above all, where a
+    /// single process can hold thousands of handles -- are not truncated in the common case. Rows are
+    /// linear in this, so a very large value can make one call dominate the client's context; lower it
+    /// with WINDIAG_MAX_RESULTS where that matters. The ceiling is 10,000,000 for the rare full dump.
+    /// </remarks>
+    public int MaxResults { get; init; } = 50_000;
 
     /// <summary>Address to serve MCP over HTTP on, for example <c>http://10.0.0.5:7777</c>.</summary>
     /// <remarks>
@@ -120,7 +126,7 @@ public sealed record WinDiagOptions
             AllowArbitraryWrite = ReadBoolean(environment, "WINDIAG_ALLOW_ARBITRARY_WRITE", defaultValue: false),
             ExternalToolTimeout = TimeSpan.FromSeconds(
                 ReadInt32(environment, "WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS", 120, min: 1, max: 3600)),
-            MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 200, min: 1, max: 10_000),
+            MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 50_000, min: 1, max: 10_000_000),
             HttpBind = NullIfBlank(Read(environment, "WINDIAG_HTTP_BIND")),
             Token = NullIfBlank(Read(environment, "WINDIAG_TOKEN")),
             ArtifactDirectory = ReadDirectory(environment, "WINDIAG_ARTIFACT_DIR")

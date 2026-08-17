@@ -49,7 +49,7 @@ public static class ServerBuilder
                                                   directories (default: false; put_file itself is always
                                                   available on a writable server, scoped to those dirs)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
-          WINDIAG_MAX_RESULTS                     Row cap per tool call, 1..10000 (default: 200)
+          WINDIAG_MAX_RESULTS                     Row cap per tool call, 1..10000000 (default: 50000)
           WINDIAG_HTTP_BIND                       Address to serve on; same as --http
           WINDIAG_TOKEN                           Bearer token for HTTP. Generated and printed if unset.
           WINDIAG_ARTIFACT_DIR                    Where dumps and traces are written (default: %TEMP%\windiag)
