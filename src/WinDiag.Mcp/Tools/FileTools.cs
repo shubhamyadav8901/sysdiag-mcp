@@ -51,16 +51,22 @@ public sealed class FileTools
         "have been started with WINDIAG_ALLOW_ARBITRARY_WRITE. " +
         "Pass expectedSha256 to have the written file verified and rolled back on mismatch - the same " +
         "integrity check the share copy did. " +
-        "This is for files up to ~128 MB; multi-gigabyte dumps stay on the UNC path capture_dump returns.")]
+        "A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server " +
+        "cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each " +
+        "later call sets append=true, and only the last passes expectedSha256, of the whole assembled " +
+        "file. Any one call is capped at ~128 MB; multi-gigabyte dumps stay on the UNC path " +
+        "capture_dump returns.")]
     public PutFileResult PutFile(
         [Description(@"Destination path on the host, e.g. C:\WinDiag\WinDiag.Mcp.new.exe")]
         string path,
-        [Description("The file's bytes, base64-encoded.")]
+        [Description("The file's bytes (or this chunk's bytes), base64-encoded.")]
         string contentBase64,
-        [Description("SHA-256 the written file must have; verified after writing, rolled back on mismatch.")]
+        [Description("SHA-256 the finished file must have; verified after writing, rolled back on mismatch. For a chunked send, pass it only on the last chunk.")]
         string? expectedSha256 = null,
         [Description("Set false to refuse rather than replace an existing file at the path.")]
         bool overwrite = true,
+        [Description("Append to the file instead of replacing it - used for the second and later chunks of a large file.")]
+        bool append = false,
         CancellationToken cancellationToken = default)
     {
         var content = Decode(contentBase64);
@@ -74,7 +80,7 @@ public sealed class FileTools
         }
 
         var result = _receiver.Receive(
-            new FileWriteRequest(path, content, expectedSha256, overwrite), cancellationToken);
+            new FileWriteRequest(path, content, expectedSha256, overwrite, append), cancellationToken);
 
         return new PutFileResult(Render(result), result);
     }

@@ -52,15 +52,25 @@ public sealed class WindowsFileReceiver : IFileReceiver
         }
 
         var existed = File.Exists(full);
-        if (existed && !request.Overwrite)
+        if (existed && !request.Overwrite && !request.Append)
         {
             throw new FileTransferException(
                 $"'{full}' already exists and overwrite is off. Pass overwrite to replace it, or write " +
                 "to a different path.");
         }
 
-        Write(full, request.Content);
+        if (request.Append)
+        {
+            Append(full, request.Content);
+        }
+        else
+        {
+            Write(full, request.Content);
+        }
 
+        // Verify only when a hash is given. For a chunked send that is the last chunk, and the hash is
+        // of the assembled whole -- so this reads the finished file off disk (streaming, low memory) and
+        // checks it, catching a bad chunk anywhere in the sequence.
         var sha = Sha256Hex(full);
         if (request.ExpectedSha256 is { } expected && !sha.Equals(expected.Trim(), StringComparison.OrdinalIgnoreCase))
         {
@@ -134,12 +144,7 @@ public sealed class WindowsFileReceiver : IFileReceiver
     {
         try
         {
-            var directory = Path.GetDirectoryName(fullPath);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
+            EnsureDirectory(fullPath);
             File.WriteAllBytes(fullPath, content);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -148,6 +153,31 @@ public sealed class WindowsFileReceiver : IFileReceiver
                 $"Could not write '{fullPath}': {ex.Message}. The file may be locked (a running binary " +
                 "cannot be overwritten in place — stage to a .new name and use update_self), or the " +
                 "account may lack write access there.", ex);
+        }
+    }
+
+    private static void Append(string fullPath, byte[] content)
+    {
+        try
+        {
+            EnsureDirectory(fullPath);
+            using var stream = new FileStream(fullPath, FileMode.Append, FileAccess.Write, FileShare.None);
+            stream.Write(content, 0, content.Length);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new FileTransferException(
+                $"Could not append to '{fullPath}': {ex.Message}. If a previous chunked transfer was " +
+                "interrupted, delete the partial file and start over.", ex);
+        }
+    }
+
+    private static void EnsureDirectory(string fullPath)
+    {
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
         }
     }
 

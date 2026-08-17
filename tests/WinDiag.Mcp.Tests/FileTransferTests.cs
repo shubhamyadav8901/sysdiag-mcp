@@ -178,6 +178,54 @@ public sealed class FileReceiverTests : IDisposable
         Assert.True(result.Overwrote);
         Assert.Equal("new", File.ReadAllText(target));
     }
+
+    [Fact]
+    public void Assembles_a_file_from_chunks_and_verifies_the_whole_at_the_end()
+    {
+        // The path a large binary takes on a 32-bit server, where one big base64 argument OOMs: first
+        // chunk fresh, the rest appended, the hash of the whole assembled file checked only on the last.
+        var target = Path.Combine(_artifactDir, "chunked.bin");
+        var whole = System.Text.Encoding.UTF8.GetBytes(new string('A', 1000) + new string('B', 1000) + "tail");
+        var wholeSha = Sha(whole);
+        var recv = Receiver();
+
+        recv.Receive(new FileWriteRequest(target, whole[..1000], Append: false), CancellationToken.None);
+        recv.Receive(new FileWriteRequest(target, whole[1000..2000], Append: true), CancellationToken.None);
+        var final = recv.Receive(
+            new FileWriteRequest(target, whole[2000..], ExpectedSha256: wholeSha, Append: true),
+            CancellationToken.None);
+
+        Assert.Equal(whole, File.ReadAllBytes(target));
+        Assert.Equal(wholeSha, final.Sha256);
+    }
+
+    [Fact]
+    public void Rolls_back_the_whole_file_when_an_assembled_chunk_sequence_fails_verification()
+    {
+        // A corrupt chunk anywhere shows up as a whole-file hash mismatch on the last call, and the
+        // assembled file is deleted -- so a bad transfer never survives to be swapped in by update_self.
+        var target = Path.Combine(_artifactDir, "chunked-bad.bin");
+        var recv = Receiver();
+
+        recv.Receive(new FileWriteRequest(target, Bytes("first"), Append: false), CancellationToken.None);
+
+        Assert.Throws<FileTransferException>(() => recv.Receive(
+            new FileWriteRequest(target, Bytes("second"), ExpectedSha256: Sha(Bytes("not the whole thing")), Append: true),
+            CancellationToken.None));
+
+        Assert.False(File.Exists(target));
+    }
+
+    [Fact]
+    public void An_append_chunk_is_still_bound_by_scope()
+    {
+        // Chunking must not become a scope bypass: an append outside the owned dirs is refused just like
+        // a fresh write would be.
+        var target = Path.Combine(_outsideDir, "chunked-escape.bin");
+
+        Assert.Throws<FileTransferException>(() => Receiver(allowArbitrary: false).Receive(
+            new FileWriteRequest(target, Bytes("x"), Append: true), CancellationToken.None));
+    }
 }
 
 public sealed class PutFileToolTests

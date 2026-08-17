@@ -19,11 +19,19 @@ public enum WriteScope
 /// this channel. Null skips verification.
 /// </param>
 /// <param name="Overwrite">When false, an existing file at the path is left untouched and the call refused.</param>
+/// <param name="Append">
+/// Append these bytes to the file rather than replacing it. This is how a large file is sent in
+/// pieces: the first chunk writes fresh, each later chunk appends. A single base64 argument big enough
+/// to hold a whole self-contained binary (tens of MB) is too much for a 32-bit server's JSON pipeline
+/// to decode in one go, so the caller splits it — and the integrity check moves to the last chunk,
+/// which passes <see cref="ExpectedSha256"/> for the assembled whole.
+/// </param>
 public sealed record FileWriteRequest(
     string Path,
     byte[] Content,
     string? ExpectedSha256 = null,
-    bool Overwrite = true);
+    bool Overwrite = true,
+    bool Append = false);
 
 /// <summary>What writing a file produced.</summary>
 /// <param name="Scope">

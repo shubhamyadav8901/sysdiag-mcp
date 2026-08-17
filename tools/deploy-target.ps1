@@ -118,6 +118,128 @@ function Copy-Verified {
 }
 
 # ---------------------------------------------------------------------------------------------------
+# Staging channel: over the server's own HTTP once one is running, over SMB only for the first hop.
+# ---------------------------------------------------------------------------------------------------
+
+# A running server we can push to means we can stage over put_file and never touch the admin share.
+# The first deploy has no server to receive anything, so it falls back to SMB -- the one hop no tool
+# on the target can remove.
+$script:UseHttp = [bool]$Token
+
+<#
+.SYNOPSIS
+    The SHA-256 of a file already on the target, or $null if it is not there.
+.DESCRIPTION
+    Over HTTP this is file_signatures reading the target's own disk; over SMB it is a hash of the file
+    through the share. Either way it drives the "already current" skip and the "differs from this
+    build" notice, so a re-deploy moves only what actually changed.
+#>
+function Get-RemoteHash([string] $Name) {
+    if ($script:UseHttp) {
+        $target = Join-Path $RemotePath $Name
+        try {
+            $sig = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token `
+                -Tool file_signatures -Arguments @{ paths = @($target) } -Raw | ConvertFrom-Json
+        }
+        catch { return $null }
+
+        $file = @($sig.files) | Where-Object { $_ } | Select-Object -First 1
+        if ($file -and $file.sha256) { return "$($file.sha256)".ToUpperInvariant() }
+        return $null
+    }
+
+    $share = Join-Path $remoteShare $Name
+    if (Test-Path $share) { return Get-Sha256 $share }
+    return $null
+}
+
+<#
+.SYNOPSIS
+    Places a local file on the target under the given name, verified.
+.DESCRIPTION
+    Over HTTP, put_file carries the bytes and verifies the SHA-256 server-side, rolling back on
+    mismatch -- so a non-zero exit from mcp-call means it did not verify. Over SMB, Copy-Verified does
+    the copy-and-read-back. The server binary and every Sysinternals binary sit under the 128 MB
+    put_file cap.
+#>
+# 4 MB raw per chunk (~5.6 MB base64). Proven to decode without memory pressure on the 32-bit server,
+# where a single ~57 MB base64 argument for the whole binary threw an out-of-memory error inside the
+# JSON pipeline. Small enough for that, large enough that a 43 MB binary is ~11 chunks, not hundreds.
+$script:ChunkBytes = 4 * 1024 * 1024
+
+function Invoke-PutFile([string] $Target, [byte[]] $Bytes, [string] $ExpectedSha, [bool] $Append) {
+    $b64 = [Convert]::ToBase64String($Bytes)
+    $callArgs = @{ path = $Target; contentBase64 = $b64; append = $Append }
+    if ($ExpectedSha) { $callArgs.expectedSha256 = $ExpectedSha }
+
+    # 300s base plus size; a single chunk is small, but the same formula covers a small file sent whole.
+    $timeoutSec = [int]([Math]::Min(1800, 300 + $b64.Length / 100000))
+
+    & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool put_file `
+        -Arguments $callArgs -TimeoutSeconds $timeoutSec | Out-Null
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "put_file failed for $Target (the server reported the reason above)."
+    }
+}
+
+function Send-Staged([string] $Source, [string] $Name, [string] $ExpectedSha) {
+    if (-not $script:UseHttp) {
+        Copy-Verified -Source $Source -Destination (Join-Path $remoteShare $Name) | Out-Null
+        return
+    }
+
+    $target = Join-Path $RemotePath $Name
+    $bytes = [IO.File]::ReadAllBytes($Source)
+
+    # Small enough for one message: send it whole, with the hash checked on that single call.
+    if ($bytes.Length -le $script:ChunkBytes) {
+        Invoke-PutFile -Target $target -Bytes $bytes -ExpectedSha $ExpectedSha -Append $false
+        return
+    }
+
+    # Otherwise chunk it. First chunk writes fresh; the rest append; only the last carries the hash of
+    # the whole assembled file, which the server verifies against the finished file and rolls back on
+    # mismatch -- so a bad chunk anywhere is caught, and a corrupt transfer never reaches update_self.
+    $total = [Math]::Ceiling($bytes.Length / $script:ChunkBytes)
+    Write-Note ("sending {0:N1} MB in {1} chunks (the link to a lab VM is slow; this takes a few minutes)" -f ($bytes.Length / 1MB), $total)
+
+    for ($i = 0; $i -lt $total; $i++) {
+        $offset = $i * $script:ChunkBytes
+        $len = [Math]::Min($script:ChunkBytes, $bytes.Length - $offset)
+        $chunk = New-Object byte[] $len
+        [Array]::Copy($bytes, $offset, $chunk, 0, $len)
+
+        $shaForChunk = if ($i -eq $total - 1) { $ExpectedSha } else { '' }
+        Invoke-PutFile -Target $target -Bytes $chunk -ExpectedSha $shaForChunk -Append ($i -gt 0)
+        Write-Note ("  chunk {0}/{1}" -f ($i + 1), $total)
+    }
+}
+
+<#
+.SYNOPSIS
+    Writes the staging manifest onto the target.
+.DESCRIPTION
+    Over HTTP it goes through put_file like everything else; over SMB it is written to the share. The
+    manifest lands in a windiag-owned directory, so put_file needs no arbitrary-write grant for it.
+#>
+function Write-StagedManifest([string] $Json) {
+    if ($script:UseHttp) {
+        $temp = Join-Path ([IO.Path]::GetTempPath()) ("windiag-staged-" + [guid]::NewGuid().ToString('N') + '.json')
+        Set-Content -LiteralPath $temp -Value $Json -Encoding utf8
+        try {
+            Send-Staged -Source $temp -Name 'windiag-staged.json' -ExpectedSha (Get-Sha256 $temp)
+        }
+        finally {
+            Remove-Item $temp -ErrorAction SilentlyContinue
+        }
+        return
+    }
+
+    Set-Content -LiteralPath (Join-Path $remoteShare 'windiag-staged.json') -Value $Json -Encoding utf8
+}
+
+# ---------------------------------------------------------------------------------------------------
 # 1. Which architecture
 # ---------------------------------------------------------------------------------------------------
 
@@ -333,35 +455,44 @@ if (-not $SkipServer) {
 # 4. What is on the target now
 # ---------------------------------------------------------------------------------------------------
 
-$stagedManifest = Join-Path $remoteShare 'windiag-staged.json'
-
-Write-Step "Checking $remoteShare"
-
-if (-not (Test-Path $remoteShare)) {
-    New-Item -ItemType Directory -Force $remoteShare | Out-Null
-    Write-Note 'created'
-}
-
 $previous = $null
 
-if (Test-Path $stagedManifest) {
-    $previous = Get-Content -LiteralPath $stagedManifest -Raw | ConvertFrom-Json
-    Write-Note "last deployed $($previous.deployedOn) from $($previous.deployedFrom) ($($previous.commit))"
-
-    foreach ($entry in $previous.files) {
-        $onDisk = Join-Path $remoteShare $entry.name
-        if (-not (Test-Path $onDisk)) {
-            Write-Warning "$($entry.name) is recorded as deployed but is missing from the target."
-        }
-        elseif ((Get-Sha256 $onDisk) -ne $entry.sha256.ToUpperInvariant()) {
-            # The point of writing the manifest: a file changed by hand since the last deploy is
-            # reported rather than silently replaced, because knowing it happened is the useful part.
-            Write-Warning "$($entry.name) on the target no longer matches what this script staged; replacing it."
-        }
-    }
+if ($script:UseHttp) {
+    # Over HTTP there is no share to read the previous manifest from -- and it is not needed. The
+    # per-file hash check in the staging loop below (file_signatures on the target's own copy) is a
+    # stronger drift signal than the manifest anyway: it compares the file that is actually there
+    # against the one about to be sent, rather than a record of what was sent last time.
+    Write-Step "Staging to $RemotePath on $Target over the server's own channel (no SMB)"
 }
 else {
-    Write-Note 'no previous deployment recorded'
+    $stagedManifest = Join-Path $remoteShare 'windiag-staged.json'
+
+    Write-Step "Checking $remoteShare"
+
+    if (-not (Test-Path $remoteShare)) {
+        New-Item -ItemType Directory -Force $remoteShare | Out-Null
+        Write-Note 'created'
+    }
+
+    if (Test-Path $stagedManifest) {
+        $previous = Get-Content -LiteralPath $stagedManifest -Raw | ConvertFrom-Json
+        Write-Note "last deployed $($previous.deployedOn) from $($previous.deployedFrom) ($($previous.commit))"
+
+        foreach ($entry in $previous.files) {
+            $onDisk = Join-Path $remoteShare $entry.name
+            if (-not (Test-Path $onDisk)) {
+                Write-Warning "$($entry.name) is recorded as deployed but is missing from the target."
+            }
+            elseif ((Get-Sha256 $onDisk) -ne $entry.sha256.ToUpperInvariant()) {
+                # The point of writing the manifest: a file changed by hand since the last deploy is
+                # reported rather than silently replaced, because knowing it happened is the useful part.
+                Write-Warning "$($entry.name) on the target no longer matches what this script staged; replacing it."
+            }
+        }
+    }
+    else {
+        Write-Note 'no previous deployment recorded'
+    }
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -374,15 +505,12 @@ if (-not $SkipSysinternals) {
     Write-Step "Staging $($sysinternals.Count) Sysinternals binaries"
 
     foreach ($tool in $sysinternals) {
-        $destination = Join-Path $remoteShare $tool.Name
-
-        if ((Test-Path $destination) -and (Get-Sha256 $destination) -eq $tool.Sha256) {
+        if ((Get-RemoteHash $tool.Name) -eq $tool.Sha256) {
             Write-Note "$($tool.Name) already current"
         }
         else {
-            $hash = Copy-Verified -Source $tool.Path -Destination $destination
+            Send-Staged -Source $tool.Path -Name $tool.Name -ExpectedSha $tool.Sha256
             Write-Note "$($tool.Name) staged and verified"
-            $null = $hash
         }
 
         $staged += [pscustomobject]@{ name = $tool.Name; sha256 = $tool.Sha256; version = $tool.Version }
@@ -395,7 +523,8 @@ if (-not $SkipServer) {
     # Staged under a different name, never written over the running exe: the live binary is locked, and
     # an earlier attempt to work around that by renaming it took the server down.
     Write-Step 'Staging the server build as WinDiag.Mcp.new.exe'
-    $serverHash = Copy-Verified -Source $serverExe -Destination (Join-Path $remoteShare 'WinDiag.Mcp.new.exe')
+    $serverHash = Get-Sha256 $serverExe
+    Send-Staged -Source $serverExe -Name 'WinDiag.Mcp.new.exe' -ExpectedSha $serverHash
     Write-Note "verified $serverHash"
 
     $staged += [pscustomobject]@{ name = 'WinDiag.Mcp.exe'; sha256 = $serverHash; version = 'this build' }
@@ -424,14 +553,15 @@ else {
     try { (& git -C $repo rev-parse --short HEAD).Trim() } catch { 'unknown' }
 }
 
-[pscustomobject]@{
+$manifestJson = [pscustomobject]@{
     deployedOn   = (Get-Date).ToString('s')
     deployedFrom = $env:COMPUTERNAME
     commit       = $commit
     architecture = $Architecture
     files        = $staged
-} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $stagedManifest -Encoding utf8
+} | ConvertTo-Json -Depth 6
 
+Write-StagedManifest $manifestJson
 Write-Note "recorded in windiag-staged.json"
 
 # ---------------------------------------------------------------------------------------------------
