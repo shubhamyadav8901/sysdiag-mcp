@@ -62,7 +62,7 @@ public static class RelayServer
     private static ValueTask<ListToolsResult> ListTools(RelayState state, CancellationToken ct)
     {
         var tools = new List<Tool>(ControlTools());
-        tools.AddRange(state.RemoteTools);
+        tools.AddRange(state.PrefixedTools());
         return ValueTask.FromResult(new ListToolsResult { Tools = tools });
     }
 
@@ -83,22 +83,33 @@ public static class RelayServer
                     return await Connect(state, defaultPort, ctx, args, ct).ConfigureAwait(false);
 
                 case DisconnectName:
-                    var was = state.Target;
-                    await state.DisconnectAsync(ct).ConfigureAwait(false);
+                    var requested = OptionalString(args, "alias");
+                    var dropped = await state.DisconnectAsync(requested, ct).ConfigureAwait(false);
                     await NotifyToolsChanged(ctx, ct).ConfigureAwait(false);
-                    return Text(was is null
-                        ? "Was not connected to any target."
-                        : $"Disconnected from {was}. Its tools are no longer listed.");
+                    return Text(dropped.Count == 0
+                        ? (requested is null ? "No targets were connected." : $"No target was connected under '{requested}'.")
+                        : $"Disconnected: {string.Join(", ", dropped)}. Those targets' tools are no longer listed.");
 
                 case StatusName:
-                    return Text(state.IsConnected
-                        ? $"Connected to {state.Target}, forwarding {state.RemoteTools.Count} tools."
-                        : "Not connected. Call 'connect' with a target address and token.");
+                    var connections = state.Connections();
+                    return Text(connections.Count == 0
+                        ? "No targets connected. Call 'connect' with a target address and token."
+                        : "Connected targets:\n" + string.Join("\n", connections.Select(c =>
+                            $"  {c.Alias} -> {c.Target} ({c.ToolCount} tools, listed as {c.Alias}{RelayState.AliasSeparator}*)")));
 
                 default:
-                    // Anything else is one of the target's own tools; hand it straight through.
+                    // Anything else is a target tool, named alias__tool. Split off the alias and forward
+                    // the target's own tool name to that connection.
+                    var split = RelayState.SplitToolName(name);
+                    if (split is not { } routed)
+                    {
+                        throw new RelayException(
+                            $"'{name}' is not a known tool. A target's tools are listed as " +
+                            $"alias{RelayState.AliasSeparator}tool once you connect that target.");
+                    }
+
                     var forwardArgs = args?.ToDictionary(p => p.Key, p => (object?)p.Value);
-                    return await state.ForwardAsync(name, forwardArgs, ct).ConfigureAwait(false);
+                    return await state.ForwardAsync(routed.Alias, routed.Tool, forwardArgs, ct).ConfigureAwait(false);
             }
         }
         catch (RelayException ex)
@@ -130,12 +141,17 @@ public static class RelayServer
             ? target
             : $"http://{target}:{port}";
 
-        var count = await state.ConnectAsync(address, token, ct).ConfigureAwait(false);
+        // The alias names this connection so several targets can be live at once. Default it to the
+        // host so a single-target caller need not think about it.
+        var alias = OptionalString(args, "as") ?? RelayState.DefaultAlias(address);
+
+        var (used, count) = await state.ConnectAsync(alias, address, token, ct).ConfigureAwait(false);
         await NotifyToolsChanged(ctx, ct).ConfigureAwait(false);
 
         return Text(
-            $"Connected to {address}. {count} tools now available; they are listed here as though this " +
-            "server offered them, and calls forward to that target. Call 'connect' again to repoint.");
+            $"Connected to {address} as '{used}'. Its {count} tools are listed here as " +
+            $"{used}{RelayState.AliasSeparator}<tool> and calls forward to it. Connect more targets under " +
+            "other aliases to drive several at once; 'connect' the same alias again to repoint it.");
     }
 
     /// <summary>Tells the client the tool list changed so it re-fetches after a connect or disconnect.</summary>
@@ -154,16 +170,18 @@ public static class RelayServer
             Name = ConnectName,
             Title = "Point the relay at a target windiag",
             Description =
-                "Connect to a windiag server running on a target machine so its tools appear here and " +
-                "calls forward to it. Pass target as the host or IP (or a full http URL) and token as " +
-                "its bearer token. The tool list changes after this call; the target's tools then show " +
-                "up alongside these. Call it again with a different address to repoint at another target " +
-                "- no restart, no config change, which is the point when the target's IP moves.",
+                "Connect to a windiag server on a target machine so its tools appear here and calls " +
+                "forward to it. Pass target as the host or IP (or a full http URL) and token as its " +
+                "bearer token. Its tools are listed as <alias>__<tool> - the alias defaults to the host, " +
+                "or set 'as' to name it. Connect several targets under different aliases to drive them " +
+                "at once; connect the same alias again to repoint it. No restart or config change when " +
+                "an IP moves - the address is just this argument.",
             InputSchema = RelayState.Schema("""
                 {"type":"object",
                  "properties":{
                    "target":{"type":"string","description":"Target host or IP, or a full http URL, e.g. 192.168.32.93 or http://192.168.32.93:4024"},
                    "token":{"type":"string","description":"The target server's WINDIAG_TOKEN bearer token"},
+                   "as":{"type":"string","description":"Alias for this connection, prefixing its tools. Letters, digits, single _ or -, no __. Defaults to the host."},
                    "port":{"type":"integer","description":"Port, if target is a bare host and not the default 4024"}},
                  "required":["target","token"]}
                 """)
@@ -172,16 +190,19 @@ public static class RelayServer
         yield return new Tool
         {
             Name = DisconnectName,
-            Title = "Drop the current target",
-            Description = "Disconnect from the current target. Its tools stop being listed here.",
-            InputSchema = RelayState.Schema("""{"type":"object","properties":{}}""")
+            Title = "Drop a connected target",
+            Description = "Disconnect one target by its alias, or all targets if no alias is given. Their tools stop being listed.",
+            InputSchema = RelayState.Schema("""
+                {"type":"object",
+                 "properties":{"alias":{"type":"string","description":"Alias to drop; omit to disconnect every target"}}}
+                """)
         };
 
         yield return new Tool
         {
             Name = StatusName,
-            Title = "Which target the relay is pointed at",
-            Description = "Report whether the relay is connected, to which target, and how many tools it is forwarding.",
+            Title = "Which targets the relay is pointed at",
+            Description = "List every connected target: its alias, address, and how many tools it is forwarding.",
             InputSchema = RelayState.Schema("""{"type":"object","properties":{}}""")
         };
     }
@@ -198,6 +219,20 @@ public static class RelayServer
         }
 
         throw new RelayException($"'{key}' is required. Call connect with both target and token.");
+    }
+
+    private static string? OptionalString(IDictionary<string, JsonElement>? args, string key)
+    {
+        if (args is not null && args.TryGetValue(key, out var value) && value.ValueKind == JsonValueKind.String)
+        {
+            var s = value.GetString();
+            if (!string.IsNullOrWhiteSpace(s))
+            {
+                return s.Trim();
+            }
+        }
+
+        return null;
     }
 
     private static int? OptionalInt(IDictionary<string, JsonElement>? args, string key)

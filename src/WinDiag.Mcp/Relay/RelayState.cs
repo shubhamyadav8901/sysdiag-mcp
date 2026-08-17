@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -6,45 +7,94 @@ using ModelContextProtocol.Protocol;
 namespace WinDiag.Mcp.Relay;
 
 /// <summary>
-/// The relay's single mutable connection: which target windiag it is currently pointed at, and the
-/// live client to it.
+/// The relay's live connections: one per target VM, each under a short alias.
 /// </summary>
 /// <remarks>
 /// <para>The relay is one stdio MCP server registered once on the base machine, with no address of its
-/// own. A <c>connect</c> call points it at a target windiag over HTTP; from then on it mirrors that
-/// target's tools and forwards calls to it. Another <c>connect</c> repoints it. So a target's address
-/// is runtime data carried in a tool call, never configuration — which is the whole point: the lab VMs
-/// get a new IP every time, and neither the MCP registration nor Claude Code restarts to follow them.</para>
-/// <para>State swaps are serialised: a <c>connect</c> or <c>disconnect</c> takes the lock, and a
-/// forwarded call reads the current client under it, so a repoint mid-session cannot forward to a
-/// half-torn-down client.</para>
+/// own. Each <c>connect</c> points it at a target windiag over HTTP under an alias; the target's tools
+/// then appear here prefixed by that alias (<c>web1__process_list</c>), and calls route to the right
+/// VM. Several targets can be connected at once, so one registration drives a whole fleet, and a
+/// target's address is always runtime data in a tool call, never configuration -- which is what a set
+/// of lab VMs on ever-changing IPs needs.</para>
+/// <para>Connections are keyed by alias in a dictionary guarded by one lock. A <c>connect</c> or
+/// <c>disconnect</c> takes the lock to add or remove; a forwarded call reads its target's client under
+/// it, so repointing or dropping one target mid-session never forwards to a half-torn-down client.</para>
 /// </remarks>
 internal sealed class RelayState : IAsyncDisposable
 {
+    /// <summary>Separates an alias from the target's own tool name in a listed tool: <c>alias__tool</c>.</summary>
+    /// <remarks>
+    /// Two underscores, and an alias may not contain them, so the split is unambiguous even though the
+    /// target's own tool names (<c>process_list</c>) are full of single underscores.
+    /// </remarks>
+    public const string AliasSeparator = "__";
+
+    private static readonly Regex AliasPattern = new("^[A-Za-z0-9_-]+$", RegexOptions.Compiled);
+
+    private sealed record Connection(McpClient Client, IReadOnlyList<Tool> Tools, string Target);
+
     private readonly ILoggerFactory _loggerFactory;
     private readonly SemaphoreSlim _gate = new(1, 1);
-
-    private McpClient? _client;
-    private IReadOnlyList<Tool> _remoteTools = [];
+    private readonly Dictionary<string, Connection> _connections = new(StringComparer.OrdinalIgnoreCase);
 
     public RelayState(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
     }
 
-    public bool IsConnected => _client is not null;
-
-    public string? Target { get; private set; }
-
-    /// <summary>A snapshot of the target's tools, for the dynamic tools/list.</summary>
-    public IReadOnlyList<Tool> RemoteTools => _remoteTools;
-
-    /// <summary>Points the relay at a target windiag, replacing any current one.</summary>
-    /// <returns>The number of tools the target exposes.</returns>
-    public async Task<int> ConnectAsync(string address, string token, CancellationToken cancellationToken)
+    public bool AnyConnected
     {
+        get
+        {
+            _gate.Wait();
+            try { return _connections.Count > 0; }
+            finally { _gate.Release(); }
+        }
+    }
+
+    /// <summary>A snapshot of each connection, for status.</summary>
+    public IReadOnlyList<(string Alias, string Target, int ToolCount)> Connections()
+    {
+        _gate.Wait();
+        try
+        {
+            return _connections
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => (pair.Key, pair.Value.Target, pair.Value.Tools.Count))
+                .ToList();
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Every connected target's tools, each renamed <c>alias__tool</c> for the dynamic list.</summary>
+    public IReadOnlyList<Tool> PrefixedTools()
+    {
+        _gate.Wait();
+        try
+        {
+            return _connections
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .SelectMany(pair => pair.Value.Tools.Select(t => Rename(t, pair.Key)))
+                .ToList();
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Connects a target under an alias, replacing any connection already under that alias.</summary>
+    /// <returns>The alias used and the number of tools the target exposes.</returns>
+    public async Task<(string Alias, int ToolCount)> ConnectAsync(
+        string alias, string address, string token, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(alias);
         ArgumentException.ThrowIfNullOrWhiteSpace(address);
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
+
+        if (!AliasPattern.IsMatch(alias) || alias.Contains(AliasSeparator, StringComparison.Ordinal))
+        {
+            throw new RelayException(
+                $"'{alias}' is not a usable alias. Use letters, digits, single underscores or hyphens, " +
+                "and no double underscore (that separates the alias from the tool name).");
+        }
 
         if (!Uri.TryCreate(address, UriKind.Absolute, out var endpoint) ||
             endpoint.Scheme is not ("http" or "https"))
@@ -57,7 +107,7 @@ internal sealed class RelayState : IAsyncDisposable
         var transport = new HttpClientTransport(new HttpClientTransportOptions
         {
             Endpoint = endpoint,
-            Name = "windiag-relay",
+            Name = $"windiag-relay/{alias}",
             AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" }
         });
 
@@ -90,26 +140,39 @@ internal sealed class RelayState : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await DisposeClientAsync().ConfigureAwait(false);
-            _client = client;
-            _remoteTools = tools;
-            Target = address;
+            if (_connections.TryGetValue(alias, out var existing))
+            {
+                await DisposeQuietly(existing.Client).ConfigureAwait(false);
+            }
+
+            _connections[alias] = new Connection(client, tools, address);
         }
         finally
         {
             _gate.Release();
         }
 
-        return tools.Count;
+        return (alias, tools.Count);
     }
 
-    /// <summary>Drops the current target, if any.</summary>
-    public async Task DisconnectAsync(CancellationToken cancellationToken)
+    /// <summary>Drops one alias, or every connection when <paramref name="alias"/> is null.</summary>
+    /// <returns>The aliases that were dropped.</returns>
+    public async Task<IReadOnlyList<string>> DisconnectAsync(string? alias, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await DisposeClientAsync().ConfigureAwait(false);
+            var toDrop = alias is null
+                ? _connections.Keys.ToList()
+                : _connections.Keys.Where(k => k.Equals(alias, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            foreach (var key in toDrop)
+            {
+                await DisposeQuietly(_connections[key].Client).ConfigureAwait(false);
+                _connections.Remove(key);
+            }
+
+            return toDrop;
         }
         finally
         {
@@ -117,70 +180,113 @@ internal sealed class RelayState : IAsyncDisposable
         }
     }
 
-    /// <summary>Forwards one tool call to the current target and returns its result verbatim.</summary>
+    /// <summary>Forwards a call to the target behind <paramref name="alias"/> and returns its result verbatim.</summary>
     public async Task<CallToolResult> ForwardAsync(
-        string name,
+        string alias,
+        string toolName,
         IReadOnlyDictionary<string, object?>? arguments,
         CancellationToken cancellationToken)
     {
-        McpClient? client;
+        McpClient client;
+        string target;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            client = _client;
+            if (!_connections.TryGetValue(alias, out var connection))
+            {
+                var known = _connections.Count == 0
+                    ? "No targets are connected. Call 'connect' first."
+                    : $"Connected aliases: {string.Join(", ", _connections.Keys.OrderBy(k => k))}.";
+                throw new RelayException($"No target is connected under alias '{alias}'. {known}");
+            }
+
+            client = connection.Client;
+            target = connection.Target;
         }
         finally
         {
             _gate.Release();
         }
 
-        if (client is null)
-        {
-            throw new RelayException(
-                "Not connected to a target. Call 'connect' with the target's windiag address and token " +
-                "first, then retry.");
-        }
-
-        // The target's own tool does the real work and its result -- structured content, IsError and
-        // all -- is passed straight back. The relay adds nothing to the payload; it only moves it.
         var args = arguments?.ToDictionary(pair => pair.Key, pair => pair.Value);
 
         try
         {
-            return await client.CallToolAsync(name, args, cancellationToken: cancellationToken)
+            return await client.CallToolAsync(toolName, args, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not RelayException)
         {
             throw new RelayException(
-                $"The call to '{name}' on {Target} failed: {ex.Message}. If the target restarted (an " +
-                "update_self, say), reconnect and retry.", ex);
+                $"The call to '{toolName}' on {alias} ({target}) failed: {ex.Message}. If that target " +
+                "restarted (an update_self, say), reconnect it and retry.", ex);
         }
     }
 
-    private async Task DisposeClientAsync()
+    /// <summary>A sensible default alias when the caller does not name one: the host, dots to hyphens.</summary>
+    /// <remarks>
+    /// A tool name may not contain a dot, so <c>192.168.32.93</c> cannot be an alias as-is; hyphens are
+    /// both name-safe and free of the <c>__</c> separator, so <c>192-168-32-93</c> is the derived form.
+    /// </remarks>
+    public static string DefaultAlias(string address)
     {
-        if (_client is not null)
+        var host = Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri.Host : address;
+        var cleaned = Regex.Replace(host, "[^A-Za-z0-9-]", "-").Trim('-');
+        return string.IsNullOrEmpty(cleaned) ? "target" : cleaned;
+    }
+
+    /// <summary>Splits a listed tool name into its alias and the target's own tool name.</summary>
+    public static (string Alias, string Tool)? SplitToolName(string listedName)
+    {
+        var index = listedName.IndexOf(AliasSeparator, StringComparison.Ordinal);
+        if (index <= 0 || index + AliasSeparator.Length >= listedName.Length)
         {
-            try { await _client.DisposeAsync().ConfigureAwait(false); } catch (Exception) { /* tearing down */ }
-            _client = null;
-            _remoteTools = [];
-            Target = null;
+            return null;
         }
+
+        return (listedName[..index], listedName[(index + AliasSeparator.Length)..]);
+    }
+
+    private static Tool Rename(Tool tool, string alias) => new()
+    {
+        Name = $"{alias}{AliasSeparator}{tool.Name}",
+        Title = tool.Title is { } title ? $"[{alias}] {title}" : $"[{alias}] {tool.Name}",
+        Description = tool.Description,
+        InputSchema = tool.InputSchema,
+        OutputSchema = tool.OutputSchema,
+        Annotations = tool.Annotations
+    };
+
+    private static async Task DisposeQuietly(McpClient client)
+    {
+        try { await client.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception) { /* tearing down; nothing useful to do */ }
     }
 
     public async ValueTask DisposeAsync()
     {
-        await DisposeClientAsync().ConfigureAwait(false);
-        _gate.Dispose();
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            foreach (var connection in _connections.Values)
+            {
+                await DisposeQuietly(connection.Client).ConfigureAwait(false);
+            }
+
+            _connections.Clear();
+        }
+        finally
+        {
+            _gate.Release();
+            _gate.Dispose();
+        }
     }
 
     /// <summary>Builds the JSON input-schema element for a control tool.</summary>
-    internal static JsonElement Schema(string json) =>
-        JsonSerializer.Deserialize<JsonElement>(json);
+    internal static JsonElement Schema(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 }
 
-/// <summary>Raised for a relay-level failure: not connected, an unreachable target, a bad address.</summary>
+/// <summary>Raised for a relay-level failure: not connected, an unreachable target, a bad address or alias.</summary>
 internal sealed class RelayException : Exception
 {
     public RelayException(string message) : base(message)
