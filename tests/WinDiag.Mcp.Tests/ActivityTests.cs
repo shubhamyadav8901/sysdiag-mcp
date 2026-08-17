@@ -205,6 +205,38 @@ public sealed class ActivityQueryTests
     }
 
     [Fact]
+    public void Truncation_at_the_server_cap_reports_the_clamp_instead_of_advising_raise_maxEvents()
+    {
+        // The event list is capped at the server ceiling (here simulated as 2), and the caller asked for
+        // far more - so "raise maxEvents" would change nothing; the summary must say so.
+        var filter = new ActivityFilter(MaxEvents: 2);
+        var result = Inspector().Query(FixturePath, filter, CancellationToken.None);
+
+        var summary = WinDiag.Mcp.Tools.ActivityRendering.RenderQuery(
+            result, filter, resultCap: 2, requestedMaxEvents: 5000);
+
+        Assert.Contains("was clamped to this server's cap of 2", summary);
+        Assert.Contains("WINDIAG_MAX_RESULTS", summary);
+        Assert.Contains("will not return more", summary);
+        Assert.DoesNotContain("or raise maxEvents", summary);
+    }
+
+    [Fact]
+    public void Truncation_below_the_cap_still_suggests_raising_maxEvents()
+    {
+        // Here the list was capped by the caller's own small maxEvents, well under the server ceiling,
+        // so raising it genuinely helps and the advice should still say so.
+        var filter = new ActivityFilter(MaxEvents: 2);
+        var result = Inspector().Query(FixturePath, filter, CancellationToken.None);
+
+        var summary = WinDiag.Mcp.Tools.ActivityRendering.RenderQuery(
+            result, filter, resultCap: 200, requestedMaxEvents: 2);
+
+        Assert.Contains("or raise maxEvents", summary);
+        Assert.DoesNotContain("clamped", summary);
+    }
+
+    [Fact]
     public void Problems_only_narrows_to_the_failures_but_still_scans_everything()
     {
         var result = Inspector().Query(

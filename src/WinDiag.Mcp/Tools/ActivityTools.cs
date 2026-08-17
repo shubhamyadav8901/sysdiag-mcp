@@ -121,7 +121,10 @@ public sealed class ActivityQueryTools
 
         var result = _activity.Query(capturePath, filter, cancellationToken);
 
-        return new QueryActivityResult(ActivityRendering.RenderQuery(result, filter), result);
+        // Pass the server's own ceiling and the caller's raw request so the summary can say when
+        // maxEvents was clamped and stop advising "raise maxEvents" when it would change nothing.
+        var summary = ActivityRendering.RenderQuery(result, filter, _options.MaxResults, maxEvents);
+        return new QueryActivityResult(summary, result);
     }
 }
 
@@ -180,7 +183,11 @@ internal static class ActivityRendering
         return builder.ToString().TrimEnd();
     }
 
-    internal static string RenderQuery(ActivityQueryResult result, ActivityFilter filter)
+    internal static string RenderQuery(
+        ActivityQueryResult result,
+        ActivityFilter filter,
+        int resultCap = int.MaxValue,
+        int requestedMaxEvents = 0)
     {
         var builder = new StringBuilder();
 
@@ -248,7 +255,27 @@ internal static class ActivityRendering
             // The counts above are over every match; only this list is capped. Saying so stops the
             // aggregates being read as "top paths among the first hundred".
             builder.Append("Showing ").Append(result.Events.Count).Append(" of ").Append(Count(result.Matched))
-                .Append(" matches; the counts above cover all of them. Narrow the filter or raise maxEvents.");
+                .Append(" matches; the counts above cover all of them. ");
+
+            // The event list is capped at min(maxEvents, WINDIAG_MAX_RESULTS). When it hit the server
+            // ceiling, "raise maxEvents" is a dead end - the request was already clamped down to it - so
+            // report the clamp and point at the real lever instead of repeating advice that changes nothing.
+            if (filter.MaxEvents >= resultCap)
+            {
+                if (requestedMaxEvents > resultCap)
+                {
+                    builder.Append("maxEvents ").Append(Count(requestedMaxEvents))
+                        .Append(" was clamped to this server's cap of ").Append(Count(resultCap))
+                        .Append(" (WINDIAG_MAX_RESULTS). ");
+                }
+
+                builder.Append("Raising maxEvents will not return more - narrow the filter, or raise " +
+                    "WINDIAG_MAX_RESULTS on the target.");
+            }
+            else
+            {
+                builder.Append("Narrow the filter or raise maxEvents.");
+            }
         }
 
         return builder.ToString().TrimEnd();
