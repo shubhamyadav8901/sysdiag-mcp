@@ -26,6 +26,8 @@ public static class RelayServer
     private const string ConnectName = "connect";
     private const string DisconnectName = "disconnect";
     private const string StatusName = "status";
+    private const string PushFileName = "push_file";
+    private const string PullFileName = "pull_file";
 
     /// <summary>
     /// The whole time budget for pre-connecting the targets file, awaited before the host answers.
@@ -111,6 +113,12 @@ public static class RelayServer
                         : "Connected targets:\n" + string.Join("\n", connections.Select(c =>
                             $"  {c.Alias} -> {c.Target} ({c.ToolCount} tools, listed as {c.Alias}{RelayState.AliasSeparator}*)")));
 
+                case PushFileName:
+                    return await PushFile(state, args, ct).ConfigureAwait(false);
+
+                case PullFileName:
+                    return await PullFile(state, args, ct).ConfigureAwait(false);
+
                 default:
                     // Anything else is a target tool, named alias__tool. Split off the alias and forward
                     // the target's own tool name to that connection.
@@ -171,6 +179,60 @@ public static class RelayServer
             "reconnect windiag (/mcp) or start a fresh session and they will be pre-connected. " +
             "Connect more targets under other aliases to drive several at once; connect the same alias to repoint.");
     }
+
+    /// <summary>Sends a local file to a connected target, without its bytes passing through the caller.</summary>
+    private static async ValueTask<CallToolResult> PushFile(
+        RelayState state, IDictionary<string, JsonElement>? args, CancellationToken ct)
+    {
+        var alias = RequireString(args, "alias");
+        var remotePath = RequireString(args, "remotePath");
+        var localPath = RelayFileScope.Require(
+            RequireString(args, "localPath"), "localPath", RelayFileScope.Roots());
+        var overwrite = OptionalBool(args, "overwrite") ?? true;
+
+        var outcome = await RelayFileTransfer
+            .PushAsync(Forwarder(state, alias), localPath, remotePath, overwrite, ct)
+            .ConfigureAwait(false);
+
+        var retried = outcome.Retries == 0
+            ? string.Empty
+            : $"\n{outcome.Retries} chunk(s) had to be re-sent; the link to this target is dropping data.";
+
+        return Text(
+            $"Sent {RelayFileTransfer.Bytes(outcome.Bytes)} bytes to {alias} as {outcome.RemotePath} " +
+            $"in {outcome.Chunks} chunk(s).\nSHA-256 {outcome.Sha256}, verified by the target against the " +
+            $"assembled file.\nFrom {outcome.LocalPath}." + retried);
+    }
+
+    /// <summary>Reads a file off a connected target straight to local disk, never through the caller.</summary>
+    private static async ValueTask<CallToolResult> PullFile(
+        RelayState state, IDictionary<string, JsonElement>? args, CancellationToken ct)
+    {
+        var alias = RequireString(args, "alias");
+        var remotePath = RequireString(args, "remotePath");
+        var localPath = RelayFileScope.Require(
+            RequireString(args, "localPath"), "localPath", RelayFileScope.Roots());
+        var overwrite = OptionalBool(args, "overwrite") ?? false;
+
+        var outcome = await RelayFileTransfer
+            .PullAsync(Forwarder(state, alias), remotePath, localPath, overwrite, ct)
+            .ConfigureAwait(false);
+
+        // Said explicitly rather than implied by silence: an unverified copy is a different artifact from
+        // a verified one, and which it is should not have to be inferred from a missing line.
+        var verified = outcome.VerifiedAgainstTarget
+            ? "verified against the whole-file hash the target reported"
+            : "NOT verified end to end -- the target reported no whole-file hash; every slice was still " +
+              "checked individually";
+
+        return Text(
+            $"Wrote {RelayFileTransfer.Bytes(outcome.Bytes)} bytes from {alias}:{outcome.RemotePath} " +
+            $"to {outcome.LocalPath} in {outcome.Slices} slice(s).\nSHA-256 {outcome.Sha256}, {verified}.");
+    }
+
+    /// <summary>Binds a transfer loop to one connected target.</summary>
+    private static ForwardTool Forwarder(RelayState state, string alias) =>
+        (tool, arguments, token) => state.ForwardAsync(alias, tool, arguments, token);
 
     /// <summary>Saves a just-connected target to the targets file, or explains why it could not.</summary>
     private static string Persisted(string alias, string address, string token, bool persist)
@@ -347,6 +409,53 @@ public static class RelayServer
             Title = "Which targets the relay is pointed at",
             Description = "List every connected target: its alias, address, and how many tools it is forwarding.",
             InputSchema = RelayState.Schema("""{"type":"object","properties":{}}""")
+        };
+
+        yield return new Tool
+        {
+            Name = PushFileName,
+            Title = "Copy a local file onto a target",
+            Description =
+                "Send a file from THIS machine to a connected target, without its bytes passing through " +
+                "the conversation. Use it to stage a build for update_self, place a Sysinternals binary, " +
+                "or drop any input file - it is the tool to reach for instead of calling the target's " +
+                "put_file yourself, because put_file takes the bytes as an argument, so a 46 MB build " +
+                "would be ~63 MB of base64 that the caller has to produce. Here the relay reads the file " +
+                "off local disk and streams it in hash-verified 4 MB chunks; you get back a summary. " +
+                "A refused chunk is re-sent on its own rather than restarting the transfer. Local paths " +
+                "are confined to the relay's permitted roots (see WINDIAG_RELAY_FILE_ROOT).",
+            InputSchema = RelayState.Schema("""
+                {"type":"object",
+                 "properties":{
+                   "alias":{"type":"string","description":"Which connected target to send to, as shown by status"},
+                   "localPath":{"type":"string","description":"File on THIS machine to send, e.g. artifacts/win-x64/WinDiag.Mcp.exe"},
+                   "remotePath":{"type":"string","description":"Destination path as the target sees it, e.g. C:\\WinDiag\\WinDiag.Mcp.new.exe"},
+                   "overwrite":{"type":"boolean","description":"Replace an existing file at the destination. Default true."}},
+                 "required":["alias","localPath","remotePath"]}
+                """)
+        };
+
+        yield return new Tool
+        {
+            Name = PullFileName,
+            Title = "Copy a file off a target to local disk",
+            Description =
+                "Fetch a file from a connected target straight to a local file, without its bytes passing " +
+                "through the conversation. This is how to collect what capture_dump and capture_activity " +
+                "write: calling the target's get_file directly returns the bytes in the response, so a " +
+                "multi-megabyte dump lands in the caller's context. Here the relay walks the slices, " +
+                "checks each one's SHA-256 before appending, and verifies the reassembled copy against " +
+                "the whole-file hash the target reports. It streams to disk, so a large dump is practical. " +
+                "Local paths are confined to the relay's permitted roots (see WINDIAG_RELAY_FILE_ROOT).",
+            InputSchema = RelayState.Schema("""
+                {"type":"object",
+                 "properties":{
+                   "alias":{"type":"string","description":"Which connected target to read from, as shown by status"},
+                   "remotePath":{"type":"string","description":"Path on the target, e.g. the path capture_dump returned"},
+                   "localPath":{"type":"string","description":"Where to write it on THIS machine"},
+                   "overwrite":{"type":"boolean","description":"Replace an existing local file. Default false, so a collected artifact is not silently replaced."}},
+                 "required":["alias","remotePath","localPath"]}
+                """)
         };
     }
 
