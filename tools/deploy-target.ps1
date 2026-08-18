@@ -179,6 +179,11 @@ function Get-RemoteHash([string] $Name) {
 # JSON pipeline. Small enough for that, large enough that a 43 MB binary is ~11 chunks, not hundreds.
 $script:ChunkBytes = 4 * 1024 * 1024
 
+# Attempts for a single chunk before the whole transfer is restarted. A transient refusal -- an
+# on-access virus scanner holding the file it just saw grow -- is far cheaper to ride out here than by
+# resending tens of megabytes over a slow link.
+$script:ChunkAttempts = 5
+
 function Get-Sha256Bytes([byte[]] $Bytes) {
     return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)) -replace '-', '')
 }
@@ -232,7 +237,27 @@ function Send-OverHttp([string] $Target, [byte[]] $Bytes, [string] $ExpectedSha,
                 [Array]::Copy($Bytes, $offset, $chunk, 0, $len)
 
                 $shaForChunk = if ($i -eq $total - 1) { $ExpectedSha } else { '' }
-                Invoke-PutFile -Target $Target -Bytes $chunk -ExpectedSha $shaForChunk -Append ($i -gt 0)
+
+                # Retry THIS chunk before giving up on the whole transfer. An on-access scanner
+                # (CrowdStrike Falcon on one of the lab VMs) opens the staged .exe each time it grows, so
+                # the next append hits a sharing violation -- observed failing at chunk 10, then 9, then 1
+                # on three consecutive whole-file restarts, each costing minutes and re-triggering the
+                # same scan. The open failing means nothing was written, so re-sending in place is safe;
+                # and if a chunk ever did land twice, the whole-file hash on the last chunk still catches
+                # it and the outer loop restarts cleanly.
+                for ($try = 1; ; $try++) {
+                    try {
+                        Invoke-PutFile -Target $Target -Bytes $chunk -ExpectedSha $shaForChunk -Append ($i -gt 0)
+                        break
+                    }
+                    catch {
+                        if ($try -ge $script:ChunkAttempts) { throw }
+                        Write-Note ("  chunk {0}/{1} was refused; retrying in {2:N1}s ({3}/{4})" -f `
+                            ($i + 1), $total, (0.75 * $try), $try, $script:ChunkAttempts)
+                        Start-Sleep -Milliseconds (750 * $try)
+                    }
+                }
+
                 Write-Note ("  chunk {0}/{1}" -f ($i + 1), $total)
             }
             return
