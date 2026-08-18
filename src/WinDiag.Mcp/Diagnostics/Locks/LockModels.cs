@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace WinDiag.Mcp.Diagnostics.Locks;
 
 /// <summary>How Restart Manager classifies a holding process.</summary>
@@ -25,12 +27,21 @@ public enum LockHolderKind
 /// process. Distinguishing those from a live holder matters: acting on a recycled PID targets an
 /// innocent process.
 /// </param>
+/// <remarks>
+/// The nullable members are written even when null. The tool's output schema is generated from this
+/// record and lists them as required, while the serializer omits nulls by default -- so a holder that is
+/// not a service (no <see cref="ServiceShortName"/>) produced JSON the client rejected outright, failing
+/// the call at exactly the moment the tool had found something. Present-and-null satisfies both.
+/// </remarks>
 public sealed record LockHolder(
     int ProcessId,
     string ProcessName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     string? FriendlyName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     string? ServiceShortName,
     LockHolderKind Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     DateTimeOffset? StartedAt,
     bool StillRunning);
 
