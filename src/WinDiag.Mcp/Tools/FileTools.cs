@@ -11,6 +11,7 @@ namespace WinDiag.Mcp.Tools;
 public sealed record PutFileResult(string Summary, FileWriteResult File);
 
 /// <summary>Receiving a file over the server's own channel, so staging needs no SMB share.</summary>
+/// <remarks>The read side lives in <see cref="FileReadTools"/>, which a read-only server still gets.</remarks>
 [McpServerToolType]
 [SupportedOSPlatform("windows")]
 public sealed class FileTools

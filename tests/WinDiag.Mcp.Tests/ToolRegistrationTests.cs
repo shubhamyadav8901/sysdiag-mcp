@@ -65,6 +65,13 @@ public sealed class ToolRegistrationTests
         Assert.Contains("who_locks_path", names);
         Assert.Contains("process_modules", names);
         Assert.Contains("query_activity", names);
+
+        // Including the read side of the file transfer. put_file goes, because writing is a state
+        // change; get_file stays, because collecting an artifact off a machine is a read -- and a
+        // read-only server is exactly where someone doing that is likely to be pointed. What bounds it
+        // is the directory confinement, not the mode.
+        Assert.DoesNotContain("put_file", names);
+        Assert.Contains("get_file", names);
     }
 
     [Fact]

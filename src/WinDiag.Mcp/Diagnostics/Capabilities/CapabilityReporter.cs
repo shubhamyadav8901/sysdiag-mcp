@@ -119,6 +119,10 @@ public sealed class CapabilityReporter : ICapabilityReporter
                 "hash-verified file write over the server's own channel",
                 null,
                 "an unelevated server can only write where the current account already can"),
+            ["get_file"] = new(
+                "hash-verified sliced file read over the server's own channel",
+                null,
+                "an unelevated server can only read what the current account already can"),
             ["run_command"] = new(
                 "arbitrary command execution on the host",
                 null,

@@ -92,7 +92,13 @@ public static class ServerBuilder
             .WithTools<ActivityQueryTools>()
             .WithTools<ModuleTools>()
             .WithTools<AutostartTools>()
-            .WithTools<RegistryTools>();
+            .WithTools<RegistryTools>()
+
+            // Read side of the transfer, so it stays available on a read-only server: collecting a dump
+            // or a trace off a machine is exactly what someone pointed at one is doing, and the directory
+            // confinement -- not the mode -- is what bounds it. WINDIAG_ALLOW_ARBITRARY_READ only widens
+            // WHERE it may read, and is enforced per-call.
+            .WithTools<FileReadTools>();
 
         // Write tools are registered here only when the server is not read-only, so a read-only server
         // does not advertise capabilities it will refuse. capture_dump and capture_activity write files
@@ -152,6 +158,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IRegistryInspector, WindowsRegistryInspector>();
         services.AddSingletonIfMissing<ICommandRunner, WindowsCommandRunner>();
         services.AddSingletonIfMissing<IFileReceiver, WindowsFileReceiver>();
+        services.AddSingletonIfMissing<IFileSender, WindowsFileSender>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
@@ -179,6 +186,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<RegistryTools, RegistryTools>();
         services.AddSingletonIfMissing<CommandTools, CommandTools>();
         services.AddSingletonIfMissing<FileTools, FileTools>();
+        services.AddSingletonIfMissing<FileReadTools, FileReadTools>();
         return services;
     }
 

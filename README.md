@@ -42,6 +42,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
 | `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
+| `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping, `tools/fetch-from-target.ps1` drives it for large files |
 
 ## Build and test
 
@@ -180,6 +181,28 @@ Three behaviours are deliberate and worth knowing:
   at once, and a per-chunk hash catches a corrupt chunk on a lossy link at the chunk, not minutes later.
 
 The rest of this section is what the script automates, and what to do when it cannot be used.
+
+### Getting artifacts back off a target
+
+`capture_dump` and `capture_activity` return a UNC path on the admin share, but that is no longer the
+only way to collect what they wrote — and the share brings back the whole token-filtering prerequisite
+below. `get_file` reads a file back over the same authenticated HTTP the tools already use, sliced and
+hash-verified exactly as `put_file` is in the other direction:
+
+```
+.\tools\fetch-from-target.ps1 -Target 192.168.32.93 -Token $token `
+  -RemotePath 'C:\Users\admin\AppData\Local\Temp\windiag\explorer_1904.dmp'
+```
+
+The script walks the slices, checks each one's SHA-256 before appending, and verifies the reassembled
+copy against the whole-file hash the target reported. It streams to disk rather than buffering, so a
+large dump is practical — and when this is driven from an agent session, the bytes never enter the
+conversation. Calling `get_file` directly is for small files (a config, a log tail); the response
+carries the bytes, so a multi-megabyte dump fetched that way lands in the caller's context.
+
+No flag is needed for anything a capture wrote: the artifact directory is one of windiag's own. Reading
+elsewhere needs `WINDIAG_ALLOW_ARBITRARY_READ`. Multi-gigabyte `full` dumps still belong on the UNC
+path — the same caveat `put_file` carries in the other direction.
 
 ### Reaching the admin share
 
@@ -402,6 +425,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
 | `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write outside the server's own directories. `put_file` itself is always available on a writable server, scoped to those dirs; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
+| `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |

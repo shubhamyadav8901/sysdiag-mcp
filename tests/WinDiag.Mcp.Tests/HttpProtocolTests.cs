@@ -173,7 +173,10 @@ public sealed class HttpProtocolTests : IAsyncLifetime
         // put_file is on by default (writable server, scoped); run_command is not (needs its flag).
         Assert.Contains("put_file", tools);
         Assert.DoesNotContain("run_command", tools);
-        Assert.Equal(21, tools.Length);
+        // get_file is on by default too, and unlike put_file it is not gated on the server being
+        // writable -- retrieving an artifact is a read.
+        Assert.Contains("get_file", tools);
+        Assert.Equal(22, tools.Length);
     }
 
     [Fact]

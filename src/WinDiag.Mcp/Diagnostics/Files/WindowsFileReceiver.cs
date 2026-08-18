@@ -39,14 +39,14 @@ public sealed class WindowsFileReceiver : IFileReceiver
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var full = ResolvePath(request.Path);
-        var scope = ScopeOf(full);
+        var full = FileScope.Resolve(request.Path, "destination path");
+        var scope = FileScope.Of(full, _options);
 
         if (scope == WriteScope.Arbitrary && !_options.AllowArbitraryWrite)
         {
             throw new FileTransferException(
-                $"'{full}' is outside the directories this server owns ({ServerDirectory} and " +
-                $"{_options.ArtifactDirectory}), so writing it needs arbitrary write, which is off. " +
+                $"'{full}' is outside the directories this server owns ({FileScope.Describe(_options)}), " +
+                "so writing it needs arbitrary write, which is off. " +
                 "Set WINDIAG_ALLOW_ARBITRARY_WRITE=1 to allow writing anywhere, or choose a path under " +
                 "one of those directories. (run_command can also place a file anywhere if it is enabled.)");
         }
@@ -101,57 +101,6 @@ public sealed class WindowsFileReceiver : IFileReceiver
             request.Content.LongLength, full, scope, sha);
 
         return new FileWriteResult(full, request.Content.LongLength, sha, scope, existed);
-    }
-
-    /// <summary>The directory the running server executable lives in.</summary>
-    private static string ServerDirectory =>
-        Path.GetDirectoryName(Environment.ProcessPath) ?? Environment.CurrentDirectory;
-
-    private string ResolvePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            throw new FileTransferException("No destination path was given.");
-        }
-
-        try
-        {
-            return Path.GetFullPath(path.Trim());
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            throw new FileTransferException($"'{path}' is not a usable file path: {ex.Message}");
-        }
-    }
-
-    private WriteScope ScopeOf(string fullPath) =>
-        IsUnder(fullPath, ServerDirectory) || IsUnder(fullPath, _options.ArtifactDirectory)
-            ? WriteScope.WinDiag
-            : WriteScope.Arbitrary;
-
-    /// <summary>True when <paramref name="candidate"/> is the directory itself or something inside it.</summary>
-    /// <remarks>
-    /// Compared on the canonical forms with a trailing separator, so <c>C:\WinDiagX\f</c> does not count
-    /// as being under <c>C:\WinDiag</c> — a prefix match without the separator boundary is the classic
-    /// way a scope check is escaped.
-    /// </remarks>
-    private static bool IsUnder(string candidate, string directory)
-    {
-        string root;
-        try
-        {
-            root = Path.GetFullPath(directory);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
-
-        var rootWithSep = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                          + Path.DirectorySeparatorChar;
-
-        return candidate.Equals(root, StringComparison.OrdinalIgnoreCase)
-               || candidate.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void Write(string fullPath, byte[] content)
