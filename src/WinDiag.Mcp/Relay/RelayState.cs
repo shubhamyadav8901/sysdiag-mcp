@@ -29,6 +29,9 @@ internal sealed class RelayState : IAsyncDisposable
     /// </remarks>
     public const string AliasSeparator = "__";
 
+    /// <summary>The port a bare host is assumed to serve on, and the one a derived alias omits.</summary>
+    public const int DefaultPort = 4024;
+
     private static readonly Regex AliasPattern = new("^[A-Za-z0-9_-]+$", RegexOptions.Compiled);
 
     private sealed record Connection(McpClient Client, IReadOnlyList<Tool> Tools, string Target);
@@ -117,7 +120,10 @@ internal sealed class RelayState : IAsyncDisposable
             client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (Exception ex)
+        // Cancellation is let through rather than wrapped: the pre-connect budget expiring means "that
+        // target did not answer in time", and reporting it as "check the firewall and the token" sends
+        // the operator auditing configuration over a VM that is merely switched off.
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new RelayException(
                 $"Could not reach a windiag server at {address}: {ex.Message}. Check the target is up, " +
@@ -132,12 +138,31 @@ internal sealed class RelayState : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            await client.DisposeAsync().ConfigureAwait(false);
+            await DisposeQuietly(client).ConfigureAwait(false);
+
+            if (ex is OperationCanceledException)
+            {
+                throw;
+            }
+
             throw new RelayException(
                 $"Connected to {address} but could not read its tool list: {ex.Message}", ex);
         }
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // The client is fully connected by this point, so anything that throws before it is handed to
+        // _connections strands it: nothing disposes it, and the TARGET keeps its session and stream open
+        // with no one on the other end. Cancellation here is reachable -- several pre-connects contend
+        // for this gate inside one shared budget.
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            await DisposeQuietly(client).ConfigureAwait(false);
+            throw;
+        }
+
         try
         {
             if (_connections.TryGetValue(alias, out var existing))
@@ -230,10 +255,36 @@ internal sealed class RelayState : IAsyncDisposable
     /// </remarks>
     public static string DefaultAlias(string address)
     {
-        var host = Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri.Host : address;
+        var host = address;
+        int? port = null;
+        if (Uri.TryCreate(address, UriKind.Absolute, out var uri))
+        {
+            host = uri.Host;
+            port = uri.Port;
+        }
+
         var cleaned = Regex.Replace(host, "[^A-Za-z0-9-]", "-").Trim('-');
-        return string.IsNullOrEmpty(cleaned) ? "target" : cleaned;
+        if (string.IsNullOrEmpty(cleaned))
+        {
+            cleaned = "target";
+        }
+
+        // Two servers on one host but different ports would otherwise derive the SAME alias, and
+        // pre-connect starts them concurrently: both connect, the later one evicts the earlier under the
+        // gate, and which port answers that alias is decided by whichever won the race that boot.
+        return port is { } p && p != DefaultPort ? $"{cleaned}-{p}" : cleaned;
     }
+
+    /// <summary>Builds a target URL from a bare host[:port], or passes a full URL through unchanged.</summary>
+    /// <remarks>
+    /// A bare host is the common case -- the caller has an IP from wherever the VM was assigned one -- so
+    /// the relay wraps it in http://host:port. Shared by the connect tool and the targets file so both
+    /// derive the same address, and therefore the same default alias, for the same entry.
+    /// </remarks>
+    public static string BuildAddress(string target, int? port, int defaultPort = DefaultPort) =>
+        target.Contains("://", StringComparison.Ordinal)
+            ? target
+            : $"http://{target}:{port ?? defaultPort}";
 
     /// <summary>Splits a listed tool name into its alias and the target's own tool name.</summary>
     public static (string Alias, string Tool)? SplitToolName(string listedName)

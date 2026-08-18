@@ -122,7 +122,14 @@ putting its `alias__tool` tools in the very first `tools/list`:
 to this file plus a fresh session — the addresses still live in data, never in the MCP registration. A
 missing or malformed file just means "pre-connect nothing"; an unreachable target is skipped (within a
 5-second total budget so a powered-off VM never stalls startup) with the `connect` line to retry it
-logged to stderr. The file holds bearer tokens in plaintext, so keep it readable only by your account.
+logged to stderr.
+
+The file holds bearer tokens in plaintext, so the relay **restricts it to your account** on every write —
+inheritance off, SYSTEM and local administrators removed. Because every session runs its own relay
+against this one file, reads and writes take a named cross-process lock and each write lands atomically
+through a temporary file, keeping the previous contents as `.windiag-targets.json.bak`. That backup is
+what a corrupted file is recovered from; an empty one (what a relay killed mid-write leaves behind) is
+treated as "no targets" rather than an error, so persistence heals itself instead of wedging.
 
 You rarely edit it by hand: a successful `connect` **writes the target (with its token) into this file**
 by default, so the naive fix — reconnect `windiag` or start a fresh session — actually works, because
@@ -379,6 +386,12 @@ level through an ordinary tool call. The token is the whole boundary.
   overridden for the same reason: the generated one would print every property, token included.
 - `WINDIAG_READ_ONLY=1` drops state-changing tools from registration entirely, so they are never
   advertised.
+- **Tool *results* are untrusted input to whatever agent is driving.** `run_command` output, process
+  command lines, registry values, event-log messages and any file content the tools surface are data
+  the target controls — a compromised or hostile target can return text crafted to steer the model into
+  further calls. The server's own tool *descriptions* are injection-free, but the boundary it cannot
+  enforce is on the reading side: treat returned content as data, never as instructions, and keep the
+  destructive grants (`WINDIAG_ALLOW_COMMAND_EXECUTION`, `update_self`) off unless a run needs them.
 
 ## Configuration
 

@@ -1,3 +1,8 @@
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -7,7 +12,7 @@ namespace WinDiag.Mcp.Relay;
 internal sealed record RelayTargetEntry(string? As, string Target, string Token, int? Port);
 
 /// <summary>
-/// Reads the optional targets file the relay pre-connects at startup.
+/// Reads and updates the targets file the relay pre-connects from at launch.
 /// </summary>
 /// <remarks>
 /// <para>The relay's tool list is dynamic, but this client fixes the callable tool set when it first
@@ -17,12 +22,23 @@ internal sealed record RelayTargetEntry(string? As, string Target, string Token,
 /// <c>tools/list</c>. Changing the fleet is an edit to this file plus a fresh session, never a change to
 /// the MCP registration -- the addresses still live in data, not configuration.</para>
 /// <para>One shape, one path: a JSON object with a <c>targets</c> array at
-/// <c>%USERPROFILE%\.windiag-targets.json</c>. A missing file means "pre-connect nothing"; a malformed
-/// one is logged and treated the same, so a typo never costs the operator the control tools.</para>
+/// <c>%USERPROFILE%\.windiag-targets.json</c>.</para>
+/// <para><strong>Every relay process shares this one file.</strong> Each Claude Code session spawns its
+/// own relay, and each <c>connect</c> rewrites the file, so reads and writes are serialised on a named
+/// cross-process mutex and every write lands atomically through a temporary file. Without both, two
+/// sessions connecting at once silently lose one another's target -- and the file holds every target's
+/// bearer token, so a write torn by process death would destroy all of them.</para>
 /// </remarks>
+[SupportedOSPlatform("windows")]
 internal static class RelayTargetsFile
 {
     public const string FileName = ".windiag-targets.json";
+
+    /// <summary>Kept beside the file by every atomic write, so a torn or corrupted file has a fallback.</summary>
+    private const string BackupSuffix = ".bak";
+
+    /// <summary>Generous: the critical section is one small read and one rename, never a network call.</summary>
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>The single path the relay looks for the targets file at.</summary>
     public static string DefaultPath() =>
@@ -32,13 +48,53 @@ internal static class RelayTargetsFile
     /// <exception cref="RelayException">The file exists but is not valid, so the caller can log it.</exception>
     public static IReadOnlyList<RelayTargetEntry>? Load(string path)
     {
-        if (!File.Exists(path))
+        using var guard = Lock(path);
+        return LoadLocked(path);
+    }
+
+    /// <summary>
+    /// Adds or replaces one target in the file, keeping every other entry, so a target connected at
+    /// runtime survives a relay restart and is pre-connected next launch.
+    /// </summary>
+    /// <remarks>
+    /// A matching alias is replaced (a repoint), otherwise the target is appended. Read and write happen
+    /// under one lock, so a concurrent relay cannot interleave and drop this entry. The file is parsed
+    /// before being rewritten, so a malformed file is refused rather than overwritten with a half-file
+    /// that would lose whatever it already held.
+    /// </remarks>
+    public static void Upsert(string path, RelayTargetEntry entry)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.As);
+
+        using var guard = Lock(path);
+
+        var entries = LoadLocked(path) is { } existing
+            ? new List<RelayTargetEntry>(existing)
+            : new List<RelayTargetEntry>();
+
+        // Matched on the EFFECTIVE alias: an entry written by hand without an "as" still occupies the
+        // alias derived from its address, so comparing the raw field would append a twin that races the
+        // original on every launch instead of repointing it.
+        var index = entries.FindIndex(
+            e => string.Equals(EffectiveAlias(e), entry.As, StringComparison.OrdinalIgnoreCase));
+
+        if (index >= 0)
         {
-            return null;
+            entries[index] = entry;
+        }
+        else
+        {
+            entries.Add(entry);
         }
 
-        return Parse(File.ReadAllText(path));
+        WriteAtomic(path, Serialize(entries));
     }
+
+    /// <summary>The alias an entry occupies: its own, or the one derived from its address.</summary>
+    public static string EffectiveAlias(RelayTargetEntry entry) =>
+        string.IsNullOrWhiteSpace(entry.As)
+            ? RelayState.DefaultAlias(RelayState.BuildAddress(entry.Target, entry.Port))
+            : entry.As.Trim();
 
     /// <summary>Parses the targets-file JSON, validating that every entry has a target and a token.</summary>
     public static IReadOnlyList<RelayTargetEntry> Parse(string json)
@@ -79,36 +135,171 @@ internal static class RelayTargetsFile
         return result;
     }
 
-    /// <summary>
-    /// Adds or replaces one target in the file, keeping every other entry, so a target connected at
-    /// runtime survives a relay restart and is pre-connected next launch.
-    /// </summary>
-    /// <remarks>
-    /// A matching alias is replaced (a repoint), otherwise the target is appended. The file is parsed
-    /// first, not blindly appended to, so a malformed file throws here rather than being overwritten
-    /// with a half-file that would lose whatever it already held.
-    /// </remarks>
-    public static void Upsert(string path, RelayTargetEntry entry)
+    /// <summary>Reads and parses the file, assuming the lock is already held.</summary>
+    private static IReadOnlyList<RelayTargetEntry>? LoadLocked(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(entry.As);
-
-        var entries = File.Exists(path)
-            ? new List<RelayTargetEntry>(Parse(File.ReadAllText(path)))
-            : new List<RelayTargetEntry>();
-
-        var index = entries.FindIndex(e => string.Equals(e.As, entry.As, StringComparison.OrdinalIgnoreCase));
-        if (index >= 0)
+        if (!File.Exists(path))
         {
-            entries[index] = entry;
+            return null;
+        }
+
+        var text = Read(path);
+
+        // An empty file is not content worth preserving -- it is what a write torn by process death
+        // leaves behind. Healing it here means the next connect rewrites it, instead of every future
+        // connect refusing to touch a "malformed" file that has nothing left in it to fix.
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Restore(path);
+        }
+
+        try
+        {
+            return Parse(text);
+        }
+        catch (RelayException)
+        {
+            // A genuinely malformed file is never overwritten, but a backup from the last good write is
+            // a better answer than refusing to start with any targets at all.
+            var restored = Restore(path);
+            if (restored is not null)
+            {
+                return restored;
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>Reads the last good copy left by an atomic write, if there is one that parses.</summary>
+    private static IReadOnlyList<RelayTargetEntry>? Restore(string path)
+    {
+        var backup = path + BackupSuffix;
+        if (!File.Exists(backup))
+        {
+            return null;
+        }
+
+        try
+        {
+            var text = Read(backup);
+            return string.IsNullOrWhiteSpace(text) ? null : Parse(text);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Reads a file, retrying briefly so an overlapping write is not reported as corruption.</summary>
+    /// <remarks>
+    /// The mutex serialises relays that use it, but a hand edit or an editor's own save can still hold
+    /// the file for an instant, and Windows share-mode checks surface that as an IOException. Reporting
+    /// it verbatim would print "ignoring the targets file" over a file that is perfectly fine.
+    /// </remarks>
+    private static string Read(string path)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(
+                    path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                return reader.ReadToEnd();
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                Thread.Sleep(50);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Writes the file so it is never observed half-written: a temporary file is written and flushed,
+    /// then swapped in, keeping the previous contents as a backup.
+    /// </summary>
+    private static void WriteAtomic(string path, string json)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var temp = path + ".tmp";
+
+        using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+        {
+            writer.Write(json);
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
+        }
+
+        // Restrict the temporary file BEFORE it becomes the real one, so the credentials it carries are
+        // never briefly readable under the directory's inherited permissions.
+        Restrict(temp);
+
+        if (File.Exists(path))
+        {
+            // Atomic swap that also leaves the previous contents recoverable.
+            File.Replace(temp, path, path + BackupSuffix, ignoreMetadataErrors: true);
         }
         else
         {
-            entries.Add(entry);
+            File.Move(temp, path);
         }
 
-        File.WriteAllText(path, Serialize(entries));
+        // Again on the destination, and on the backup: File.Replace keeps the DESTINATION's security
+        // descriptor, so restricting only the temporary file silently achieves nothing for a file that
+        // already existed -- which is every write after the first. Verified by reading the ACL back.
+        Restrict(path);
+
+        var backup = path + BackupSuffix;
+        if (File.Exists(backup))
+        {
+            Restrict(backup);
+        }
     }
 
+    /// <summary>
+    /// Restricts the file to the current user, because it stores every target's bearer token in clear.
+    /// </summary>
+    /// <remarks>
+    /// Left to inherit, a file under the profile is typically readable by SYSTEM and every local
+    /// administrator -- and on these targets a token is command execution at the server's privilege
+    /// level. Best effort: a filesystem that cannot carry an ACL is a reason to warn, not to refuse to
+    /// save the target the operator just connected.
+    /// </remarks>
+    private static void Restrict(string path)
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            if (identity.User is not { } user)
+            {
+                return;
+            }
+
+            var security = new FileSecurity();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.SetOwner(user);
+            security.AddAccessRule(new FileSystemAccessRule(
+                user, FileSystemRights.FullControl, AccessControlType.Allow));
+
+            new FileInfo(path).SetAccessControl(security);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException
+                                       or NotSupportedException or IOException or InvalidOperationException)
+        {
+            Console.Error.WriteLine(
+                $"[windiag-relay] WARNING: could not restrict {path} to your account ({ex.Message}). " +
+                "It holds bearer tokens in plain text -- tighten its permissions by hand.");
+        }
+    }
+
+    /// <summary>Serialises entries back to the file's single shape.</summary>
     private static string Serialize(IReadOnlyList<RelayTargetEntry> entries)
     {
         var document = new RelayTargetsDocument
@@ -119,6 +310,73 @@ internal static class RelayTargetsFile
         };
 
         return JsonSerializer.Serialize(document, WriteOptions);
+    }
+
+    /// <summary>Takes the cross-process lock that serialises every relay's access to this file.</summary>
+    private static IDisposable Lock(string path)
+    {
+        var mutex = CreateMutex(path);
+
+        try
+        {
+            if (!mutex.WaitOne(LockTimeout))
+            {
+                throw new RelayException(
+                    $"another process has held the targets file lock for over {LockTimeout.TotalSeconds:0}s. " +
+                    "Retry, or check for a stuck relay process.");
+            }
+        }
+        catch (AbandonedMutexException)
+        {
+            // The previous holder died mid-update, so ownership passes here. That is exactly the case the
+            // atomic write and its backup exist to make recoverable; carry on and use the lock.
+        }
+        catch (Exception)
+        {
+            mutex.Dispose();
+            throw;
+        }
+
+        return new Guard(mutex);
+    }
+
+    private static Mutex CreateMutex(string path)
+    {
+        // Named for the file, so two different targets files never contend, and lower-cased because
+        // Windows paths are case-insensitive while the mutex name is not.
+        var key = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToLowerInvariant())))[..16];
+
+        try
+        {
+            // Global so a relay under a different session still serialises against this one.
+            return new Mutex(initiallyOwned: false, $"Global\\windiag-targets-{key}");
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or NotSupportedException)
+        {
+            return new Mutex(initiallyOwned: false, $"Local\\windiag-targets-{key}");
+        }
+    }
+
+    private sealed class Guard : IDisposable
+    {
+        private readonly Mutex _mutex;
+
+        public Guard(Mutex mutex) => _mutex = mutex;
+
+        public void Dispose()
+        {
+            try
+            {
+                _mutex.ReleaseMutex();
+            }
+            catch (ApplicationException)
+            {
+                // Not the owner (an abandoned-mutex path); nothing useful to do while tearing down.
+            }
+
+            _mutex.Dispose();
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

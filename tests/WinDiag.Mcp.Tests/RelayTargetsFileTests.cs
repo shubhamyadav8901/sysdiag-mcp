@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using WinDiag.Mcp.Relay;
 
 namespace WinDiag.Mcp.Tests;
@@ -205,5 +207,156 @@ public sealed class RelayTargetsFileTests
 
         Assert.ThrowsAny<ArgumentException>(() =>
             RelayTargetsFile.Upsert(path, new RelayTargetEntry(null, "192.168.36.46", "secret", null)));
+    }
+
+    /// <summary>
+    /// A relay killed mid-write (they die with their session) leaves a truncated file. Before the atomic
+    /// write this destroyed every target's token AND wedged persistence permanently: the empty file
+    /// failed to parse, so every later connect refused to touch a "malformed" file with nothing left in
+    /// it to fix.
+    /// </summary>
+    [Fact]
+    public void An_empty_file_is_healed_rather_than_treated_as_malformed()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, string.Empty);
+        try
+        {
+            Assert.Null(RelayTargetsFile.Load(path));   // not an exception
+
+            // and persistence still works, rather than being wedged forever
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "t", null));
+
+            Assert.Equal("w11", Assert.Single(RelayTargetsFile.Load(path)!).As);
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void A_write_leaves_a_backup_that_a_later_corruption_is_recovered_from()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "first", null));
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w10", "192.168.32.76", "second", null));
+
+            Assert.True(File.Exists(path + ".bak"), "an atomic write should keep the previous contents");
+
+            // Something corrupts the live file; the last good copy still answers.
+            File.WriteAllText(path, "{ not json at all");
+
+            var recovered = RelayTargetsFile.Load(path);
+
+            Assert.NotNull(recovered);
+            Assert.Contains(recovered!, e => e.As == "w11");
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Concurrent_upserts_from_many_writers_lose_no_target()
+    {
+        // Every Claude Code session runs its own relay against this one file, so connect races connect.
+        // Unlocked, the read-modify-write silently dropped whichever entry lost the race.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        const int writers = 12;
+        try
+        {
+            Parallel.For(0, writers, i =>
+                RelayTargetsFile.Upsert(path, new RelayTargetEntry($"vm{i}", $"10.0.0.{i}", $"token{i}", null)));
+
+            var entries = RelayTargetsFile.Load(path);
+
+            Assert.NotNull(entries);
+            Assert.Equal(writers, entries!.Count);
+            for (var i = 0; i < writers; i++)
+            {
+                Assert.Contains(entries, e => e.As == $"vm{i}" && e.Token == $"token{i}");
+            }
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void An_entry_written_without_an_alias_is_repointed_not_duplicated()
+    {
+        // It still occupies the alias derived from its address, so matching the raw field would append a
+        // twin that races the original on every launch.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, """{"targets":[{"target":"192.168.32.93","token":"old"}]}""");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("192-168-32-93", "192.168.32.93", "new", null));
+
+            var only = Assert.Single(RelayTargetsFile.Load(path)!);
+            Assert.Equal("new", only.Token);
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "192.168.32.93", null, "192-168-32-93")]
+    [InlineData("w11", "192.168.32.93", null, "w11")]
+    [InlineData(null, "192.168.32.93", 4025, "192-168-32-93-4025")]   // a second server on the same host
+    public void Effective_alias_is_the_declared_one_or_the_one_derived_from_the_address(
+        string? declared, string target, int? port, string expected)
+    {
+        Assert.Equal(expected, RelayTargetsFile.EffectiveAlias(new RelayTargetEntry(declared, target, "t", port)));
+    }
+
+    [Fact]
+    public void The_file_is_restricted_to_the_current_user_because_it_stores_tokens_in_clear()
+    {
+        // Left inherited, a file under the profile is readable by SYSTEM and every local administrator --
+        // and on these targets a bearer token is command execution at the server's privilege level.
+        // Asserted after a SECOND write on purpose: File.Replace keeps the destination's ACL, so hardening
+        // only the temporary file passes on the first write and silently does nothing thereafter.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "t", null));
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w10", "192.168.32.76", "t", null));
+
+            foreach (var file in new[] { path, path + ".bak" })
+            {
+                var security = new FileInfo(file).GetAccessControl();
+
+                Assert.True(
+                    security.AreAccessRulesProtected,
+                    $"{file} still inherits permissions from its directory");
+
+                var identities = security.GetAccessRules(true, true, typeof(NTAccount))
+                    .Cast<FileSystemAccessRule>()
+                    .Select(r => r.IdentityReference.Value)
+                    .ToList();
+
+                Assert.Equal(WindowsIdentity.GetCurrent().Name, Assert.Single(identities));
+            }
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    private static void Delete(string path)
+    {
+        foreach (var candidate in new[] { path, path + ".bak", path + ".tmp" })
+        {
+            try { File.Delete(candidate); } catch (IOException) { /* best effort */ }
+        }
     }
 }

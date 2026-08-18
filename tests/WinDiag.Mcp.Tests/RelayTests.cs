@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using WinDiag.Mcp.Relay;
 
@@ -98,5 +99,67 @@ public sealed class RelayStateTests
     public void Returns_no_split_for_a_name_that_is_not_alias_prefixed(string listed)
     {
         Assert.Null(RelayState.SplitToolName(listed));
+    }
+
+    [Fact]
+    public void Two_servers_on_one_host_but_different_ports_get_different_default_aliases()
+    {
+        // Sharing an alias meant both pre-connected concurrently and then evicted each other, leaving
+        // which port answered that alias decided by whichever won the race that boot.
+        var first = RelayState.DefaultAlias("http://10.0.0.5:4024");
+        var second = RelayState.DefaultAlias("http://10.0.0.5:4025");
+
+        Assert.NotEqual(first, second);
+        Assert.Equal("10-0-0-5", first);            // the default port stays implicit
+        Assert.Equal("10-0-0-5-4025", second);
+    }
+
+    [Theory]
+    [InlineData("192.168.32.93", null, "http://192.168.32.93:4024")]
+    [InlineData("192.168.32.93", 9000, "http://192.168.32.93:9000")]
+    [InlineData("http://192.168.32.93:4024", null, "http://192.168.32.93:4024")]  // a full URL is untouched
+    public void Builds_a_target_url_from_a_bare_host_or_passes_a_url_through(
+        string target, int? port, string expected)
+    {
+        Assert.Equal(expected, RelayState.BuildAddress(target, port));
+    }
+}
+
+/// <summary>
+/// The connect tool's argument parsing. <c>persist</c> gets its own tests because the failure direction
+/// is writing a bearer token to disk against an explicit instruction not to.
+/// </summary>
+public sealed class RelayArgumentTests
+{
+    private static Dictionary<string, JsonElement> Args(string json) =>
+        JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+
+    [Fact]
+    public void An_absent_flag_is_null_so_the_caller_can_default_it()
+    {
+        Assert.Null(RelayServer.OptionalBool(Args("""{"target":"host"}"""), "persist"));
+        Assert.Null(RelayServer.OptionalBool(null, "persist"));
+    }
+
+    [Theory]
+    [InlineData("""{"persist":false}""", false)]
+    [InlineData("""{"persist":true}""", true)]
+    [InlineData("""{"persist":"false"}""", false)]   // a client that stringifies its arguments
+    [InlineData("""{"persist":"FALSE"}""", false)]
+    [InlineData("""{"persist":"no"}""", false)]
+    [InlineData("""{"persist":"0"}""", false)]
+    [InlineData("""{"persist":"true"}""", true)]
+    public void A_stringified_boolean_is_honoured_rather_than_ignored(string json, bool expected)
+    {
+        Assert.Equal(expected, RelayServer.OptionalBool(Args(json), "persist"));
+    }
+
+    [Theory]
+    [InlineData("""{"persist":"maybe"}""")]
+    [InlineData("""{"persist":7}""")]
+    public void An_unrecognisable_value_is_refused_rather_than_defaulted_to_writing_the_token(string json)
+    {
+        // Defaulting here would persist a credential the caller may have been trying to keep off disk.
+        Assert.Throws<RelayException>(() => RelayServer.OptionalBool(Args(json), "persist"));
     }
 }

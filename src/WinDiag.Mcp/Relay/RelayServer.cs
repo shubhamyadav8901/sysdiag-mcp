@@ -148,7 +148,7 @@ public static class RelayServer
         var target = RequireString(args, "target");
         var token = RequireString(args, "token");
 
-        var address = BuildAddress(target, OptionalInt(args, "port"), defaultPort);
+        var address = RelayState.BuildAddress(target, OptionalInt(args, "port"), defaultPort);
 
         // The alias names this connection so several targets can be live at once. Default it to the
         // host so a single-target caller need not think about it.
@@ -190,8 +190,10 @@ public static class RelayServer
         {
             // Parse failed: the file is malformed, so it was NOT overwritten - and the same broken file
             // means pre-connect is already skipping every target in it. Say that, not a vague "could not save".
-            return $"NOT saved: {path} is malformed ({Describe(ex)}) - fix it, or pre-connect will keep " +
-                   "skipping every target in it. This connection still works this session.";
+            return $"NOT saved: {path} is malformed ({Describe(ex)}) and is left untouched rather than " +
+                   $"overwritten. Fix it -- or delete it and let the last good copy at {path}{".bak"} take " +
+                   "over -- or pre-connect will keep skipping every target in it. This connection still " +
+                   "works for the rest of this session.";
         }
         catch (Exception ex)
         {
@@ -227,12 +229,36 @@ public static class RelayServer
             return;
         }
 
+        // Two entries can occupy one alias -- most easily by both omitting "as" on the same host. Started
+        // concurrently they would both connect and then evict each other under the state lock, leaving
+        // which one answers that alias decided by a race. Resolve it here, deterministically and out loud.
+        var deduplicated = new List<RelayTargetEntry>(entries.Count);
+        foreach (var entry in entries)
+        {
+            var alias = RelayTargetsFile.EffectiveAlias(entry);
+            var clash = deduplicated.FindIndex(
+                e => string.Equals(RelayTargetsFile.EffectiveAlias(e), alias, StringComparison.OrdinalIgnoreCase));
+
+            if (clash >= 0)
+            {
+                Console.Error.WriteLine(
+                    $"[windiag-relay] WARNING: two targets in {path} both resolve to alias '{alias}' " +
+                    $"({deduplicated[clash].Target} and {entry.Target}). Using the later one; give them " +
+                    "distinct \"as\" values so this is not decided for you.");
+                deduplicated[clash] = entry;
+            }
+            else
+            {
+                deduplicated.Add(entry);
+            }
+        }
+
         Console.Error.WriteLine(
-            $"[windiag-relay] pre-connecting {entries.Count} target(s) from {path} " +
+            $"[windiag-relay] pre-connecting {deduplicated.Count} target(s) from {path} " +
             $"(up to {PreConnectBudget.TotalSeconds:0}s)...");
 
         using var budget = new CancellationTokenSource(PreConnectBudget);
-        await Task.WhenAll(entries.Select(entry => PreConnectOneAsync(state, entry, defaultPort, budget.Token)))
+        await Task.WhenAll(deduplicated.Select(entry => PreConnectOneAsync(state, entry, defaultPort, budget.Token)))
             .ConfigureAwait(false);
     }
 
@@ -240,8 +266,8 @@ public static class RelayServer
     private static async Task PreConnectOneAsync(
         RelayState state, RelayTargetEntry entry, int defaultPort, CancellationToken ct)
     {
-        var address = BuildAddress(entry.Target, entry.Port, defaultPort);
-        var alias = entry.As ?? RelayState.DefaultAlias(address);
+        var address = RelayState.BuildAddress(entry.Target, entry.Port, defaultPort);
+        var alias = RelayTargetsFile.EffectiveAlias(entry);
 
         try
         {
@@ -264,16 +290,6 @@ public static class RelayServer
 
     private static string AsArgument(RelayTargetEntry entry) =>
         entry.As is null ? string.Empty : $" as={entry.As}";
-
-    /// <summary>Builds the target URL from a bare host[:port] or passes a full URL through unchanged.</summary>
-    /// <remarks>
-    /// A bare host is the common case -- the caller has an IP from wherever the VM was assigned one -- so
-    /// the relay wraps it in http://host:port, falling back to the default port when none is given.
-    /// </remarks>
-    private static string BuildAddress(string target, int? port, int defaultPort) =>
-        target.Contains("://", StringComparison.Ordinal)
-            ? target
-            : $"http://{target}:{port ?? defaultPort}";
 
     /// <summary>Tells the client the tool list changed so it re-fetches after a connect or disconnect.</summary>
     private static async ValueTask NotifyToolsChanged(RequestContext<CallToolRequestParams> ctx, CancellationToken ct)
@@ -373,15 +389,51 @@ public static class RelayServer
         return null;
     }
 
-    private static bool? OptionalBool(IDictionary<string, JsonElement>? args, string key)
+    /// <summary>Reads an optional boolean, accepting the stringified form some clients send.</summary>
+    /// <remarks>
+    /// Strictly matching only JSON true/false would treat <c>"persist": "false"</c> as absent and fall
+    /// back to the default -- writing a bearer token to disk against an explicit instruction not to. The
+    /// failure direction decides the design: anything that is not recognisably a boolean is refused
+    /// rather than defaulted.
+    /// </remarks>
+    internal static bool? OptionalBool(IDictionary<string, JsonElement>? args, string key)
     {
-        if (args is not null && args.TryGetValue(key, out var value)
-            && value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        if (args is null || !args.TryGetValue(key, out var value))
         {
-            return value.GetBoolean();
+            return null;
         }
 
-        return null;
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                return value.GetBoolean();
+
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+                return null;
+
+            case JsonValueKind.String:
+                var text = value.GetString();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return null;
+                }
+
+                switch (text.Trim().ToLowerInvariant())
+                {
+                    case "true" or "yes" or "1" or "on":
+                        return true;
+                    case "false" or "no" or "0" or "off":
+                        return false;
+                }
+
+                break;
+        }
+
+        throw new RelayException(
+            $"'{key}' must be true or false, but was {value.ToString()}. Refusing rather than assuming, " +
+            "because the default would write this target's token to the targets file.");
     }
 
     private static CallToolResult Text(string message) =>
