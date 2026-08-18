@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace WinDiag.Mcp.Diagnostics.Locks;
 
 /// <summary>How Restart Manager classifies a holding process.</summary>
@@ -32,16 +30,18 @@ public enum LockHolderKind
 /// record and lists them as required, while the serializer omits nulls by default -- so a holder that is
 /// not a service (no <see cref="ServiceShortName"/>) produced JSON the client rejected outright, failing
 /// the call at exactly the moment the tool had found something. Present-and-null satisfies both.
+/// <para>This record wore three <c>JsonIgnore(Never)</c> attributes for that reason. The same defect
+/// was then found in every other result model -- an unsigned file has no signer, a listening socket no
+/// remote address -- so the rule now lives once in <c>ServerBuilder.ToolJsonOptions</c> and applies to
+/// all of them. The attributes are gone rather than left as no-ops, so nobody copies them believing
+/// per-property annotation is what makes a new model safe.</para>
 /// </remarks>
 public sealed record LockHolder(
     int ProcessId,
     string ProcessName,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     string? FriendlyName,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     string? ServiceShortName,
     LockHolderKind Kind,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     DateTimeOffset? StartedAt,
     bool StillRunning);
 

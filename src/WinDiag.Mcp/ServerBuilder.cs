@@ -1,4 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Access;
@@ -33,6 +36,28 @@ namespace WinDiag.Mcp;
 /// </remarks>
 public static class ServerBuilder
 {
+    /// <summary>
+    /// Serializer options for every tool, differing from the SDK's defaults in one respect: a property
+    /// whose value is null is written as null rather than omitted.
+    /// </summary>
+    /// <remarks>
+    /// <para>The output schema generated for each tool lists every property of its result record as
+    /// required -- nullable ones included, since a record's primary constructor has no optional
+    /// members to distinguish. The SDK's default options omit nulls. The two disagree exactly when a
+    /// nullable property is actually null, and the client rejects the response against the schema the
+    /// server itself advertised: an unsigned file has no signer, a listening socket has no remote
+    /// address, an unlabelled volume has no label. The tool computed the right answer and the caller
+    /// never saw it.</para>
+    /// <para>Writing nulls satisfies both sides and is set here, once, rather than per property: the
+    /// defect is a property of how results are serialized, not of any one model, and forty-odd
+    /// attributes are forty-odd chances for the next model to be added without one. This is the same
+    /// fix that <c>LockHolder</c> carried alone before it was understood to be general.</para>
+    /// <para>Derived from <see cref="McpJsonUtilities.DefaultOptions"/> rather than built fresh, so the
+    /// protocol's own converters are kept.</para>
+    /// </remarks>
+    internal static readonly JsonSerializerOptions ToolJsonOptions =
+        new(McpJsonUtilities.DefaultOptions) { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
+
     public const string HelpText = """
         windiag - Windows diagnostics MCP server
 
@@ -82,38 +107,38 @@ public static class ServerBuilder
 
             // Before any tool: a refusal the caller cannot read is a refusal they will retry into.
             .WithReadableToolErrors()
-            .WithTools<FileLockTools>()
-            .WithTools<SystemTools>()
-            .WithTools<ServiceTools>()
-            .WithTools<EventLogTools>()
-            .WithTools<ProcessTools>()
-            .WithTools<InventoryTools>()
-            .WithTools<AccessTools>()
-            .WithTools<ActivityQueryTools>()
-            .WithTools<ModuleTools>()
-            .WithTools<AutostartTools>()
-            .WithTools<RegistryTools>()
+            .WithTools<FileLockTools>(ToolJsonOptions)
+            .WithTools<SystemTools>(ToolJsonOptions)
+            .WithTools<ServiceTools>(ToolJsonOptions)
+            .WithTools<EventLogTools>(ToolJsonOptions)
+            .WithTools<ProcessTools>(ToolJsonOptions)
+            .WithTools<InventoryTools>(ToolJsonOptions)
+            .WithTools<AccessTools>(ToolJsonOptions)
+            .WithTools<ActivityQueryTools>(ToolJsonOptions)
+            .WithTools<ModuleTools>(ToolJsonOptions)
+            .WithTools<AutostartTools>(ToolJsonOptions)
+            .WithTools<RegistryTools>(ToolJsonOptions)
 
             // Read side of the transfer, so it stays available on a read-only server: collecting a dump
             // or a trace off a machine is exactly what someone pointed at one is doing, and the directory
             // confinement -- not the mode -- is what bounds it. WINDIAG_ALLOW_ARBITRARY_READ only widens
             // WHERE it may read, and is enforced per-call.
-            .WithTools<FileReadTools>();
+            .WithTools<FileReadTools>(ToolJsonOptions);
 
         // Write tools are registered here only when the server is not read-only, so a read-only server
         // does not advertise capabilities it will refuse. capture_dump and capture_activity write files
         // that can be several gigabytes, which is a state change however diagnostic the intent.
         if (!options.ReadOnly)
         {
-            mcp.WithTools<DumpTools>();
-            mcp.WithTools<ActivityCaptureTools>();
-            mcp.WithTools<ControlTools>();
+            mcp.WithTools<DumpTools>(ToolJsonOptions);
+            mcp.WithTools<ActivityCaptureTools>(ToolJsonOptions);
+            mcp.WithTools<ControlTools>(ToolJsonOptions);
 
             // Always available on a writable server, not behind a flag: confined to windiag's own
             // directories it grants nothing SMB-to-those-folders plus update_self did not already, and
             // its whole purpose is to remove SMB from the staging loop. The WINDIAG_ALLOW_ARBITRARY_WRITE
             // flag only widens WHERE it may write, and is enforced per-call, not here.
-            mcp.WithTools<FileTools>();
+            mcp.WithTools<FileTools>(ToolJsonOptions);
         }
 
         // Gated twice over, and off by default: this one lets the caller replace the server's own
@@ -121,7 +146,7 @@ public static class ServerBuilder
         // Read-only still wins -- replacing the binary is the largest change this server can make.
         if (options.AllowSelfUpdate && !options.ReadOnly)
         {
-            mcp.WithTools<SelfUpdateTools>();
+            mcp.WithTools<SelfUpdateTools>(ToolJsonOptions);
         }
 
         // The heaviest grant of all, and the only tool that is a general shell. Gated behind its own
@@ -130,7 +155,7 @@ public static class ServerBuilder
         // something a default server should quietly offer.
         if (options.AllowCommandExecution && !options.ReadOnly)
         {
-            mcp.WithTools<CommandTools>();
+            mcp.WithTools<CommandTools>(ToolJsonOptions);
         }
 
         return mcp;
