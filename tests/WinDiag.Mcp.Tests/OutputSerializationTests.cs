@@ -16,11 +16,15 @@ namespace WinDiag.Mcp.Tests;
 /// Every property of a result model reaches the wire, including the ones that are null.
 /// </summary>
 /// <remarks>
-/// <para>The output schema generated for a tool lists every property of its result record as required.
-/// If the serializer omits nulls, a response is rejected by the client against the server's own
-/// advertised schema -- and only when a nullable property happens to be null, which is why it survived
-/// a full green suite. Seven tools were unusable from a real MCP client this way: an unsigned file has
-/// no signer, a listening socket no remote address, an unlabelled volume no label.</para>
+/// <para>The output schema generated for a tool marks every constructor parameter without a default
+/// value as required -- nullable or not. If the serializer omits nulls, a response is rejected by the
+/// client against the server's own advertised schema, and only when such a property happens to be null,
+/// which is why it survived a full green suite. Seven tools were unusable from a real MCP client this
+/// way: an unsigned file has no signer, a listening socket no remote address, an unlabelled volume no
+/// label. (A parameter written <c>= null</c> is marked optional and was never affected, which is why
+/// <c>LoadedModule.PreferredBase</c> survived while <c>Signer</c> beside it did not. This test asserts
+/// presence for every parameter regardless, which is a superset of the required ones and so cannot
+/// pass while the real invariant is broken.)</para>
 /// <para>This asserts the serialization half of that contract, which is the half that was wrong. It is
 /// not a full schema-conformance check -- it does not invoke tools or validate against the generated
 /// schema -- so it holds only as long as schema generation continues to mark these properties required.

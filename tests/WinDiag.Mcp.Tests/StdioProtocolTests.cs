@@ -149,6 +149,60 @@ public sealed class StdioProtocolTests : IAsyncLifetime
         File.Delete(temp);
     }
 
+    /// <summary>
+    /// A null-valued property still crosses the wire, through the real registration.
+    /// </summary>
+    /// <remarks>
+    /// <para>The schema marks a constructor parameter without a default required, nullable or not, while
+    /// the SDK's default serializer options omit nulls -- so a response whose nullable property is null
+    /// is rejected by the client against the schema this server advertised. Seven tools were uncallable
+    /// that way. <c>ServerBuilder.ToolJsonOptions</c> fixes it for every tool at the registration.</para>
+    /// <para>This test exists because that fix is one argument on eighteen <c>WithTools</c> calls, and
+    /// every other test of it serializes directly -- so dropping the argument, or adding a nineteenth
+    /// registration without it, left the whole suite green while the defect came back. Here the assertion
+    /// runs through the real entrypoint, the real registration and the real transport, which is the only
+    /// place that gap is visible.</para>
+    /// <para><c>file_signatures</c> against this server's own unsigned assembly is the deterministic
+    /// case: an unsigned file has no signer, no issuer and no certificate expiry, so all three are null
+    /// every time, on any machine, with no setup.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_null_property_is_written_rather_than_omitted_over_the_real_transport()
+    {
+        using var cts = new CancellationTokenSource(ReadTimeout);
+
+        await RoundTrip(
+            """
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"windiag-tests","version":"1.0.0"}}}
+            """,
+            id: 1,
+            cts.Token);
+
+        await Send("""{"jsonrpc":"2.0","method":"notifications/initialized"}""");
+
+        var unsigned = typeof(ServerBuilder).Assembly.Location;
+        var request =
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"file_signatures\""
+            + ",\"arguments\":{\"paths\":[" + JsonSerializer.Serialize(unsigned) + "]}}}";
+
+        var call = await RoundTrip(request, id: 2, cts.Token);
+
+        Assert.True(call.TryGetProperty("result", out var result), $"tools/call failed: {call}");
+        var file = result.GetProperty("structuredContent").GetProperty("files")[0];
+
+        // Present-and-null, not absent. Absent is what the schema rejects.
+        foreach (var property in new[] { "signer", "issuer", "certificateNotAfter" })
+        {
+            Assert.True(
+                file.TryGetProperty(property, out var value),
+                $"'{property}' was omitted, so a client validating against this tool's own output schema "
+                + $"rejects the response. Check ServerBuilder.ToolJsonOptions is passed to every "
+                + $"WithTools registration. Got: {file}");
+
+            Assert.Equal(JsonValueKind.Null, value.ValueKind);
+        }
+    }
+
     [Fact]
     public async Task Writes_diagnostics_to_stderr_and_keeps_stdout_pure_json_rpc()
     {
