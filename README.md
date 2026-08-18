@@ -42,7 +42,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
 | `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
-| `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping, `tools/fetch-from-target.ps1` drives it for large files |
+| `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
 
 ## Build and test
 
@@ -91,7 +91,8 @@ Register it once:
     "command": "…/artifacts/relay/WinDiag.Mcp.exe", "args": ["--relay"] } } }
 ```
 
-It exposes three control tools — `connect`, `disconnect`, `status`. Call `connect` with the target's
+It exposes five control tools — `connect`, `disconnect`, `status`, and the two transfer tools
+[`push_file` / `pull_file`](#moving-files-without-spending-context) below. Call `connect` with the target's
 current address and token, and that target's full tool set appears here (via a `tools/list_changed`
 notification) and every call forwards to it. `connect` again with a different address to repoint — no
 config edit, no restart. One registration, any target, IP as runtime data:
@@ -135,12 +136,56 @@ treated as "no targets" rather than an error, so persistence heals itself instea
 You rarely edit it by hand: a successful `connect` **writes the target (with its token) into this file**
 by default, so the naive fix — reconnect `windiag` or start a fresh session — actually works, because
 the relaunch pre-connects what the last `connect` saved. (A plain reconnect *without* that would drop a
-runtime connection and surface only the three control tools — which is the trap to avoid.) Pass
+runtime connection and surface only the control tools — which is the trap to avoid.) Pass
 `persist: false` for a one-off connection you do not want written to disk; `disconnect` is session-only
 and never edits the file, so this file stays the durable set.
 
 The relay is a client of the real servers, not a diagnostics server itself — it holds no privileges and
 runs unelevated on the base machine.
+
+### Moving files without spending context
+
+`put_file` and `get_file` carry the bytes as tool arguments and results. Driven from an agent session
+that is the expensive part: every byte is a token the model has to emit or read, so a 46&#160;MB build is
+~63&#160;MB of base64. It does not fit a context window, and chunking only changes how it is split. This
+is why `deploy-target.ps1` and `fetch-from-target.ps1` exist — not because MCP could not carry the
+transfer, but because the caller could not afford to be on the path.
+
+The relay already runs locally and already holds each target's connection and token, so it can be on
+that path instead:
+
+```
+push_file { alias: "w11", localPath: "artifacts/win-x64/WinDiag.Mcp.exe",
+            remotePath: "C:\\WinDiag\\WinDiag.Mcp.new.exe" }
+  → Sent 46,700,000 bytes to w11 in 12 chunk(s). SHA-256 …, verified by the target.
+
+pull_file { alias: "w11", remotePath: "…\\explorer_1904.dmp", localPath: "./dumps/explorer.dmp" }
+  → Wrote 777,101 bytes in 1 slice(s). SHA-256 …, verified against the target's hash.
+```
+
+The caller sends a path and gets back a summary line; the bytes never enter the conversation. Moving
+10&#160;MB in both directions against a lab VM costs about a kilobyte of tool call.
+
+Both verify in flight and end to end, because the failure they guard against is silent. `push_file`
+slices into 4&#160;MB chunks, each carrying its own SHA-256, the last carrying the whole-file hash so the
+target checks the assembled file and rolls it back on a mismatch; a refused chunk is re-sent on its own
+rather than restarting the transfer, and the summary says how many had to be. `pull_file` checks each
+slice before appending, writes to a `.partial` name and moves it into place only once the reassembled
+copy matches the whole-file hash the target reported — so an interrupted pull cannot leave a short file
+under the name you are about to use. It says so explicitly when the target reported no whole-file hash,
+because an unverified copy is a different artifact from a verified one.
+
+**These are the first thing the relay does that touches local disk**, so the local side is confined the
+way the target side already confines `put_file` and `get_file` — reusing `FileScope`, not a second copy
+of it. `WINDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of
+the build output beside the relay plus the local artifact directory; a `..` is judged by where it lands.
+Note the default build root resolves against the running executable, so under `dotnet run` it points at
+dotnet's own install directory — set the variable when developing.
+
+Use these instead of calling a target's `put_file`/`get_file` yourself for anything but a small file.
+`fetch-from-target.ps1` still works and needs no relay, which is what makes it the right tool from a
+plain shell; `deploy-target.ps1` still owns publishing, the pinned Sysinternals manifest and the drift
+check, so a full deploy is still a script.
 
 ## Deploying to a target machine
 
@@ -199,6 +244,10 @@ copy against the whole-file hash the target reported. It streams to disk rather 
 large dump is practical — and when this is driven from an agent session, the bytes never enter the
 conversation. Calling `get_file` directly is for small files (a config, a log tail); the response
 carries the bytes, so a multi-megabyte dump fetched that way lands in the caller's context.
+
+From a session with the relay connected, [`pull_file`](#moving-files-without-spending-context) does the
+same thing as one tool call and needs no token argument, since the relay already holds it. The script
+remains the right tool from a plain shell, or when no relay is running.
 
 No flag is needed for anything a capture wrote: the artifact directory is one of windiag's own. Reading
 elsewhere needs `WINDIAG_ALLOW_ARBITRARY_READ`. Multi-gigabyte `full` dumps still belong on the UNC
@@ -430,6 +479,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
+| `WINDIAG_RELAY_FILE_ROOT` | `<relay dir>\artifacts` and `%TEMP%\windiag` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The default build root resolves against the running executable, so under `dotnet run` it points at dotnet's install directory — set this when developing |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
 silently defaulting, because the flag removes capability.
