@@ -232,7 +232,10 @@ internal static class ActivityRendering
 
         builder.AppendLine(":");
 
-        foreach (var e in result.Events)
+        // Capped independently of maxEvents: every event is in the structured content, but rendering
+        // 50,000 of them -- each now carrying a Detail field too -- builds one contiguous multi-megabyte
+        // string, which the 32-bit build cannot be relied on to allocate.
+        foreach (var e in result.Events.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(e.Time).Append(' ').Append(e.ProcessName)
                 .Append(" (").Append(e.ProcessId).Append(") ").Append(e.Operation)
@@ -249,6 +252,8 @@ internal static class ActivityRendering
 
             builder.AppendLine();
         }
+
+        RenderLimits.NoteElision(builder, result.Events.Count, "matched events");
 
         if (result.Truncated)
         {

@@ -326,6 +326,18 @@ public sealed class ProcmonActivityInspector : IActivityInspector
                 $"'{full}' does not exist. Pass the csvPath returned by capture_activity.");
         }
 
+        // Detail is an optional column, and a missing one reads as empty on every row -- so filtering on
+        // it would match nothing and report a clean "0 of N matched". An empty result is the answer that
+        // ends an investigation, so this is refused loudly instead.
+        if (!string.IsNullOrWhiteSpace(filter.DetailContains)
+            && !ProcmonCsvReader.HasColumn(full, "Detail"))
+        {
+            throw new ActivityCaptureException(
+                $"'{full}' has no Detail column, so detailContains could only ever match nothing. The " +
+                "capture was exported with a configuration that omits it -- re-capture with the shipped " +
+                "Procmon configuration, or drop detailContains and filter on operation and path instead.");
+        }
+
         var scanned = 0;
         var matched = 0;
         var events = new List<ActivityEvent>(Math.Min(filter.MaxEvents, 1000));

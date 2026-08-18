@@ -1,0 +1,4 @@
+"Time of Day","Process Name","PID","Operation","Path","Result"
+"20:09:18.2337030","winword.exe","1904","CreateFile","C:\spike\out\Report.pdf","SUCCESS"
+"20:09:18.2356887","winword.exe","1904","WriteFile","C:\spike\out\Report.pdf","SUCCESS"
+"20:09:18.2359536","winword.exe","1904","CloseFile","C:\spike\out\Report.pdf","SUCCESS"

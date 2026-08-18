@@ -68,7 +68,7 @@ public sealed class RegistryTools
         }
         else
         {
-            foreach (var value in contents.Values)
+            foreach (var value in contents.Values.Take(RenderLimits.MaxRenderedRows))
             {
                 // The unnamed default value has an empty name in the API; printing nothing there would
                 // read as a blank line rather than as the default.
@@ -86,13 +86,17 @@ public sealed class RegistryTools
 
                 builder.AppendLine();
             }
+
+            RenderLimits.NoteElision(builder, contents.Values.Count, "returned values");
         }
 
         if (contents.SubKeyNames.Count > 0)
         {
+            // Elided rather than joined wholesale: a key like HKCR carries tens of thousands of subkeys,
+            // and at the current row cap this was one unwrapped line of well over a million characters.
             builder.Append(contents.TotalSubKeys)
                 .Append(contents.TotalSubKeys == 1 ? " subkey: " : " subkeys: ")
-                .AppendLine(string.Join(", ", contents.SubKeyNames));
+                .AppendLine(RenderLimits.Join(contents.SubKeyNames));
         }
         else if (valueName is null)
         {

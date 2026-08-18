@@ -77,7 +77,7 @@ public sealed class ModuleTools
 
         builder.AppendLine(":");
 
-        foreach (var module in result.Modules)
+        foreach (var module in result.Modules.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(module.Name).Append("  ").Append(module.Path);
 
@@ -98,6 +98,8 @@ public sealed class ModuleTools
 
             builder.AppendLine();
         }
+
+        RenderLimits.NoteElision(builder, result.Modules.Count, "returned modules");
 
         if (verified)
         {

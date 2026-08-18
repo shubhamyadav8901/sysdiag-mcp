@@ -164,7 +164,8 @@ public sealed class AutostartTools
 
         builder.AppendLine(":");
 
-        foreach (var group in result.Entries.GroupBy(e => e.Category, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in result.Entries.Take(RenderLimits.MaxRenderedRows)
+                     .GroupBy(e => e.Category, StringComparer.OrdinalIgnoreCase))
         {
             builder.Append("[").Append(group.Key).AppendLine("]");
 
@@ -226,6 +227,9 @@ public sealed class AutostartTools
                 .Append("That is usually an uninstall that left its hook behind -- harmless, but it " +
                         "is also what a hijack looks like before the replacement is dropped in.");
         }
+
+        builder.AppendLine();
+        RenderLimits.NoteElision(builder, result.Entries.Count, "returned entries");
 
         if (result.Truncated)
         {

@@ -223,7 +223,7 @@ public sealed class FileLockTools
             .Append(result.Query)
             .AppendLine("':");
 
-        foreach (var entry in result.Entries)
+        foreach (var entry in result.Entries.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(entry.ProcessName).Append(" (PID ").Append(entry.ProcessId).Append(") ")
                 .Append(entry.Type).Append(": ").Append(entry.Name);
@@ -235,6 +235,8 @@ public sealed class FileLockTools
 
             builder.AppendLine();
         }
+
+        RenderLimits.NoteElision(builder, result.Entries.Count, "returned handles");
 
         if (result.Truncated)
         {

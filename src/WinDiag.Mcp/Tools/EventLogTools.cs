@@ -156,7 +156,7 @@ public sealed class EventLogTools
             .Append(" in the '").Append(result.Log).Append("' log over the last ")
             .Append(result.Minutes).AppendLine(" minutes, newest first:");
 
-        foreach (var entry in result.Events)
+        foreach (var entry in result.Events.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(entry.TimeCreated.ToString("u", CultureInfo.InvariantCulture))
                 .Append(" [").Append(entry.Level).Append("] ")
@@ -174,6 +174,8 @@ public sealed class EventLogTools
                 builder.Append("    ").AppendLine(FirstLine(message));
             }
         }
+
+        RenderLimits.NoteElision(builder, result.Events.Count, "returned records");
 
         if (result.Truncated)
         {

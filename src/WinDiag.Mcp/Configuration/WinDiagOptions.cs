@@ -41,9 +41,13 @@ public sealed record WinDiagOptions
     /// <summary>Upper bound on rows returned by a single tool call.</summary>
     /// <remarks>
     /// 50000 so high-cardinality tools -- process_handles and path_handle_search above all, where a
-    /// single process can hold thousands of handles -- are not truncated in the common case. Rows are
-    /// linear in this, so a very large value can make one call dominate the client's context; lower it
-    /// with WINDIAG_MAX_RESULTS where that matters. The ceiling is 10,000,000 for the rare full dump.
+    /// single process can hold thousands of handles -- are not truncated in the common case.
+    /// <para>This bounds the ROWS a tool returns, not the prose: summaries are capped separately by
+    /// <see cref="Tools.RenderLimits"/>, because a summary that grew with this would build one contiguous
+    /// multi-megabyte string.</para>
+    /// <para>Rows are still materialised in full before the cap is applied, so raising this far above the
+    /// default trades memory on the TARGET for completeness. The win-x86 build has roughly 2 GB of
+    /// address space; treat values in the millions as a per-machine experiment, not a supported mode.</para>
     /// </remarks>
     public int MaxResults { get; init; } = 50_000;
 

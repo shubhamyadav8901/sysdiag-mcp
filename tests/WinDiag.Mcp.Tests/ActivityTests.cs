@@ -1,4 +1,5 @@
 using System.Text;
+using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Activity;
 using WinDiag.Mcp.Diagnostics.External;
 
@@ -222,6 +223,28 @@ public sealed class ActivityQueryTests
     }
 
     [Fact]
+    public void The_clamp_message_reflects_the_servers_configured_cap_not_a_literal()
+    {
+        // The other clamp tests pass a literal resultCap, so they stay green whatever WINDIAG_MAX_RESULTS
+        // is set to -- which is exactly why a cap change could not fail a test. This one reads the real
+        // configured value, so the wiring from options to message is covered.
+        var options = WinDiagOptions.FromEnvironment(new Dictionary<string, string?>
+        {
+            ["WINDIAG_MAX_RESULTS"] = "7"
+        });
+
+        var filter = new ActivityFilter(MaxEvents: Math.Clamp(9000, 1, options.MaxResults));
+        var result = Inspector().Query(FixturePath, filter, CancellationToken.None);
+
+        var summary = WinDiag.Mcp.Tools.ActivityRendering.RenderQuery(
+            result, filter, options.MaxResults, requestedMaxEvents: 9000);
+
+        Assert.Equal(7, filter.MaxEvents);
+        Assert.Contains("was clamped to this server's cap of 7", summary);
+        Assert.Contains("WINDIAG_MAX_RESULTS", summary);
+    }
+
+    [Fact]
     public void Truncation_below_the_cap_still_suggests_raising_maxEvents()
     {
         // Here the list was capped by the caller's own small maxEvents, well under the server ceiling,
@@ -284,6 +307,59 @@ public sealed class ActivityQueryTests
         var summary = WinDiag.Mcp.Tools.ActivityRendering.RenderQuery(result, filter);
 
         Assert.Contains("Disposition: OpenIf", summary);
+    }
+
+    [Fact]
+    public void A_capture_without_a_detail_column_is_refused_rather_than_matching_nothing()
+    {
+        // Detail is an optional column, and a missing one reads as empty on every row -- so this filter
+        // would match nothing and report a confident "0 of 3 matched", which is the answer that ends an
+        // investigation. It must say WHY instead.
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "procmon-no-detail.csv");
+
+        var ex = Assert.Throws<ActivityCaptureException>(() => Inspector().Query(
+            path, new ActivityFilter(DetailContains: "Disposition: OverwriteIf"), CancellationToken.None));
+
+        Assert.Contains("no Detail column", ex.Message);
+    }
+
+    [Fact]
+    public void A_capture_without_a_detail_column_still_serves_every_other_filter()
+    {
+        // The guard must be specific to detailContains: Detail is genuinely optional, so a capture
+        // lacking it stays fully queryable by process, path and operation.
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "procmon-no-detail.csv");
+
+        var result = Inspector().Query(
+            path, new ActivityFilter(Operation: "CreateFile"), CancellationToken.None);
+
+        Assert.Equal(1, result.Matched);
+    }
+
+    [Fact]
+    public void The_rendered_summary_is_capped_independently_of_how_many_events_are_returned()
+    {
+        // The row cap is deliberately high (50,000 by default). Rendering one line per row would build a
+        // single contiguous multi-megabyte string, which the win-x86 build cannot be relied on to
+        // allocate -- so the prose is capped separately and says so, while the data stays complete.
+        const int returned = 5000;
+        var events = Enumerable.Range(0, returned)
+            .Select(i => new ActivityEvent(
+                "10:00:00", "winword.exe", 42, "CreateFile", $@"C:\spike\file{i}.pdf", "SUCCESS",
+                "Desired Access: Generic Write, Disposition: OverwriteIf"))
+            .ToList();
+
+        var result = new ActivityQueryResult(
+            CapturePath: "capture.csv", Scanned: returned, Matched: returned, Truncated: false,
+            Events: events, TopPaths: [], TopProcesses: [], Results: []);
+
+        var summary = WinDiag.Mcp.Tools.ActivityRendering.RenderQuery(
+            result, new ActivityFilter(MaxEvents: returned), returned, returned);
+        var rendered = summary.Split('\n').Count(line => line.StartsWith("- ", StringComparison.Ordinal));
+
+        Assert.Equal(returned, result.Events.Count);                        // every row is still returned
+        Assert.Equal(WinDiag.Mcp.Tools.RenderLimits.MaxRenderedRows, rendered);
+        Assert.Contains("every one is in this result's structured content", summary);
     }
 
     [Fact]

@@ -134,7 +134,7 @@ public sealed class InventoryTools
         builder.Append(result.TotalMatched)
             .Append(result.TotalMatched == 1 ? " endpoint" : " endpoints").AppendLine(":");
 
-        foreach (var endpoint in result.Endpoints)
+        foreach (var endpoint in result.Endpoints.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(endpoint.Protocol.ToString().ToUpperInvariant()).Append(' ')
                 .Append(Format(endpoint.LocalAddress, endpoint.LocalPort));
@@ -154,6 +154,8 @@ public sealed class InventoryTools
 
             builder.AppendLine();
         }
+
+        RenderLimits.NoteElision(builder, result.Endpoints.Count, "returned endpoints");
 
         if (result.Truncated)
         {

@@ -53,6 +53,26 @@ internal static class ProcmonCsvReader
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             detectEncodingFromByteOrderMarks: true);
 
+    /// <summary>Reports whether the export actually carries a column, by reading only its header.</summary>
+    /// <remarks>
+    /// Only the five columns every filter depends on are required (see <see cref="MapColumns"/>); the
+    /// rest are optional and a missing one simply reads as empty. That is fine until something
+    /// <em>filters</em> on an optional column, because every row then compares against "" and the query
+    /// returns a confident zero. Callers check here first so they can say "this capture has no Detail
+    /// column" instead of "nothing matched".
+    /// </remarks>
+    public static bool HasColumn(string path, string columnName)
+    {
+        using var reader = Open(path);
+
+        foreach (var record in DelimitedText.ReadRecords(reader, CancellationToken.None))
+        {
+            return MapColumns(record).ContainsKey(columnName);
+        }
+
+        return false;
+    }
+
     /// <summary>Streams events, yielding nothing rather than throwing on a malformed row.</summary>
     public static IEnumerable<ActivityEvent> Read(TextReader reader, CancellationToken cancellationToken)
     {

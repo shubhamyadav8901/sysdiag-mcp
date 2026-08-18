@@ -163,7 +163,7 @@ public sealed class ProcessTools
             .Append(result.TotalMatched == 1 ? " process" : " processes")
             .AppendLine(":");
 
-        foreach (var process in result.Processes)
+        foreach (var process in result.Processes.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(process.Name).Append(" (PID ").Append(process.ProcessId);
             if (process.ParentProcessId is { } parent)
@@ -195,6 +195,8 @@ public sealed class ProcessTools
                 .Append("access the process, not that it was started without arguments. ")
                 .AppendLine("Run elevated to see them.");
         }
+
+        RenderLimits.NoteElision(builder, result.Processes.Count, "returned processes");
 
         if (result.Truncated)
         {
@@ -234,7 +236,7 @@ public sealed class ProcessTools
             .Append(result.TotalMatched == 1 ? " named pipe" : " named pipes")
             .AppendLine(":");
 
-        foreach (var pipe in result.Pipes)
+        foreach (var pipe in result.Pipes.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(pipe.Name).Append(": ").Append(pipe.ActiveInstances)
                 .Append(pipe.Unlimited ? " active (unlimited)" : $" of {pipe.MaximumInstances} instances");
@@ -246,6 +248,8 @@ public sealed class ProcessTools
 
             builder.AppendLine();
         }
+
+        RenderLimits.NoteElision(builder, result.Pipes.Count, "returned pipes");
 
         if (result.Truncated)
         {
