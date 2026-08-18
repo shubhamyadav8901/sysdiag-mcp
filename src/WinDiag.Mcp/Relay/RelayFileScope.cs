@@ -65,14 +65,35 @@ internal static class RelayFileScope
         return resolved;
     }
 
-    /// <summary>The build output beside the relay's own executable -- what a deploy pushes.</summary>
+    /// <summary>The build tree the relay was published into -- what a deploy pushes from.</summary>
     /// <remarks>
-    /// Resolved against the running executable, which is the published single-file exe in every real
-    /// deployment. Under <c>dotnet exec</c> or <c>dotnet run</c> that is dotnet's own install directory
-    /// instead, so this default is useless while developing -- set <see cref="RootsVariable"/> there
-    /// rather than wondering why a path was refused.
+    /// <para>The relay ships at <c>artifacts/relay/WinDiag.Mcp.exe</c> while the builds it exists to
+    /// send sit beside it at <c>artifacts/win-x64</c>, so the useful root is the directory ABOVE the
+    /// one the executable is in. An earlier version combined the executable's own directory with
+    /// "artifacts" and produced <c>artifacts/relay/artifacts</c>, which does not exist -- the default
+    /// was dead, and pushing a build needed <see cref="RootsVariable"/> set, which is exactly the
+    /// inert-by-default state this was supposed to avoid.</para>
+    /// <para>Climbing one level is bounded deliberately. A relay unpacked straight into <c>C:\Tools</c>
+    /// would otherwise default to <c>C:\Tools</c>, which is defensible, but one dropped at a drive root
+    /// would default to the whole drive, which is not. A root parent is refused and the executable's own
+    /// directory is used instead -- narrower and useless beats wider and silent.</para>
+    /// <para>Resolved against the running executable, which is the published single-file exe in every
+    /// real deployment. Under <c>dotnet exec</c> or <c>dotnet run</c> that is dotnet's own install
+    /// directory, so this default is meaningless while developing -- set <see cref="RootsVariable"/>
+    /// there rather than wondering why a path was refused.</para>
     /// </remarks>
-    public static string DefaultBuildRoot => Path.Combine(FileScope.ServerDirectory, "artifacts");
+    public static string DefaultBuildRoot
+    {
+        get
+        {
+            var directory = FileScope.ServerDirectory;
+            var parent = Directory.GetParent(directory);
+
+            // GetParent returns null only at a root; Parent being null in turn means the parent IS a
+            // root, and handing out a whole drive is the one outcome worth refusing.
+            return parent is null || parent.Parent is null ? directory : parent.FullName;
+        }
+    }
 
     /// <summary>Where captures and dumps land locally -- what a pull writes.</summary>
     public static string DefaultArtifactRoot => Path.Combine(Path.GetTempPath(), "windiag");

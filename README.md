@@ -177,10 +177,15 @@ because an unverified copy is a different artifact from a verified one.
 
 **These are the first thing the relay does that touches local disk**, so the local side is confined the
 way the target side already confines `put_file` and `get_file` — reusing `FileScope`, not a second copy
-of it. `WINDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of
-the build output beside the relay plus the local artifact directory; a `..` is judged by where it lands.
-Note the default build root resolves against the running executable, so under `dotnet run` it points at
-dotnet's own install directory — set the variable when developing.
+of it. `WINDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of the
+build tree the relay sits in plus the local artifact directory; a `..` is judged by where it lands.
+
+That first default is the directory *above* the relay executable's own, which is what makes
+`push_file` work out of the box: the relay ships in `artifacts/relay` and the builds it exists to send
+sit beside it in `artifacts/win-x64`. The climb is one level and stops short of a drive root, so a relay
+unpacked somewhere odd cannot quietly default to an entire disk. Both defaults resolve against the
+running executable, so under `dotnet run` they point into dotnet's install directory — set the variable
+when developing.
 
 Use these instead of calling a target's `put_file`/`get_file` yourself for anything but a small file.
 `fetch-from-target.ps1` still works and needs no relay, which is what makes it the right tool from a
@@ -479,7 +484,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
-| `WINDIAG_RELAY_FILE_ROOT` | `<relay dir>\artifacts` and `%TEMP%\windiag` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The default build root resolves against the running executable, so under `dotnet run` it points at dotnet's install directory — set this when developing |
+| `WINDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus `%TEMP%\windiag` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/relay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
 silently defaulting, because the flag removes capability.

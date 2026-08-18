@@ -295,6 +295,43 @@ public sealed class RelayFileScopeTests
     }
 
     [Fact]
+    public void The_default_build_root_is_the_tree_the_relay_sits_in_not_a_directory_below_it()
+    {
+        // The relay ships at artifacts/relay/ and sends builds from artifacts/win-x64/, so the root has
+        // to be the level above the executable. A first version appended "artifacts" to the executable's
+        // own directory, yielding artifacts/relay/artifacts -- a default that existed nowhere, so every
+        // push of a build was refused until the environment variable was set.
+        var root = RelayFileScope.DefaultBuildRoot;
+        var executableDirectory = Path.GetDirectoryName(System.Environment.ProcessPath)
+                                  ?? System.Environment.CurrentDirectory;
+
+        Assert.True(
+            FileScopeIsUnder(executableDirectory, root),
+            $"the executable's directory '{executableDirectory}' should sit inside the default build " +
+            $"root, but the root is '{root}'.");
+
+        Assert.True(Directory.Exists(root), $"the default build root '{root}' does not exist.");
+    }
+
+    [Fact]
+    public void The_default_build_root_never_hands_out_a_whole_drive()
+    {
+        // Climbing one level is bounded on purpose: a relay dropped at a drive root must not default to
+        // the entire drive. Asserted against the real value rather than a contrived one, since this is
+        // the property that has to hold wherever the tests happen to run.
+        var root = RelayFileScope.DefaultBuildRoot;
+
+        Assert.NotNull(Directory.GetParent(root));
+    }
+
+    /// <summary>Mirrors the containment test the scope itself uses, for readability above.</summary>
+    private static bool FileScopeIsUnder(string candidate, string root) =>
+        candidate.Equals(root, StringComparison.OrdinalIgnoreCase)
+        || candidate.StartsWith(
+            root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+
+    [Fact]
     public void The_variable_replaces_the_defaults_rather_than_adding_to_them()
     {
         var roots = RelayFileScope.Roots(Environment(@"C:\builds;C:\dumps"));
