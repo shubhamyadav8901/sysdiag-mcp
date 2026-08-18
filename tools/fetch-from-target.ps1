@@ -68,6 +68,12 @@ $ErrorActionPreference = 'Stop'
 function Write-Step([string] $Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 function Write-Note([string] $Message) { Write-Host "    $Message" }
 
+# PowerShell's -f operator formats in the CURRENT culture, which groups digits by local convention --
+# a byte count came out as "22,08,024" on a machine set to en-IN. Byte counts and offsets are read
+# against the file itself, not against local convention, so they are pinned to invariant.
+function Format-Count($Value) { return ([int64] $Value).ToString('N0', [cultureinfo]::InvariantCulture) }
+function Format-Mb($Value) { return ([double] $Value / 1MB).ToString('N1', [cultureinfo]::InvariantCulture) }
+
 $address = "http://${Target}:${Port}"
 
 if (-not $OutFile) { $OutFile = Join-Path (Get-Location) (Split-Path -Leaf $RemotePath) }
@@ -117,7 +123,7 @@ $total = [int64] $first.totalBytes
 $expectedSha = "$($first.sha256)".ToUpperInvariant()
 $slices = [Math]::Max(1, [Math]::Ceiling($total / $ChunkBytes))
 
-Write-Note ("{0:N1} MB in {1} slice(s), SHA-256 {2}" -f ($total / 1MB), $slices, $expectedSha)
+Write-Note ("$(Format-Mb $total) MB in $slices slice(s), SHA-256 $expectedSha")
 
 $directory = Split-Path -Parent $OutFile
 if ($directory -and -not (Test-Path $directory)) { New-Item -ItemType Directory -Force $directory | Out-Null }
@@ -140,7 +146,7 @@ try {
         }
 
         $stream.Write($bytes, 0, $bytes.Length)
-        Write-Note ("  slice {0}/{1} ({2:N0} bytes at {3:N0})" -f $index, $slices, $bytes.Length, $slice.offset)
+        Write-Note ("  slice $index/$slices ($(Format-Count $bytes.Length) bytes at $(Format-Count $slice.offset))")
 
         if ($slice.endOfFile) { break }
 
@@ -161,4 +167,4 @@ if ($landedSha -ne $expectedSha) {
 
 $landedSize = (Get-Item $OutFile).Length
 Write-Step "Wrote $OutFile"
-Write-Note ("{0:N0} bytes, SHA-256 verified against the target's copy" -f $landedSize)
+Write-Note ("$(Format-Count $landedSize) bytes, SHA-256 verified against the target's copy")
