@@ -31,7 +31,7 @@ public static class ToolActivityGate
         builder.WithRequestFilters(filters =>
             filters.AddCallToolFilter(next => async (request, cancellationToken) =>
             {
-                if (!activity.TryBegin(out var refusal))
+                if (!activity.TryBegin(request.Params?.Name, out var refusal))
                 {
                     return new CallToolResult
                     {

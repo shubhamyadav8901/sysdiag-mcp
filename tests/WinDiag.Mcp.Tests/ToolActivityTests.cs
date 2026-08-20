@@ -32,8 +32,8 @@ public sealed class ToolActivityTests
     public async Task Waits_until_the_last_running_call_has_finished()
     {
         var activity = new ToolActivity();
-        Assert.True(activity.TryBegin(out _));
-        Assert.True(activity.TryBegin(out _));
+        Assert.True(activity.TryBegin("system_overview", out _));
+        Assert.True(activity.TryBegin("system_overview", out _));
 
         activity.MarkUpdatePending();
         var idle = activity.WaitForIdleAsync(Generous, CancellationToken.None);
@@ -56,7 +56,7 @@ public sealed class ToolActivityTests
         // A tool that never returns must not hold the update forever: the restart helper is already
         // spinning on this process id by the time anyone waits here.
         var activity = new ToolActivity();
-        Assert.True(activity.TryBegin(out _));
+        Assert.True(activity.TryBegin("system_overview", out _));
         activity.MarkUpdatePending();
 
         Assert.False(await activity.WaitForIdleAsync(TimeSpan.FromMilliseconds(50), CancellationToken.None));
@@ -66,7 +66,7 @@ public sealed class ToolActivityTests
     public async Task Stops_waiting_when_the_host_is_shutting_down_for_another_reason()
     {
         var activity = new ToolActivity();
-        Assert.True(activity.TryBegin(out _));
+        Assert.True(activity.TryBegin("system_overview", out _));
         activity.MarkUpdatePending();
 
         using var stopping = new CancellationTokenSource();
@@ -84,7 +84,7 @@ public sealed class ToolActivityTests
         var activity = new ToolActivity();
         activity.MarkUpdatePending();
 
-        Assert.False(activity.TryBegin(out var refusal));
+        Assert.False(activity.TryBegin("system_overview", out var refusal));
 
         // The refusal is the only thing a caller sees mid-update, and it is also how a deploy script
         // knows the old process is still draining, so it has to say what to do rather than just "no".
@@ -96,11 +96,30 @@ public sealed class ToolActivityTests
     }
 
     [Fact]
+    public void Still_admits_update_self_once_an_update_is_pending()
+    {
+        // The one exemption, and the reason force is a per-call choice rather than a first-call-only
+        // one. Refusing update_self too would mean a caller who chose to wait could never change their
+        // mind: a wedged call holding the drain for its whole budget would leave the console as the
+        // only way out, which is exactly the trip this tool exists to remove.
+        var activity = new ToolActivity();
+        activity.MarkUpdatePending();
+
+        Assert.False(activity.TryBegin("capture_activity", out _));
+        Assert.True(activity.TryBegin(ToolActivity.EscalationTool, out var refusal));
+        Assert.Null(refusal);
+
+        // Exempt from the refusal, not from the count -- the drain still has to know it is running.
+        Assert.Equal(1, activity.InFlight);
+        activity.End();
+    }
+
+    [Fact]
     public void Admits_a_call_normally_when_no_update_is_pending()
     {
         var activity = new ToolActivity();
 
-        Assert.True(activity.TryBegin(out var refusal));
+        Assert.True(activity.TryBegin("system_overview", out var refusal));
         Assert.Null(refusal);
         Assert.Equal(1, activity.InFlight);
     }
@@ -112,7 +131,7 @@ public sealed class ToolActivityTests
         // zero again and every later update would wait out its whole budget for nothing.
         var activity = new ToolActivity();
 
-        Assert.True(activity.TryBegin(out _));
+        Assert.True(activity.TryBegin("system_overview", out _));
         try
         {
             throw new InvalidOperationException("the tool failed");
@@ -139,7 +158,7 @@ public sealed class ToolActivityTests
 
         var callers = Enumerable.Range(0, 64).Select(index => Task.Run(() =>
         {
-            if (activity.TryBegin(out _))
+            if (activity.TryBegin("system_overview", out _))
             {
                 Interlocked.Increment(ref admitted);
                 activity.End();

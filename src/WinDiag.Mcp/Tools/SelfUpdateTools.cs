@@ -38,7 +38,9 @@ public sealed class SelfUpdateTools
         "By default the server FINISHES whatever tool calls are already running before it restarts, " +
         "refusing new calls meanwhile - so on a busy target this can take minutes, and the refusals are " +
         "how you know the old process is still draining. Pass force to skip that and cut running calls " +
-        "off instead. Either way THIS CONNECTION WILL DROP - that is success, not failure. Reconnect " +
+        "off instead - and you can still change your mind, because update_self is the one tool a " +
+        "draining server keeps accepting: call it again with force to stop waiting and restart now. " +
+        "Either way THIS CONNECTION WILL DROP - that is success, not failure. Reconnect " +
         "and check the version; if it does not come back, read the helper log named in the result.")]
     public UpdateSelfResult UpdateSelf(
         [Description("SHA-256 of the staged build, as reported by file_signatures on the staged file")]
@@ -109,7 +111,9 @@ public sealed class SelfUpdateTools
                 + $"them finish (up to {DescribeBudget(result.DrainTimeoutSeconds)}), refusing every new "
                 + "call meanwhile, and only then exit and restart. THE CONNECTION WILL DROP - that is "
                 + "expected. Reconnect once calls stop being refused: that refusal comes from the OLD "
-                + "process, so it stopping is how you know the new build is up.");
+                + "process, so it stopping is how you know the new build is up. If you would rather not "
+                + "wait, call update_self again with force - it is the one tool still accepted while "
+                + "this is pending.");
         }
 
         builder.Append("If it does not come back, the helper logged what happened to ")

@@ -21,6 +21,15 @@ namespace WinDiag.Mcp.Hosting;
 /// </remarks>
 public sealed class ToolActivity
 {
+    /// <summary>
+    /// The only tool still admitted once an update is pending, so <c>force</c> stays reachable.
+    /// </summary>
+    /// <remarks>
+    /// Named here rather than in the filter so the exemption is testable and so there is one place to
+    /// read it. It is still COUNTED like any other call -- only the refusal is waived.
+    /// </remarks>
+    public const string EscalationTool = "update_self";
+
     private int _inFlight;
 
     /// <summary>0 or 1. An int rather than a bool so it can be read and written with <see cref="Interlocked"/>.</summary>
@@ -47,9 +56,19 @@ public sealed class ToolActivity
     /// the other's flag after its own write, at least one of them must observe the other. A call can
     /// therefore never be both admitted and uncounted.
     /// </remarks>
-    public bool TryBegin([NotNullWhen(false)] out string? refusal)
+    public bool TryBegin(string? toolName, [NotNullWhen(false)] out string? refusal)
     {
-        if (IsUpdatePending)
+        // update_self is the one exception, and it has to be. Everything else is turned away so the
+        // server can reach idle, but refusing update_self too would mean the caller who chose to wait
+        // could never change their mind: a wedged call holding the drain for its whole budget would
+        // leave the console as the only way out, which is the trip this tool exists to remove. Letting
+        // it through is what makes force a per-call choice rather than a first-call-only one.
+        //
+        // Held in a local and applied to BOTH checks below. Applying it only to the first admitted the
+        // escalating call and then refused it at the second, which is the same as not exempting it.
+        var exempt = string.Equals(toolName, EscalationTool, StringComparison.Ordinal);
+
+        if (IsUpdatePending && !exempt)
         {
             refusal = Refusal();
             return false;
@@ -57,7 +76,7 @@ public sealed class ToolActivity
 
         Interlocked.Increment(ref _inFlight);
 
-        if (IsUpdatePending)
+        if (IsUpdatePending && !exempt)
         {
             // Lost the race: an update was committed between the check above and the increment. Give
             // the slot back -- and through End(), so that if this was the last straggler the waiting

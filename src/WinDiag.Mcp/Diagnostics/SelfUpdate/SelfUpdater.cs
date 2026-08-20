@@ -46,6 +46,9 @@ public sealed class SelfUpdater : ISelfUpdater
     /// <summary>0 or 1. Set once an update is past every check and the helper is about to be launched.</summary>
     private int _committed;
 
+    /// <summary>Trips the drain early when a later call escalates to force.</summary>
+    private readonly CancellationTokenSource _drainCancelled = new();
+
     public SelfUpdater(
         ISignatureInspector signatures,
         WinDiagOptions options,
@@ -59,6 +62,19 @@ public sealed class SelfUpdater : ISelfUpdater
         _activity = activity;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Puts a caller-supplied hash into the one shape the comparison uses.
+    /// </summary>
+    /// <remarks>
+    /// Hashes get copied out of certutil, PowerShell and this server's own output in several shapes.
+    /// Rejecting on formatting alone would only train callers to paste less carefully, so separators and
+    /// surrounding whitespace are stripped and the comparison itself is case-insensitive. Exposed so
+    /// this can be tested without calling <see cref="Update"/>, which past the hash check goes on to
+    /// launch a real helper against whatever executable is running -- in a test run, the test host.
+    /// </remarks>
+    internal static string NormalizeHash(string expectedSha256) =>
+        expectedSha256.Trim().Replace("-", string.Empty);
 
     public SelfUpdateResult Update(
         string expectedSha256, string stagedFileName, bool force, CancellationToken cancellationToken)
@@ -89,7 +105,7 @@ public sealed class SelfUpdater : ISelfUpdater
 
         var inspection = _signatures.Inspect([staged], cancellationToken).Files.Single();
 
-        var expected = expectedSha256.Trim().Replace("-", string.Empty);
+        var expected = NormalizeHash(expectedSha256);
         if (!string.Equals(inspection.Sha256, expected, StringComparison.OrdinalIgnoreCase))
         {
             // The check that matters most. A transfer to a target reached exactly the right size and was
@@ -101,18 +117,40 @@ public sealed class SelfUpdater : ISelfUpdater
 
         RequireSignatureRatchet(live, inspection, cancellationToken);
 
+        var log = Path.Combine(_options.ArtifactDirectory, "self-update.log");
+
         // Claimed here and nowhere earlier: after every check, so a refused update never costs the
         // server anything, and before the helper is launched, so two callers arriving together cannot
         // both write self-update.cmd and leave two helpers spinning on the same process id.
         if (Interlocked.Exchange(ref _committed, 1) == 1)
         {
-            throw new SelfUpdateRejectedException(
-                "An update has already been accepted on this server and it is shutting down to install "
-                + "it. Nothing has been changed by this call. Reconnect once calls stop being refused, "
-                + "then check the version.");
-        }
+            if (!force)
+            {
+                throw new SelfUpdateRejectedException(
+                    "An update has already been accepted on this server and it is waiting for running "
+                    + "calls to finish before it restarts. Nothing has been changed by this call. Call "
+                    + "update_self again with force to stop waiting and restart now, or reconnect once "
+                    + "calls stop being refused.");
+            }
 
-        var log = Path.Combine(_options.ArtifactDirectory, "self-update.log");
+            // Escalation: the helper is already launched and the drain is running, so there is nothing
+            // to install again -- only a decision to stop waiting. This is the whole reason update_self
+            // is exempt from the gate; without it, choosing to wait was irreversible.
+            _drainCancelled.Cancel();
+            _logger.LogWarning("drain cancelled by a forced update; restarting without waiting");
+
+            return new SelfUpdateResult(
+                StagedPath: staged,
+                LivePath: live,
+                SizeBytes: inspection.SizeBytes,
+                Sha256: inspection.Sha256,
+                SignatureVerdict: inspection.Verdict.ToString(),
+                HelperLogPath: log,
+                RestartScheduled: true,
+                Forced: true,
+                OtherCallsInFlight: Math.Max(0, _activity.InFlight - 1),
+                DrainTimeoutSeconds: 0);
+        }
 
         try
         {
@@ -158,15 +196,20 @@ public sealed class SelfUpdater : ISelfUpdater
             {
                 if (!force)
                 {
+                    // Two ways out besides finishing: the host stopping for its own reasons, and a later
+                    // caller escalating to force. Both mean stop waiting, so both are just cancellation.
+                    using var stop = CancellationTokenSource.CreateLinkedTokenSource(
+                        _lifetime.ApplicationStopping, _drainCancelled.Token);
+
                     var drained = await _activity
-                        .WaitForIdleAsync(_options.UpdateDrainTimeout, _lifetime.ApplicationStopping)
+                        .WaitForIdleAsync(_options.UpdateDrainTimeout, stop.Token)
                         .ConfigureAwait(false);
 
                     if (!drained)
                     {
                         _logger.LogWarning(
-                            "update drain gave up after {Seconds:0}s with {InFlight} call(s) still "
-                            + "running; restarting anyway and cutting them off",
+                            "update drain ended early or timed out after up to {Seconds:0}s with "
+                            + "{InFlight} call(s) still running; restarting anyway and cutting them off",
                             _options.UpdateDrainTimeout.TotalSeconds,
                             _activity.InFlight);
                     }

@@ -717,9 +717,9 @@ while ((Get-Date) -lt $deadline) {
         # unconditionally, $tools stayed null, and every drain longer than one sleep looked like a
         # server that never came back.
         #
-        # And because the gate refuses every tool while an update is pending, a capabilities reply can
-        # only have come from the NEW process. That is what makes this poll conclusive rather than a
-        # guess about whether the old one is still answering.
+        # And because the gate refuses every tool but update_self while an update is pending, a
+        # capabilities reply can only have come from the NEW process. That is what makes this poll
+        # conclusive rather than a guess about whether the old one is still answering.
         if ($null -ne $answer -and $null -ne $answer.tools) {
             $tools = $answer
             break

@@ -84,31 +84,24 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     [Fact]
     public void Accepts_the_hash_in_either_case_and_with_separators()
     {
-        // Hashes get copied out of tooling in several shapes; rejecting on formatting alone would only
-        // train callers to paste less carefully.
-        var payload = "windiag test payload"u8.ToArray();
-        var staged = StageBesideTheServer("windiag-test-staged2.exe", payload);
-        var sha = Convert.ToHexString(SHA256.HashData(payload));
+        // Hashes get copied out of certutil, PowerShell and this server's own output in several shapes;
+        // rejecting on formatting alone would only train callers to paste less carefully.
+        //
+        // Tested against the normalisation directly, NOT by calling Update with a matching hash. That
+        // route was quietly dangerous: past the hash check the only remaining gate is the signature
+        // ratchet, which passes when the running executable is unsigned -- and in a test run the running
+        // executable is the test host. So on an unsigned test host it launched a real helper that waited
+        // for the test host to exit and then moved a file of test junk over testhost.exe. It survived on
+        // timing alone.
+        var sha = Convert.ToHexString(SHA256.HashData("windiag test payload"u8.ToArray()));
 
-        try
-        {
-            // Not a real server executable, so it cannot get as far as swapping - but it must get PAST
-            // the hash check, which a formatting rejection would not.
-            foreach (var form in (string[])[sha, sha.ToLowerInvariant(), string.Join('-', sha.Chunk(2).Select(c => new string(c)))])
-            {
-                var ex = Record.Exception(
-                    () => Updater().Update(form, Path.GetFileName(staged), force: false, CancellationToken.None));
+        Assert.Equal(sha, SelfUpdater.NormalizeHash(sha));
+        Assert.Equal(sha, SelfUpdater.NormalizeHash($"  {sha}\t"));
+        Assert.Equal(sha, SelfUpdater.NormalizeHash(string.Join('-', sha.Chunk(2).Select(c => new string(c)))));
 
-                if (ex is SelfUpdateRejectedException rejected)
-                {
-                    Assert.DoesNotContain("does not match the hash", rejected.Message);
-                }
-            }
-        }
-        finally
-        {
-            File.Delete(staged);
-        }
+        // Case is not normalised here because the comparison itself is case-insensitive; asserting the
+        // pair together is what shows lower-case input still matches.
+        Assert.Equal(sha, SelfUpdater.NormalizeHash(sha.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -127,7 +120,7 @@ public sealed class SelfUpdateRejectionTests : IDisposable
 
         Assert.False(_activity.IsUpdatePending);
 
-        Assert.True(_activity.TryBegin(out var refusal));
+        Assert.True(_activity.TryBegin("system_overview", out var refusal));
         Assert.Null(refusal);
         _activity.End();
     }
