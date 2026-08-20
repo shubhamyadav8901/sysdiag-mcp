@@ -85,13 +85,18 @@ public sealed class FileLockTools
         "Use it as the follow-up when who_locks_path comes back empty, since it finds holders Restart " +
         "Manager cannot see. Requires administrator rights for complete results, and requires " +
         "Sysinternals handle.exe to be installed. " +
-        "By default it searches FILE handles only, which is fast. Set includeAllObjectTypes to also " +
-        "cover registry keys, sections, mutants and events - necessary for 'who is touching this " +
-        "registry key', but far slower, so pair it with a narrow search term.")]
+        "By default it searches FILE REFERENCES, which is fast: that means open file handles AND the " +
+        "memory-mapped sections backing a file, so a holder that only mapped the file is already " +
+        "covered. Set includeAllObjectTypes to also cover non-file objects - registry keys, mutants, " +
+        "events, tokens - necessary for 'who is touching this registry key', but far slower, so pair " +
+        "it with a narrow search term.")]
     public async Task<PathHandleSearchResult> PathHandleSearch(
         [Description("Text to match anywhere in the object name, for example a full path, a file name, or a registry key fragment")]
         string nameFragment,
-        [Description("Search all named kernel object types, not just files. Needed for registry keys. Much slower - use a narrow search term and expect to raise the timeout.")]
+        [Description(
+            "Search every named kernel object type, not just file references. Needed for registry keys, "
+            + "mutants, events and tokens - NOT for mapped sections, which the default already returns. "
+            + "Much slower - use a narrow search term and expect to raise the timeout.")]
         bool includeAllObjectTypes = false,
         CancellationToken cancellationToken = default)
     {
@@ -199,8 +204,10 @@ public sealed class FileLockTools
                 builder.Append(result.IncludedAllObjectTypes
                     ? $"{result.Query} holds no open handles of any object type, which for a live " +
                       "process is unusual enough to suspect it has exited. Check process_list."
-                    : $"{result.Query} holds no open FILE handles. It may still hold registry keys, " +
-                      "sections or other objects -- call again with includeAllObjectTypes=true.");
+                    : $"{result.Query} holds no open file references -- no file handles and no mapped " +
+                      "sections either, since this search covers both. It may still hold non-file " +
+                      "objects such as registry keys, mutants or events; call again with " +
+                      "includeAllObjectTypes=true for those.");
             }
             else if (result.IncludedAllObjectTypes)
             {
@@ -209,9 +216,10 @@ public sealed class FileLockTools
             }
             else
             {
-                builder.Append("No open FILE handles matched '").Append(result.Query)
-                    .Append("'. This search covered file handles only. If you are looking for a ")
-                    .Append("registry key or another kernel object, call again with ")
+                builder.Append("No open file references matched '").Append(result.Query)
+                    .Append("'. This search covered file handles and mapped sections, so a holder ")
+                    .Append("that only mapped the file would have shown up. If you are looking for a ")
+                    .Append("registry key or another non-file object, call again with ")
                     .Append("includeAllObjectTypes=true (slower - keep the search term narrow).");
             }
 

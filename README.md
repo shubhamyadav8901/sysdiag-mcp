@@ -528,10 +528,13 @@ have enough fields to satisfy positional parsing, so they would be accepted and 
 parser therefore validates the header shape and throws on anything it was not written for. If you add
 a new invocation mode, add its layout explicitly — do not relax that check.
 
-**`path_handle_search` searches files only unless you ask for more.** handle.exe without `-a` "will
-dump all file references" and nothing else — no registry keys, no sections, no mutants. Measured on a
-single process: 380 rows and 2 object types without `-a`; 12007 rows and 25 types with it, including
-3218 registry `Key` rows.
+**`path_handle_search` searches file references only unless you ask for more.** handle.exe without
+`-a` "will dump all file references" and nothing else — no registry keys, no mutants, no events.
+"File references" is broader than `File` handles though, and the row counts say so: measured on a
+single process, 380 rows and **2 object types** without `-a`, those two being `File` and `Section`.
+A section backing a file *is* a reference to it, so a holder that only memory-mapped the file is
+already covered by the default — which matters, because a mapped section is exactly the holder
+`who_locks_path` cannot see. With `-a`: 12007 rows and 25 types, including 3218 registry `Key` rows.
 
 `-a` is nonetheless **opt-in**, via `includeAllObjectTypes`, because it is drastically more expensive:
 a machine-wide `-a` search on an ordinary workstation had emitted 223 rows — every one of them still

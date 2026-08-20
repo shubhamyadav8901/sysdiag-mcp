@@ -61,7 +61,9 @@ public sealed class ProcessTools
     public async Task<PathHandleSearchResult> ProcessHandles(
         [Description("Process id. Get a current one from process_list; PIDs are reused.")]
         int processId,
-        [Description("Set false for file handles only, which is faster on a process holding thousands")]
+        [Description(
+            "Set false for file references only - file handles plus the mapped sections backing a "
+            + "file, which is what handle.exe returns without -a. Faster on a process holding thousands.")]
         bool includeAllObjectTypes = true,
         CancellationToken cancellationToken = default)
     {

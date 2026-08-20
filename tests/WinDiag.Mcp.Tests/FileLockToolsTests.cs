@@ -230,8 +230,17 @@ public sealed class FileLockToolsTests
 
         var result = await tools.PathHandleSearch("x");
 
-        Assert.Contains("FILE handles only", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("file references", result.Summary, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("includeAllObjectTypes=true", result.Summary);
+
+        // And it must NOT offer sections as a reason to re-run with -a. Without -a handle.exe returns
+        // file REFERENCES, which is broader than File handles: a machine-wide search measured 172 File
+        // rows and 112 Section rows, because a section backing a file is a reference to it. Promising
+        // sections behind the flag sends someone into a 6m40s -a sweep for rows they already had -- and
+        // worse, implies the fast search cannot see a memory-mapped holder, which is the one holder
+        // who_locks_path is documented as missing.
+        Assert.DoesNotContain("sections or other objects", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mapped sections", result.Summary, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
