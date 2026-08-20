@@ -59,6 +59,16 @@ public sealed class SelfUpdateTools
         return new UpdateSelfResult(Render(result), result);
     }
 
+    /// <summary>Renders the drain budget in a unit that is never zero.</summary>
+    /// <remarks>
+    /// Integer minutes alone reported any budget under a minute as "up to 0 minutes", and the
+    /// configured range starts at 1 second.
+    /// </remarks>
+    private static string DescribeBudget(int seconds) =>
+        seconds < 60
+            ? $"{seconds.ToString(CultureInfo.InvariantCulture)} seconds"
+            : $"{(seconds / 60).ToString(CultureInfo.InvariantCulture)} minutes";
+
     internal static string Render(SelfUpdateResult result)
     {
         var builder = new StringBuilder();
@@ -96,7 +106,7 @@ public sealed class SelfUpdateTools
         {
             builder.AppendLine(
                 $"{result.OtherCallsInFlight} other tool call(s) are still running. This server will let "
-                + $"them finish (up to {result.DrainTimeoutSeconds / 60} minutes), refusing every new "
+                + $"them finish (up to {DescribeBudget(result.DrainTimeoutSeconds)}), refusing every new "
                 + "call meanwhile, and only then exit and restart. THE CONNECTION WILL DROP - that is "
                 + "expected. Reconnect once calls stop being refused: that refusal comes from the OLD "
                 + "process, so it stopping is how you know the new build is up.");

@@ -113,9 +113,29 @@ public sealed class SelfUpdater : ISelfUpdater
         }
 
         var log = Path.Combine(_options.ArtifactDirectory, "self-update.log");
-        Directory.CreateDirectory(_options.ArtifactDirectory);
 
-        LaunchHelper(live, staged, inspection.Sha256, log);
+        try
+        {
+            Directory.CreateDirectory(_options.ArtifactDirectory);
+            LaunchHelper(live, staged, inspection.Sha256, log);
+        }
+        catch
+        {
+            // Nothing was launched, so nothing is shutting down -- give the claim back. Leaving it set
+            // would be far worse than the failure itself: every later update would be told one is
+            // already in progress, which would be a lie, and the only way out of it would be the trip
+            // to the console this whole tool exists to avoid.
+            Interlocked.Exchange(ref _committed, 0);
+            throw;
+        }
+
+        // Before the reply goes out, and that ordering is the contract. The refusal callers get is what
+        // tells them the old process is still draining -- deploy-target.ps1 treats a real answer as
+        // proof the NEW build is up. Marking this after the reply had been dispatched would leave a
+        // window where the caller's next request is answered normally by a server that is on its way
+        // down. It is still only reached past every rejection, which is what matters for not turning a
+        // refused update into a server that stops accepting calls.
+        _activity.MarkUpdatePending();
 
         // This call is itself counted by the tool-activity gate, so discount it to report what the
         // server is actually waiting for.
@@ -136,10 +156,6 @@ public sealed class SelfUpdater : ISelfUpdater
         {
             try
             {
-                // Only now, past every rejection: marking it earlier would leave a server that REFUSED
-                // an update turning away callers until the timeout expired.
-                _activity.MarkUpdatePending();
-
                 if (!force)
                 {
                     var drained = await _activity
@@ -167,7 +183,17 @@ public sealed class SelfUpdater : ISelfUpdater
                 // Must always run. The helper is already launched and sitting in a loop waiting for this
                 // process id to disappear, so a server that decided not to exit would leave it spinning
                 // forever and the staged build never installed.
-                _lifetime.StopApplication();
+                try
+                {
+                    _lifetime.StopApplication();
+                }
+                catch (Exception ex)
+                {
+                    // Nothing above can recover from this and the task has no observer, so without a log
+                    // line the symptom is a server that simply never restarts and a helper burning a
+                    // core against a process id that will not go away.
+                    _logger.LogCritical(ex, "could not stop the host after an accepted update");
+                }
             }
         });
 

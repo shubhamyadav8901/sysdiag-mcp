@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp;
 using WinDiag.Mcp.Configuration;
@@ -48,9 +49,6 @@ public sealed class ToolRegistrationTests
         // would simply always be zero, the drain would return instantly, and updates would go back to
         // truncating work exactly as they did before -- green suite and all. That is the same shape of
         // silent regression that let the null-property fix be deleted unnoticed.
-        //
-        // This asserts the registration, not the filter's presence on the pipeline; that part is proven
-        // on a real target, since it needs a long-running call and a concurrent one to observe.
         var services = new ServiceCollection();
         services.AddLogging(builder => builder.ClearProviders());
         ServerBuilder.ConfigureServices(services, Options(allowSelfUpdate: true));
@@ -59,6 +57,15 @@ public sealed class ToolRegistrationTests
 
         Assert.NotNull(provider.GetService<ToolActivity>());
         Assert.Same(provider.GetRequiredService<ToolActivity>(), provider.GetRequiredService<ToolActivity>());
+
+        // And that the gate is actually ON the pipeline. Registering the singleton without the filter
+        // would leave the count permanently zero, so the drain would return instantly and updates would
+        // silently truncate work again -- with nothing failing. Two filters: readable tool errors, and
+        // the activity gate. They compose rather than replacing one another.
+        var filters = provider.GetRequiredService<IOptions<McpServerOptions>>()
+            .Value.Filters.Request.CallToolFilters;
+
+        Assert.Equal(2, filters.Count);
     }
 
     [Fact]

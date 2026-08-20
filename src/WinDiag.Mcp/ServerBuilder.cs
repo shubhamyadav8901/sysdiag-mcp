@@ -118,10 +118,10 @@ public static class ServerBuilder
 
         // Pinned rather than inherited. This is the window the host allows for in-flight work to stop
         // once shutdown begins, and the default happened to be 30s -- which is what truncated a
-        // 90-second capture during an update. The drain below means it no longer applies to an ordinary
-        // update at all, since nothing is running by the time we stop. It still matters on the forced
-        // path: it is the budget in which capture_activity's cancellation kills Procmon, and shortening
-        // it would trade a truncated capture for an orphaned kernel driver and a stranded trace file.
+        // 90-second capture during an update. An ordinary update no longer reaches it, because the drain
+        // waits for the server to be idle first; it still applies when that drain hits its own budget,
+        // and on the forced path, where it is the time in which capture_activity's cancellation kills
+        // Procmon. Shortening it would trade a truncated capture for an orphaned kernel driver.
         services.Configure<HostOptions>(host => host.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
         var mcp = services

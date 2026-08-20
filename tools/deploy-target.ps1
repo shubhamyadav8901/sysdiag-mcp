@@ -680,12 +680,22 @@ Write-Step "Installing via update_self"
 $updateRaw = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool update_self `
     -Arguments @{ expectedSha256 = $serverHash } -Raw
 
-$update = if ($updateRaw) { ($updateRaw | ConvertFrom-Json).update } else { $null }
-$drain = if ($null -ne $update -and $update.drainTimeoutSeconds) { [int]$update.drainTimeoutSeconds } else { 0 }
+# A refused update produces no stdout: mcp-call.ps1 reports the refusal to the host and exits 1, which
+# does NOT throw here. Without this check a hash mismatch or a signature refusal fell straight through
+# to the poll below, which then got a perfectly good answer from the OLD server that was never asked to
+# stop, and the script announced a successful deploy of a build it had not installed.
+if (-not $updateRaw) {
+    throw "update_self was refused (its reason is printed above). $Target is unchanged and still " +
+          'running the previous build.'
+}
 
-if ($null -ne $update -and $update.otherCallsInFlight -gt 0) {
+$update = ($updateRaw | ConvertFrom-Json).update
+$drain = if ($update.drainTimeoutSeconds) { [int]$update.drainTimeoutSeconds } else { 0 }
+
+if ($update.otherCallsInFlight -gt 0) {
+    $budget = if ($drain -lt 60) { "$drain s" } else { "$([math]::Floor($drain / 60)) min" }
     Write-Note ("$($update.otherCallsInFlight) other call(s) are running on the target; it will finish " +
-                "them before restarting (up to $([math]::Round($drain / 60)) min)")
+                "them before restarting (up to $budget)")
 }
 
 Write-Note 'server is restarting; waiting for it to come back'
