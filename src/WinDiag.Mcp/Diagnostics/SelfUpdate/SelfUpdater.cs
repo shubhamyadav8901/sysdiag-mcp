@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Signatures;
+using WinDiag.Mcp.Hosting;
 
 namespace WinDiag.Mcp.Diagnostics.SelfUpdate;
 
@@ -28,24 +29,39 @@ public sealed class SelfUpdater : ISelfUpdater
     private readonly ISignatureInspector _signatures;
     private readonly WinDiagOptions _options;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ToolActivity _activity;
     private readonly ILogger<SelfUpdater> _logger;
 
-    /// <summary>Grace period before shutting down, so the caller receives its reply first.</summary>
+    /// <summary>
+    /// Grace period before shutting down, so the caller receives its reply first.
+    /// </summary>
+    /// <remarks>
+    /// Still needed after the drain, and for a reason worth stating: the activity count reaching zero
+    /// means every tool BODY has returned, not that any reply has been serialized and flushed to the
+    /// transport. This covers that last step -- including this call's own reply. Deleting it because
+    /// "the drain already waited" would put every update back to racing its own answer.
+    /// </remarks>
     private static readonly TimeSpan ReplyGrace = TimeSpan.FromSeconds(3);
+
+    /// <summary>0 or 1. Set once an update is past every check and the helper is about to be launched.</summary>
+    private int _committed;
 
     public SelfUpdater(
         ISignatureInspector signatures,
         WinDiagOptions options,
         IHostApplicationLifetime lifetime,
+        ToolActivity activity,
         ILogger<SelfUpdater> logger)
     {
         _signatures = signatures;
         _options = options;
         _lifetime = lifetime;
+        _activity = activity;
         _logger = logger;
     }
 
-    public SelfUpdateResult Update(string expectedSha256, string stagedFileName, CancellationToken cancellationToken)
+    public SelfUpdateResult Update(
+        string expectedSha256, string stagedFileName, bool force, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedSha256);
         ArgumentException.ThrowIfNullOrWhiteSpace(stagedFileName);
@@ -85,20 +101,74 @@ public sealed class SelfUpdater : ISelfUpdater
 
         RequireSignatureRatchet(live, inspection, cancellationToken);
 
+        // Claimed here and nowhere earlier: after every check, so a refused update never costs the
+        // server anything, and before the helper is launched, so two callers arriving together cannot
+        // both write self-update.cmd and leave two helpers spinning on the same process id.
+        if (Interlocked.Exchange(ref _committed, 1) == 1)
+        {
+            throw new SelfUpdateRejectedException(
+                "An update has already been accepted on this server and it is shutting down to install "
+                + "it. Nothing has been changed by this call. Reconnect once calls stop being refused, "
+                + "then check the version.");
+        }
+
         var log = Path.Combine(_options.ArtifactDirectory, "self-update.log");
         Directory.CreateDirectory(_options.ArtifactDirectory);
 
         LaunchHelper(live, staged, inspection.Sha256, log);
+
+        // This call is itself counted by the tool-activity gate, so discount it to report what the
+        // server is actually waiting for.
+        var others = Math.Max(0, _activity.InFlight - 1);
 
         _logger.LogWarning(
             "self-update accepted ({Sha}); handing over to the helper and shutting down", inspection.Sha256);
 
         // Reply first, exit second: the caller needs the response before the socket dies, and the file
         // stays locked until this process is gone.
+        //
+        // The whole wait lives in here, off the request path, and that placement is load-bearing. This
+        // call occupies a slot in the activity count until Update returns, so awaiting the drain from
+        // the request thread would wait for a count that includes itself -- it could never reach zero,
+        // and every update would stall for the full timeout. That failure looks like a slow network,
+        // not a deadlock, which is why it is worth a comment and a test rather than a note.
         _ = Task.Run(async () =>
         {
-            await Task.Delay(ReplyGrace).ConfigureAwait(false);
-            _lifetime.StopApplication();
+            try
+            {
+                // Only now, past every rejection: marking it earlier would leave a server that REFUSED
+                // an update turning away callers until the timeout expired.
+                _activity.MarkUpdatePending();
+
+                if (!force)
+                {
+                    var drained = await _activity
+                        .WaitForIdleAsync(_options.UpdateDrainTimeout, _lifetime.ApplicationStopping)
+                        .ConfigureAwait(false);
+
+                    if (!drained)
+                    {
+                        _logger.LogWarning(
+                            "update drain gave up after {Seconds:0}s with {InFlight} call(s) still "
+                            + "running; restarting anyway and cutting them off",
+                            _options.UpdateDrainTimeout.TotalSeconds,
+                            _activity.InFlight);
+                    }
+                }
+
+                await Task.Delay(ReplyGrace).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "the update drain failed; shutting down anyway");
+            }
+            finally
+            {
+                // Must always run. The helper is already launched and sitting in a loop waiting for this
+                // process id to disappear, so a server that decided not to exit would leave it spinning
+                // forever and the staged build never installed.
+                _lifetime.StopApplication();
+            }
         });
 
         return new SelfUpdateResult(
@@ -108,7 +178,10 @@ public sealed class SelfUpdater : ISelfUpdater
             Sha256: inspection.Sha256,
             SignatureVerdict: inspection.Verdict.ToString(),
             HelperLogPath: log,
-            RestartScheduled: true);
+            RestartScheduled: true,
+            Forced: force,
+            OtherCallsInFlight: others,
+            DrainTimeoutSeconds: force ? 0 : (int)_options.UpdateDrainTimeout.TotalSeconds);
     }
 
     /// <summary>
@@ -156,7 +229,11 @@ public sealed class SelfUpdater : ISelfUpdater
             .AppendLine($">\"{log}\" echo [%date% %time%] self-update starting for PID {Environment.ProcessId}")
             .AppendLine(":waitforexit")
             .AppendLine($"tasklist /FI \"PID eq {Environment.ProcessId}\" 2>nul | find \"{Environment.ProcessId}\" >nul")
-            .AppendLine("if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto waitforexit)")
+            // ping, not timeout: timeout.exe needs a console and this helper is started with
+            // CreateNoWindow, so where it has none it fails instantly and the loop becomes a hot spin.
+            // That was invisible while the wait was only ever a few seconds; with a drain the loop can
+            // now run for minutes, which would be a pegged core and a tasklist storm.
+            .AppendLine("if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto waitforexit)")
             .AppendLine($">>\"{log}\" echo [%time%] server exited; re-verifying")
 
             // Cleared first, and deliberately. "if not defined" never assigns when the variable is

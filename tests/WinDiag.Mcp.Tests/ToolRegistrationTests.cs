@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp;
 using WinDiag.Mcp.Configuration;
+using WinDiag.Mcp.Hosting;
 
 namespace WinDiag.Mcp.Tests;
 
@@ -38,6 +39,27 @@ public sealed class ToolRegistrationTests
             ["WINDIAG_ALLOW_SELF_UPDATE"] = allowSelfUpdate ? "1" : "0",
             ["WINDIAG_ALLOW_COMMAND_EXECUTION"] = allowCommands ? "1" : "0"
         });
+
+    [Fact]
+    public void Shares_one_activity_tracker_between_the_gate_and_the_updater()
+    {
+        // update_self waits on the count the call-tool filter maintains, so both must be talking about
+        // the same object. Two instances would not fail anything loudly: the count the updater watches
+        // would simply always be zero, the drain would return instantly, and updates would go back to
+        // truncating work exactly as they did before -- green suite and all. That is the same shape of
+        // silent regression that let the null-property fix be deleted unnoticed.
+        //
+        // This asserts the registration, not the filter's presence on the pipeline; that part is proven
+        // on a real target, since it needs a long-running call and a concurrent one to observe.
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders());
+        ServerBuilder.ConfigureServices(services, Options(allowSelfUpdate: true));
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.NotNull(provider.GetService<ToolActivity>());
+        Assert.Same(provider.GetRequiredService<ToolActivity>(), provider.GetRequiredService<ToolActivity>());
+    }
 
     [Fact]
     public void Registers_each_tool_exactly_once()

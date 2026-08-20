@@ -38,6 +38,20 @@ public sealed record WinDiagOptions
     /// </remarks>
     public TimeSpan ExternalToolTimeout { get; init; } = TimeSpan.FromSeconds(120);
 
+    /// <summary>How long <c>update_self</c> waits for running tool calls before restarting anyway.</summary>
+    /// <remarks>
+    /// A backstop, not a schedule: on an idle target the drain finishes in milliseconds, and this only
+    /// bounds how long a tool that never returns can hold up an update.
+    /// <para>30 minutes because the call most likely to be running during an update is also the longest:
+    /// <c>capture_activity</c> allows 300s of capture, 90s of overhead and up to a 15-minute export --
+    /// about 21 minutes in the worst case, and truncating it is the exact failure this exists to
+    /// prevent. A <c>run_command</c> may legitimately run for an hour and is NOT covered by this
+    /// default; raise it, or pass force and accept the truncation.</para>
+    /// <para>The upper limit is deliberately a day rather than the hour used for a single external tool,
+    /// so covering a full-length run_command stays possible for anyone who wants it.</para>
+    /// </remarks>
+    public TimeSpan UpdateDrainTimeout { get; init; } = TimeSpan.FromSeconds(1800);
+
     /// <summary>Upper bound on rows returned by a single tool call.</summary>
     /// <remarks>
     /// 50000 so high-cardinality tools -- process_handles and path_handle_search above all, where a
@@ -144,6 +158,8 @@ public sealed record WinDiagOptions
             AllowArbitraryRead = ReadBoolean(environment, "WINDIAG_ALLOW_ARBITRARY_READ", defaultValue: false),
             ExternalToolTimeout = TimeSpan.FromSeconds(
                 ReadInt32(environment, "WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS", 120, min: 1, max: 3600)),
+            UpdateDrainTimeout = TimeSpan.FromSeconds(
+                ReadInt32(environment, "WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS", 1800, min: 1, max: 86_400)),
             MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 50_000, min: 1, max: 10_000_000),
             HttpBind = NullIfBlank(Read(environment, "WINDIAG_HTTP_BIND")),
             Token = NullIfBlank(Read(environment, "WINDIAG_TOKEN")),
@@ -154,6 +170,7 @@ public sealed record WinDiagOptions
     /// <summary>A loggable summary, with the token redacted.</summary>
     public string Describe() =>
         $"readOnly={ReadOnly}, externalToolTimeout={ExternalToolTimeout.TotalSeconds:0}s, " +
+        $"updateDrainTimeout={UpdateDrainTimeout.TotalSeconds:0}s, " +
         $"maxResults={MaxResults}, httpBind={HttpBind ?? "(stdio)"}, " +
         $"token={(Token is null ? "(generated)" : "(configured)")}, artifactDir={ArtifactDirectory}, " +
         $"allowSelfUpdate={AllowSelfUpdate}, allowCommandExecution={AllowCommandExecution}, " +

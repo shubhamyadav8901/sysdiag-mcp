@@ -39,7 +39,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
 | `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting |
 | `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
-| `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand |
+| `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
 | `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
 | `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
@@ -229,6 +229,12 @@ Three behaviours are deliberate and worth knowing:
   fallback if an HTTP transfer will not go through. The large server binary is sent in hash-verified
   4&#160;MB chunks over HTTP — a single ~57&#160;MB base64 body is more than a 32-bit server can decode
   at once, and a per-chunk hash catches a corrupt chunk on a lossy link at the chunk, not minutes later.
+- **A deploy waits for whatever the target is already doing.** `update_self` finishes the calls in
+  flight before it restarts, refusing new ones meanwhile, so a deploy no longer cuts short a capture
+  someone else started — it used to, silently, leaving them a truncated trace and a transport error.
+  The script therefore extends its own patience to match (`WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS`
+  plus 90&#160;s for the restart) and says so when it is waiting on someone. Pass `force` to
+  `update_self` by hand if you would rather take the target down now and orphan that work.
 
 The rest of this section is what the script automates, and what to do when it cannot be used.
 
@@ -479,6 +485,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
 | `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write outside the server's own directories. `put_file` itself is always available on a writable server, scoped to those dirs; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
+| `WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS` | `1800` | How long `update_self` waits for running tool calls to finish before restarting anyway (1–86400). A backstop, not a schedule: on an idle target the wait is milliseconds. 30 minutes clears `capture_activity`'s ~21-minute worst case, which is the call most likely to be running when you update. A full-length `run_command` can exceed it — raise this, or pass `force` |
 | `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |

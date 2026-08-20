@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using ModelContextProtocol;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics;
@@ -79,6 +80,8 @@ public static class ServerBuilder
                                                   directories (default: false; put_file itself is always
                                                   available on a writable server, scoped to those dirs)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
+          WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS    How long update_self waits for running calls before
+                                                  restarting anyway, 1..86400 (default: 1800)
           WINDIAG_MAX_RESULTS                     Row cap per tool call, 1..10000000 (default: 50000)
           WINDIAG_HTTP_BIND                       Address to serve on; same as --http
           WINDIAG_TOKEN                           Bearer token for HTTP. Generated and printed if unset.
@@ -107,11 +110,28 @@ public static class ServerBuilder
         services.AddSingleton(options);
         services.TryAddDiagnostics();
 
+        // Shared by the gate below and by SelfUpdater, so the update waits on the same count the
+        // filter maintains. Constructed here rather than resolved, because a request filter closure has
+        // no service provider; a fresh instance per call keeps tests isolated from each other.
+        var activity = new ToolActivity();
+        services.AddSingleton(activity);
+
+        // Pinned rather than inherited. This is the window the host allows for in-flight work to stop
+        // once shutdown begins, and the default happened to be 30s -- which is what truncated a
+        // 90-second capture during an update. The drain below means it no longer applies to an ordinary
+        // update at all, since nothing is running by the time we stop. It still matters on the forced
+        // path: it is the budget in which capture_activity's cancellation kills Procmon, and shortening
+        // it would trade a truncated capture for an orphaned kernel driver and a stranded trace file.
+        services.Configure<HostOptions>(host => host.ShutdownTimeout = TimeSpan.FromSeconds(30));
+
         var mcp = services
             .AddMcpServer()
 
             // Before any tool: a refusal the caller cannot read is a refusal they will retry into.
             .WithReadableToolErrors()
+
+            // Counts what is running, so update_self can wait for it instead of cutting it off.
+            .WithToolActivityGate(activity)
             .WithTools<FileLockTools>(ToolJsonOptions)
             .WithTools<SystemTools>(ToolJsonOptions)
             .WithTools<ServiceTools>(ToolJsonOptions)

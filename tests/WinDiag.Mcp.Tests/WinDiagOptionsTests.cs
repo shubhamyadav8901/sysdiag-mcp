@@ -24,6 +24,28 @@ public sealed class WinDiagOptionsTests
         Assert.False(options.ReadOnly);
         Assert.Equal(TimeSpan.FromSeconds(120), options.ExternalToolTimeout);
         Assert.Equal(50_000, options.MaxResults);
+
+        // 30 minutes clears capture_activity's ~21-minute worst case, which is the call most likely to
+        // be running when someone updates and the one whose truncation prompted the drain.
+        Assert.Equal(TimeSpan.FromSeconds(1800), options.UpdateDrainTimeout);
+    }
+
+    [Fact]
+    public void Rejects_an_update_drain_outside_the_supported_range()
+    {
+        // Zero is refused rather than read as "do not wait": force is how you ask for that, per call,
+        // and a silent fleet-wide opt-out of the drain is exactly the accident this feature removes.
+        Assert.Throws<ConfigurationException>(
+            () => WinDiagOptions.FromEnvironment(Env(("WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS", "0"))));
+
+        // The ceiling is a day, not the hour used for a single external tool, so covering a
+        // full-length run_command stays possible.
+        Assert.Throws<ConfigurationException>(
+            () => WinDiagOptions.FromEnvironment(Env(("WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS", "86401"))));
+
+        Assert.Equal(
+            TimeSpan.FromSeconds(86_400),
+            WinDiagOptions.FromEnvironment(Env(("WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS", "86400"))).UpdateDrainTimeout);
     }
 
     [Theory]
@@ -71,6 +93,7 @@ public sealed class WinDiagOptionsTests
 
         Assert.Contains("readOnly=True", description);
         Assert.Contains("externalToolTimeout=120s", description);
+        Assert.Contains("updateDrainTimeout=1800s", description);
         Assert.Contains("maxResults=50000", description);
     }
 }

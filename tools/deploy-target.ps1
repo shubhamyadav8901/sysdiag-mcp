@@ -674,21 +674,46 @@ if (-not $hasUpdateSelf) {
 
 Write-Step "Installing via update_self"
 
-& (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool update_self `
-    -Arguments @{ expectedSha256 = $serverHash } | Out-Null
+# Deliberately NOT forced. The target may be serving someone else -- a capture running from another
+# session is exactly the work that used to be truncated by a deploy -- so this waits for it. The
+# result tells us how long it is prepared to wait.
+$updateRaw = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool update_self `
+    -Arguments @{ expectedSha256 = $serverHash } -Raw
+
+$update = if ($updateRaw) { ($updateRaw | ConvertFrom-Json).update } else { $null }
+$drain = if ($null -ne $update -and $update.drainTimeoutSeconds) { [int]$update.drainTimeoutSeconds } else { 0 }
+
+if ($null -ne $update -and $update.otherCallsInFlight -gt 0) {
+    Write-Note ("$($update.otherCallsInFlight) other call(s) are running on the target; it will finish " +
+                "them before restarting (up to $([math]::Round($drain / 60)) min)")
+}
 
 Write-Note 'server is restarting; waiting for it to come back'
 
-$deadline = (Get-Date).AddSeconds(90)
+# The budget has to cover the drain, or a deploy onto a busy target reports failure while the update
+# is proceeding perfectly. 90s on top is the restart itself.
+$deadline = (Get-Date).AddSeconds($drain + 90)
 $tools = $null
 
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 5
 
     try {
-        $tools = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool capabilities -Raw |
+        $answer = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool capabilities -Raw |
             ConvertFrom-Json
-        break
+
+        # Only a real answer ends the wait. mcp-call.ps1 signals a tool-level refusal by writing to the
+        # host and exiting 1, which does NOT throw here -- so without this check the break below ran
+        # unconditionally, $tools stayed null, and every drain longer than one sleep looked like a
+        # server that never came back.
+        #
+        # And because the gate refuses every tool while an update is pending, a capabilities reply can
+        # only have come from the NEW process. That is what makes this poll conclusive rather than a
+        # guess about whether the old one is still answering.
+        if ($null -ne $answer -and $null -ne $answer.tools) {
+            $tools = $answer
+            break
+        }
     }
     catch {
         continue
@@ -696,8 +721,9 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $tools) {
-    throw "The server did not come back on $address within 90s. Read the helper log named in the " +
-          "update_self result on the target, at %TEMP%\windiag\self-update.log."
+    throw "The server did not come back on $address within $($drain + 90)s. It may still be draining " +
+          "in-flight calls; read the helper log named in the update_self result on the target, at " +
+          "%TEMP%\windiag\self-update.log."
 }
 
 Write-Step "$Target is running commit $commit"
