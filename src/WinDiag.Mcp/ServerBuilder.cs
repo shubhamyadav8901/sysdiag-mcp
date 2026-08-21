@@ -110,6 +110,19 @@ public static class ServerBuilder
         services.AddSingleton(options);
         services.TryAddDiagnostics();
 
+        // Lets the same executable run under the Service Control Manager as well as from a terminal.
+        //
+        // Deliberately additive: this is inert unless the process was actually started as a service, so
+        // `WinDiag.Mcp.exe --http ...` in a console and the stdio relay behave exactly as before. What
+        // it changes when the SCM IS the parent is the three things that would otherwise break -- the
+        // lifetime waits on the service stop signal instead of Ctrl-C, the content root becomes the
+        // executable's directory instead of System32, and logging goes to the event log, without which a
+        // service that fails to start is invisible.
+        //
+        // Registered here rather than in Program.cs so neither transport can be given it and the other
+        // forgotten, which is the same reason the tools are registered here.
+        services.AddWindowsService();
+
         // Shared by the gate below and by SelfUpdater, so the update waits on the same count the
         // filter maintains. Constructed here rather than resolved, because a request filter closure has
         // no service provider; a fresh instance per call keeps tests isolated from each other.

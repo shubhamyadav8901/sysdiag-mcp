@@ -424,6 +424,46 @@ WinDiag.Mcp.exe --http http://10.0.0.5:7777
 
 Omit `WINDIAG_TOKEN` and the server generates one and prints it to stderr; it changes on restart.
 
+### Running it as a service instead
+
+Everything above starts the server by hand, which is how the fleet has always run and still works
+unchanged. The same executable can also run under the Service Control Manager, which buys one thing
+worth having: **`service_control` can then restart a target remotely**, so a server that dies, or one
+you deliberately stop, no longer needs somebody at that machine's console. That was the single
+recurring cost of the by-hand model.
+
+```
+sc create windiagsvc binPath= "\"C:\WinDiag\WinDiag.Mcp.exe\" --http http://10.0.0.5:7777" ^
+   start= auto obj= LocalSystem DisplayName= "windiag"
+```
+
+**Put the token in the service's own environment, not a machine-wide variable.** A service has no
+console to inherit `WINDIAG_TOKEN` from, and the obvious fix is the wrong one: machine environment
+variables are readable by *every local user*, and with `run_command` or `update_self` enabled that
+token is code execution as SYSTEM. The per-service key is ACL'd to SYSTEM and Administrators:
+
+```powershell
+New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc `
+  -Name Environment -PropertyType MultiString -Force -Value @(
+    'WINDIAG_TOKEN=<paste a long random value>',
+    'WINDIAG_ARTIFACT_DIR=C:\WinDiagArtifacts')
+```
+
+Two things change when it runs as a service, both measured rather than assumed:
+
+- **Session 0 is fine.** Procmon captures normally with no interactive desktop — verified on a 32-bit
+  and a 64-bit VM and again from a real service (67,423 events). `handle.exe` and the rest are
+  unaffected. If you had assumed `capture_activity` needs a desktop, it does not.
+- **`%TEMP%` moves** to `C:\Windows\SystemTemp` for SYSTEM, so dumps and traces land somewhere else
+  with different ACLs. Pin `WINDIAG_ARTIFACT_DIR` as above rather than discovering that later.
+
+Note `obj= LocalSystem` means the server presents as the **machine account** on the network
+(`DOMAIN\HOST$`), which on a domain may carry permissions the interactive account does not. Use a
+dedicated account if that matters.
+
+Nothing about the console path changes: `AddWindowsService()` is inert unless the SCM started the
+process, and a test asserts it installs no service lifetime when running interactively.
+
 **4. Scope the firewall to your machine** — not to the subnet:
 
 ```

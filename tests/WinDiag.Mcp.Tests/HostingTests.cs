@@ -1,6 +1,9 @@
 using System.Collections;
 using System.Text;
 using WinDiag.Mcp.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Server;
 using WinDiag.Mcp.Hosting;
 
 namespace WinDiag.Mcp.Tests;
@@ -213,5 +216,54 @@ public sealed class OptionsRedactionTests
         var options = WinDiagOptions.FromEnvironment(new Hashtable()) with { HttpBind = "http://10.0.0.5:7777" };
 
         Assert.Contains("httpBind=http://10.0.0.5:7777", options.Describe());
+    }
+}
+
+/// <summary>
+/// Running under the Service Control Manager is additive, never a change to running from a terminal.
+/// </summary>
+/// <remarks>
+/// windiag exists to be started by hand on a target, and the whole fleet is driven that way today.
+/// Service support was added so a target could be restarted remotely rather than needing someone at
+/// its console -- but the console and stdio paths had to keep behaving exactly as before, because a
+/// regression there breaks every existing deployment at once and would only show up on a target.
+/// </remarks>
+public sealed class WindowsServiceHostingTests
+{
+    private static ServiceCollection Configured()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders());
+        ServerBuilder.ConfigureServices(services, WinDiagOptions.FromEnvironment(new Hashtable()));
+        return services;
+    }
+
+    [Fact]
+    public void Does_not_take_over_the_lifetime_when_nobody_started_us_as_a_service()
+    {
+        // AddWindowsService is guarded on WindowsServiceHelpers.IsWindowsService(), so interactively it
+        // must add no service lifetime at all. If it ever did, Ctrl-C would stop working and the process
+        // would sit waiting for a stop signal from a Service Control Manager that never sent one -- a
+        // server that looks started and answers nothing.
+        var lifetimes = Configured()
+            .Where(d => d.ServiceType.Name == "IHostLifetime")
+            .Select(d => d.ImplementationType?.Name ?? d.ImplementationInstance?.GetType().Name)
+            .ToArray();
+
+        Assert.DoesNotContain("WindowsServiceLifetime", lifetimes);
+    }
+
+    [Fact]
+    public void Still_registers_the_whole_tool_surface_alongside_service_support()
+    {
+        // The registration order matters only in that nothing may be displaced: service support is a
+        // hosting concern and must not disturb the MCP graph it sits next to.
+        using var provider = Configured().BuildServiceProvider();
+
+        var tools = provider.GetServices<McpServerTool>().Select(t => t.ProtocolTool.Name).ToArray();
+
+        Assert.Contains("who_locks_path", tools);
+        Assert.Contains("capture_activity", tools);
+        Assert.NotNull(provider.GetService<ToolActivity>());
     }
 }
