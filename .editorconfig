@@ -1,0 +1,47 @@
+# Editor settings for windiag. The build runs with -warnaserror, so anything here that maps to a
+# compiler or analyzer diagnostic is enforced rather than advisory.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,csproj,props,targets,sln}]
+indent_size = 4
+
+[*.{json,yml,yaml,md}]
+indent_size = 2
+
+# Markdown: two trailing spaces are a line break, so do not strip them.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ps1,psm1,cmd,bat}]
+indent_size = 4
+
+[*.cs]
+max_line_length = 110
+
+# File-scoped namespaces, as used throughout src/.
+csharp_style_namespace_declarations = file_scoped:warning
+
+# var where the type is already obvious from the right-hand side, explicit where it is not.
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+dotnet_sort_system_directives_first = true
+csharp_using_directive_placement = outside_namespace:warning
+csharp_prefer_braces = true:warning
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+
+dotnet_naming_rule.private_fields_with_underscore.severity = suggestion
+dotnet_naming_rule.private_fields_with_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_with_underscore.style = underscore_prefix
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_prefix.required_prefix = _
+dotnet_naming_style.underscore_prefix.capitalization = camel_case

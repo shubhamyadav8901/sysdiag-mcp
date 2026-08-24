@@ -1,0 +1,61 @@
+name: Bug report
+description: A tool answered wrongly, refused when it should not have, or failed
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most valuable bugs here are the quiet ones — a tool that answered confidently and was
+        wrong. If that is what you have, say what you expected to be true on that machine and how
+        you know.
+
+        Not for security problems: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: From the tag, or `git rev-parse --short HEAD` on the build the target is running.
+      placeholder: v1.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How were you talking to it
+      options:
+        - stdio (local)
+        - HTTP (target machine)
+        - through the relay (--relay)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What the tool returned
+      description: The call you made and the result, verbatim. Redact the token.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and why
+      description: >
+        If you believe the answer was wrong rather than absent, how do you know? A second tool that
+        disagreed, something you had just done to the machine, Process Explorer open beside it.
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Output of `capabilities`
+      description: >
+        This is usually the fastest explanation for a surprisingly empty result — it reports which
+        tools can answer completely on that machine and why any cannot.
+      render: text
+  - type: input
+    id: target
+    attributes:
+      label: Target OS and bitness
+      description: From `system_overview`. Several answers differ by bitness, and the ones that differ silently are the interesting ones.
+      placeholder: Windows 10.0.19045, X86, elevated

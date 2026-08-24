@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        # Both, always. A 32-bit build on 64-bit Windows starts happily and then answers wrongly --
+        # handle.exe reports "No matching handles found." for everything -- so shipping only one
+        # architecture is how a target ends up quietly broken.
+        rid: [win-x64, win-x86]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build and test
+        run: |
+          dotnet build -warnaserror
+          dotnet test tests/WinDiag.Mcp.Tests --no-build
+
+      # Self-contained and single-file: a target is a machine with no .NET SDK and often no way to
+      # install one. Compression roughly halves the payload for a slow link to a lab VM.
+      - name: Publish ${{ matrix.rid }}
+        run: >
+          dotnet publish src/WinDiag.Mcp
+          -c Release -r ${{ matrix.rid }} --self-contained
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o artifacts/${{ matrix.rid }}
+
+      # The hash is the point. A copy of a build reached a lab VM at exactly the right size and was
+      # corrupt, twice; update_self refuses anything whose hash the caller did not state, so the
+      # release has to publish the hash the caller is meant to state.
+      - name: Hash
+        shell: pwsh
+        run: |
+          $exe = "artifacts/${{ matrix.rid }}/WinDiag.Mcp.exe"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash
+          "$sha  WinDiag.Mcp.exe" | Set-Content "artifacts/${{ matrix.rid }}/SHA256.txt"
+          Write-Host "${{ matrix.rid }} $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windiag-${{ matrix.rid }}
+          path: |
+            artifacts/${{ matrix.rid }}/WinDiag.Mcp.exe
+            artifacts/${{ matrix.rid }}/SHA256.txt

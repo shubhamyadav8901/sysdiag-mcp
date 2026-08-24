@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # windows-latest is not a preference: the target framework is net9.0-windows and the code calls
+    # Restart Manager, ServiceController, EventLogReader and WinVerifyTrust directly.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      # -warnaserror on purpose: a warning here is usually a nullability or platform-compatibility
+      # complaint, and both of those turn into wrong answers on a target rather than a crash.
+      - name: Build
+        run: dotnet build --no-restore -warnaserror
+
+      # Only the offline suite. tests/WinDiag.Mcp.OnTarget needs a real machine, administrator
+      # rights and a kernel driver, so it cannot run here -- see tools/verify-on-target.ps1.
+      - name: Test
+        run: dotnet test tests/WinDiag.Mcp.Tests --no-build --verbosity normal

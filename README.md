@@ -6,7 +6,18 @@ locked, what is the machine actually doing, why is this access denied, what is s
 It complements `mcp-windbg`, which owns post-mortem dump analysis. A debugger sees inside one
 process; this server sees the machine.
 
+**[Changelog](CHANGELOG.md)** · **[Contributing](CONTRIBUTING.md)** · **[Security](SECURITY.md)** ·
+**[Code of conduct](CODE_OF_CONDUCT.md)**
+
+> **Licence:** not yet declared. Until a `LICENSE` file lands, treat this as
+> © 2026 Shubham Yadav, all rights reserved — no permission to use, copy or redistribute is granted by its
+> presence here.
+
 ## Status
+
+**Current release: `v1.3.0`.** Versions before `v1.0.0` were tagged retroactively at the commits
+that shipped something; `v1.0.0` is the first release in which every tool could actually be called
+from an MCP client. See the [changelog](CHANGELOG.md) for what each one changed.
 
 **The build order is complete.** Twenty tools plus an opt-in twenty-first (`update_self`), both
 transports (stdio locally, authenticated Streamable HTTP for running on a target), dump capture,

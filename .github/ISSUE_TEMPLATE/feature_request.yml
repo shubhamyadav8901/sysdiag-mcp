@@ -1,0 +1,28 @@
+name: Tool or feature request
+description: A question about a live machine that windiag cannot answer yet
+labels: [enhancement]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What question about a machine can you not answer today?
+      description: >
+        Phrase it as the question, not the implementation — "which process is holding this port
+        open", not "wrap netstat". The tools here are named after the questions they answer.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you answer it today?
+      description: The manual steps, the tool you RDP in to run, or that you cannot.
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: How could the answer be wrong without looking wrong?
+      description: >
+        Optional, but the most useful box on this form. Most of the hard parts of this project are
+        cases where a tool returns a clean, empty, plausible answer that is not true — the wrong
+        Sysinternals build, a filtered token, a capture that missed the window.
