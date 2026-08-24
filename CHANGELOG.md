@@ -13,6 +13,14 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+### Fixed
+
+- **`update_self` on a service-registered target no longer desynchronises the SCM.** The restart
+  helper relaunched the executable, which starts a process the Service Control Manager knows nothing
+  about: the service reads as Stopped while something holds its port, and `service_control start`
+  then fails because the port is taken. It now issues `sc start` when the server is running as a
+  service, and still launches the executable when it was started by hand.
+
 ### Added
 
 - Project metadata: changelog, contributing guide, security policy, code of conduct, editor

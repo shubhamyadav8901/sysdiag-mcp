@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Management;
 using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Signatures;
@@ -75,6 +77,66 @@ public sealed class SelfUpdater : ISelfUpdater
     /// </remarks>
     internal static string NormalizeHash(string expectedSha256) =>
         expectedSha256.Trim().Replace("-", string.Empty);
+
+    /// <summary>
+    /// The command the helper uses to bring the server back after the swap.
+    /// </summary>
+    /// <param name="serviceName">This process's service name, or null when it was started by hand.</param>
+    /// <remarks>
+    /// <para>A server registered with the Service Control Manager cannot be restarted by launching its
+    /// executable. That starts a process the SCM knows nothing about: the service reads as Stopped while
+    /// something is listening on its port, <c>service_control start</c> then fails because the port is
+    /// taken, and the machine is in a state nobody looking at it would predict. Exactly the kind of
+    /// confident-but-wrong picture this project exists to avoid.</para>
+    /// <para><c>sc start</c> is tolerant of the service already running -- if the SCM's own recovery
+    /// action restarted it first, this is a harmless no-op rather than a race.</para>
+    /// <para>Separated from the script builder so both branches can be tested, since neither can be
+    /// exercised by running the suite: one needs a registered service and the other relaunches the
+    /// test host.</para>
+    /// </remarks>
+    internal static string RelaunchCommand(string? serviceName, string live, string arguments) =>
+        string.IsNullOrWhiteSpace(serviceName)
+            ? $"start \"windiag\" \"{live}\" {arguments}"
+            : $"sc start \"{serviceName}\"";
+
+    /// <summary>
+    /// This process's own service name, or null when it is not running as one.
+    /// </summary>
+    /// <remarks>
+    /// Asked for by process id rather than configured, so nothing has to be kept in step with the
+    /// registration -- and it must be asked NOW, while the process still exists: by the time the helper
+    /// runs, the lookup would find nothing. A failure here is deliberately non-fatal and falls back to
+    /// launching the executable, which is the behaviour every by-hand deployment already has.
+    /// </remarks>
+    private string? OwnServiceName()
+    {
+        if (!WindowsServiceHelpers.IsWindowsService())
+        {
+            return null;
+        }
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT Name FROM Win32_Service WHERE ProcessId = {Environment.ProcessId}");
+
+            using var results = searcher.Get();
+            foreach (var row in results)
+            {
+                using (row)
+                {
+                    return row["Name"] as string;
+                }
+            }
+        }
+        catch (ManagementException ex)
+        {
+            _logger.LogWarning(
+                ex, "running as a service but could not determine the service name; will relaunch the executable");
+        }
+
+        return null;
+    }
 
     public SelfUpdateResult Update(
         string expectedSha256, string stagedFileName, bool force, CancellationToken cancellationToken)
@@ -291,6 +353,7 @@ public sealed class SelfUpdater : ISelfUpdater
     {
         var helper = Path.Combine(_options.ArtifactDirectory, "self-update.cmd");
         var arguments = string.Join(' ', Environment.GetCommandLineArgs().Skip(1).Select(Quote));
+        var relaunch = RelaunchCommand(OwnServiceName(), live, arguments);
 
         var script = new StringBuilder()
             .AppendLine("@echo off")
@@ -322,17 +385,17 @@ public sealed class SelfUpdater : ISelfUpdater
             // untouched at this point, so put it back up -- otherwise a refused update costs a trip to
             // the console, which is the exact thing this mechanism exists to avoid.
             .AppendLine($"  >>\"{log}\" echo [%time%] restarting the existing build instead")
-            .AppendLine($"  start \"windiag\" \"{live}\" {arguments}")
+            .AppendLine($"  {relaunch}")
             .AppendLine("  exit /b 2")
             .AppendLine(")")
             .AppendLine($"move /y \"{staged}\" \"{live}\" >nul")
             .AppendLine("if errorlevel 1 (")
             .AppendLine($"  >>\"{log}\" echo [%time%] ABORT move failed; restarting the existing build")
-            .AppendLine($"  start \"windiag\" \"{live}\" {arguments}")
+            .AppendLine($"  {relaunch}")
             .AppendLine("  exit /b 3")
             .AppendLine(")")
             .AppendLine($">>\"{log}\" echo [%time%] swapped; relaunching")
-            .AppendLine($"start \"windiag\" \"{live}\" {arguments}")
+            .AppendLine($"{relaunch}")
             .AppendLine($">>\"{log}\" echo [%time%] done")
             .ToString();
 

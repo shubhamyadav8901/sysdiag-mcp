@@ -105,6 +105,43 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     }
 
     [Fact]
+    public void A_registered_service_is_restarted_through_the_scm_not_by_launching_the_exe()
+    {
+        // Launching the executable would start a process the SCM knows nothing about: the service reads
+        // as Stopped while something holds its port, and service_control start then fails because the
+        // port is taken. A machine in a state nobody inspecting it would predict -- and since the whole
+        // reason to register a service is remote restart, that failure would land precisely when the
+        // console visit it was meant to avoid is hardest to make.
+        var command = SelfUpdater.RelaunchCommand("windiag", @"C:\WinDiag\WinDiag.Mcp.exe", "--http http://x:4024");
+
+        Assert.Equal("sc start \"windiag\"", command);
+        Assert.DoesNotContain("WinDiag.Mcp.exe", command, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_server_started_by_hand_is_still_restarted_by_launching_the_exe()
+    {
+        // The path every existing deployment uses. Both arguments and the quoted path have to survive,
+        // or the relaunched server comes back without its bind address and listens nowhere.
+        var command = SelfUpdater.RelaunchCommand(
+            null, @"C:\WinDiag\WinDiag.Mcp.exe", "--http http://192.168.32.93:4024");
+
+        Assert.Equal(
+            "start \"windiag\" \"C:\\WinDiag\\WinDiag.Mcp.exe\" --http http://192.168.32.93:4024", command);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_unknown_service_name_falls_back_to_launching_the_exe(string serviceName)
+    {
+        // The name is looked up by process id and that lookup can fail. Falling back to the by-hand
+        // behaviour keeps a server running; emitting `sc start ""` would leave the machine with none.
+        Assert.StartsWith("start ", SelfUpdater.RelaunchCommand(serviceName, @"C:\w\x.exe", "--http h"),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_refused_update_never_stops_the_server_accepting_calls()
     {
         // The server now turns callers away while an update is pending, so it can reach idle before it
