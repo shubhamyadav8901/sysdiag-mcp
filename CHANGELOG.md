@@ -13,6 +13,18 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+### Added
+
+- **The executable installs itself as a service.** `--install-service`, `--uninstall-service` and
+  `--service-status`, asking Windows for elevation when it does not already have it. It configures
+  what is easy to lose by hand: the token generated and written to the service's own registry key
+  rather than anywhere a local user can read, SCM restart-on-failure, the artifact directory pinned
+  so captures do not silently move to `C:\Windows\SystemTemp`, the grants carried across so a
+  re-registered server does not come back with fewer tools, and a firewall rule scoped to one
+  address and removed again on uninstall.
+- `--service-status` reports whether this machine runs windiag by hand or as a service, and how it
+  is configured. The two look identical from outside and behave differently on every restart.
+
 ### Fixed
 
 - **`update_self` on a service-registered target no longer desynchronises the SCM.** The restart

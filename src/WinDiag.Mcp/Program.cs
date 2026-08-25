@@ -20,6 +20,55 @@ if (args.Any(a => a is "--relay"))
     return await WinDiag.Mcp.Relay.RelayServer.RunAsync(defaultPort: 4024).ConfigureAwait(false);
 }
 
+// Service management: sets this machine up from the one file that is already on it, and never starts
+// a server. Handled before the options below because these switches configure the environment the
+// service will get rather than reading the one this process happens to have -- an install run from a
+// terminal with no WINDIAG_TOKEN set must still be able to register a service that has one.
+if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--service-status"))
+{
+    try
+    {
+        // The SCM refuses an unelevated caller, so ask Windows rather than failing at the first
+        // sc.exe call with an access-denied nobody can act on.
+        if (!ServiceInstaller.IsElevated())
+        {
+            Console.Error.WriteLine("[windiag] this needs administrator rights; requesting elevation...");
+            return ServiceInstaller.RelaunchElevated(args);
+        }
+
+        if (args.Any(a => a is "--service-status"))
+        {
+            return ServiceInstaller.Status(ServiceName(args));
+        }
+
+        if (args.Any(a => a is "--uninstall-service"))
+        {
+            return ServiceInstaller.Uninstall(
+                new ServiceInstallOptions { Name = ServiceName(args), Bind = "http://unused", Token = "unused" });
+        }
+
+        return ServiceInstaller.Install(ServiceInstallOptions.Parse(args));
+    }
+    catch (ConfigurationException ex)
+    {
+        Console.Error.WriteLine($"[windiag] {ex.Message}");
+        return 2;
+    }
+}
+
+static string ServiceName(string[] arguments)
+{
+    for (var i = 0; i < arguments.Length - 1; i++)
+    {
+        if (string.Equals(arguments[i], "--service-name", StringComparison.OrdinalIgnoreCase))
+        {
+            return arguments[i + 1];
+        }
+    }
+
+    return "windiag";
+}
+
 WinDiagOptions options;
 string? bind;
 try

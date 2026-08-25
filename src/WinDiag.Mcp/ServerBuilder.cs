@@ -72,6 +72,33 @@ public static class ServerBuilder
           WinDiag.Mcp --http <url>        Serve MCP over HTTP, e.g. --http http://10.0.0.5:7777
           WinDiag.Mcp --help              Show this text.
 
+        Running as a Windows service (prompts for elevation if it does not have it):
+          WinDiag.Mcp --install-service --http <url> [options]
+          WinDiag.Mcp --service-status [--service-name <name>]
+          WinDiag.Mcp --uninstall-service [--service-name <name>]
+
+          A service can be restarted remotely with service_control, which a server started by hand
+          cannot. Install options:
+
+          --service-name <name>       Default: windiag
+          --display-name <text>       What Services.msc shows. Default: the service name
+          --start auto|delayed|demand Default: auto
+          --account <spec>            LocalSystem (default), NetworkService, LocalService, or
+                                      DOMAIN\user with --password
+          --password <value>          Required for an account that is not built in
+          --token <value>             Default: a new 256-bit token, printed once on success
+          --artifacts <dir>           Pin WINDIAG_ARTIFACT_DIR. As SYSTEM, %TEMP% is
+                                      C:\Windows\SystemTemp, so captures and dumps move without it
+          --allow-self-update         Carry the grants across; a service registered without them
+          --allow-command-execution   comes back with fewer tools than the server it replaced
+          --read-only
+          --firewall-from <address>   Allow the bind port inbound from one address, removed on
+                                      uninstall. Scoped to an address, never a subnet
+          --no-restart-on-failure     Default is to let the SCM restart it if the process dies
+
+          The token is written to the service's own registry key, which only SYSTEM and
+          Administrators can read -- never to a machine-wide variable, which every local user can.
+
         Environment:
           WINDIAG_READ_ONLY                       1/true to drop all state-changing tools (default: false)
           WINDIAG_ALLOW_COMMAND_EXECUTION         1/true to register run_command, an arbitrary shell

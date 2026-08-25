@@ -443,6 +443,35 @@ worth having: **`service_control` can then restart a target remotely**, so a ser
 you deliberately stop, no longer needs somebody at that machine's console. That was the single
 recurring cost of the by-hand model.
 
+The executable installs itself, so a target needs nothing copied to it but the one file it already
+has. Run it from any shell — it asks Windows for elevation if it does not have it:
+
+```
+WinDiag.Mcp.exe --install-service --http http://10.0.0.5:7777 ^
+  --start auto --allow-self-update --firewall-from 10.0.0.9 ^
+  --artifacts C:\WinDiagArtifacts
+```
+
+That registers the service, configures the SCM to restart it if the process dies, generates a
+256-bit token and stores it where only SYSTEM and Administrators can read it, opens the port to one
+address, and starts it. The token is printed once, because it exists nowhere else a human can read.
+
+```
+WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?
+WinDiag.Mcp.exe --uninstall-service   # removes the service, its token and its firewall rule
+```
+
+`--service-status` answers a question the machine cannot otherwise be asked in one step: a server
+started by hand and one running as a service look identical from outside and behave differently on
+every restart.
+
+**Carry the grants across.** A by-hand server running with `--allow-self-update` re-registered
+without it comes back with fewer tools than it went away with, and nothing announces that except a
+`capabilities` call nobody makes. `--service-status` lists what was configured.
+
+Doing it by hand instead is a few more commands, and three details are easy to lose — the token's
+location, the artifact directory, and the grants:
+
 ```
 sc create windiagsvc binPath= "\"C:\WinDiag\WinDiag.Mcp.exe\" --http http://10.0.0.5:7777" ^
    start= auto obj= LocalSystem DisplayName= "windiag"
