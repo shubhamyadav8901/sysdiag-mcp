@@ -243,7 +243,16 @@ public sealed record ServiceInstallOptions
     /// </remarks>
     public IReadOnlyList<string> EnvironmentBlock()
     {
-        var values = new List<string> { $"WINDIAG_TOKEN={Token}" };
+        // The service's own name, so update_self can restart it through the SCM rather than by
+        // launching the executable -- which would start a process the SCM knows nothing about. The
+        // server can also discover this by querying WMI for its own process id, but that is the
+        // fallback for a hand-registered service: on a real one the query threw instead of answering,
+        // and a restart path should not depend on the less reliable of two ways to learn the same fact.
+        var values = new List<string>
+        {
+            $"WINDIAG_TOKEN={Token}",
+            $"WINDIAG_SERVICE_NAME={Name}"
+        };
 
         if (!string.IsNullOrWhiteSpace(ArtifactDirectory))
         {

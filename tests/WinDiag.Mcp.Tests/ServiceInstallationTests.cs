@@ -122,8 +122,8 @@ public sealed class ServiceInstallationTests
         // reports it except a capabilities call nobody makes.
         var bare = Parse("--http", "http://x:1").EnvironmentBlock();
 
-        Assert.Single(bare);
-        Assert.StartsWith("WINDIAG_TOKEN=", bare[0], StringComparison.Ordinal);
+        Assert.Contains(bare, v => v.StartsWith("WINDIAG_TOKEN=", StringComparison.Ordinal));
+        Assert.DoesNotContain(bare, v => v.StartsWith("WINDIAG_ALLOW_", StringComparison.Ordinal));
 
         var granted = Parse(
             "--http", "http://x:1",
@@ -165,6 +165,19 @@ public sealed class ServiceInstallationTests
         // Named after the service so uninstall removes exactly what install added, and nothing else.
         Assert.Contains($"name={options.FirewallRuleName}", options.FirewallDeleteArguments());
         Assert.Equal("windiag-windiag", options.FirewallRuleName);
+    }
+
+    [Fact]
+    public void Records_the_service_name_so_update_self_can_restart_through_the_scm()
+    {
+        // Without this, update_self falls back to querying WMI for its own process id -- which on a
+        // real service threw rather than answering, and a failed lookup means the helper relaunches the
+        // EXECUTABLE. That starts a process the SCM knows nothing about: service reads Stopped, port
+        // held, service_control start then fails. The restart path should not depend on the less
+        // reliable of two ways to learn the same fact.
+        var block = Parse("--http", "http://x:1", "--service-name", "windiag-lab").EnvironmentBlock();
+
+        Assert.Contains("WINDIAG_SERVICE_NAME=windiag-lab", block);
     }
 
     [Fact]

@@ -115,6 +115,16 @@ public sealed class SelfUpdater : ISelfUpdater
             return null;
         }
 
+        // Asked of the environment first, because --install-service puts it there and the answer is
+        // then exact and free. The WMI query below is the fallback for a service somebody registered by
+        // hand, and it is genuinely a fallback: on a real service it threw rather than answering, which
+        // is how this came to be written the other way round.
+        var configured = Environment.GetEnvironmentVariable("WINDIAG_SERVICE_NAME");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
         try
         {
             using var searcher = new ManagementObjectSearcher(
@@ -129,10 +139,18 @@ public sealed class SelfUpdater : ISelfUpdater
                 }
             }
         }
-        catch (ManagementException ex)
+        catch (Exception ex)
         {
+            // Every exception, deliberately. This lookup only decides HOW to restart; failing it must
+            // never fail the update. Catching just ManagementException was not enough -- on a real
+            // service the query threw something else and took update_self down with it, turning a
+            // best-effort enrichment into the thing that broke the critical path. The fallback is the
+            // behaviour every by-hand deployment already has.
             _logger.LogWarning(
-                ex, "running as a service but could not determine the service name; will relaunch the executable");
+                ex,
+                "running as a service but could not determine the service name ({Type}); will relaunch "
+                + "the executable instead",
+                ex.GetType().Name);
         }
 
         return null;
@@ -219,14 +237,26 @@ public sealed class SelfUpdater : ISelfUpdater
             Directory.CreateDirectory(_options.ArtifactDirectory);
             LaunchHelper(live, staged, inspection.Sha256, log);
         }
-        catch
+        catch (Exception ex)
         {
             // Nothing was launched, so nothing is shutting down -- give the claim back. Leaving it set
             // would be far worse than the failure itself: every later update would be told one is
             // already in progress, which would be a lie, and the only way out of it would be the trip
             // to the console this whole tool exists to avoid.
             Interlocked.Exchange(ref _committed, 0);
-            throw;
+
+            if (ex is SelfUpdateRejectedException)
+            {
+                throw;
+            }
+
+            // Anything else surfaces as "An error occurred invoking 'update_self'." -- the exact
+            // unreadable refusal this project added error translation to prevent, and it landed on the
+            // most dangerous tool here. Naming the type costs nothing and is the difference between a
+            // diagnosable failure and guesswork, which is what the first one cost.
+            throw new SelfUpdateRejectedException(
+                $"The update could not be started: {ex.GetType().Name}: {ex.Message} Nothing has been "
+                + "changed and this server is still running the build it was.");
         }
 
         // Before the reply goes out, and that ordering is the contract. The refusal callers get is what

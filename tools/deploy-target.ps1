@@ -736,6 +736,27 @@ if (-not $tools) {
           "%TEMP%\windiag\self-update.log."
 }
 
+# The server answering proves a server is up, NOT that it is the one we just staged. The helper aborts
+# and restarts the EXISTING build whenever the swap cannot happen -- most often because another process
+# holds the executable open, which is exactly what a second windiag on the same machine does. That path
+# leaves the old binary running and everything else looking like a clean deploy, so the claim below has
+# to be checked against the file rather than inferred from a reply.
+if (-not $SkipServer) {
+    $live = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token `
+        -Tool file_signatures -Arguments @{ paths = @((Join-Path $RemotePath 'WinDiag.Mcp.exe')) } -Raw |
+        ConvertFrom-Json
+
+    $installed = $live.files[0].sha256
+    if ($installed -ne $serverHash) {
+        throw "The server came back, but it is NOT the build that was just staged: expected " +
+              "$serverHash, found $installed. The swap was aborted -- read the helper log on the " +
+              "target at %TEMP%\windiag\self-update.log. The usual cause is another process holding " +
+              "WinDiag.Mcp.exe open, such as a second windiag running as a service from the same folder."
+    }
+
+    Write-Note "verified the running build is $($installed.Substring(0, 16))"
+}
+
 Write-Step "$Target is running commit $commit"
 
 foreach ($capability in $tools.tools | Where-Object { $_.status -ne 'Available' }) {

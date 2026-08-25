@@ -56,7 +56,22 @@ public sealed class SelfUpdateTools
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedSha256);
 
-        var result = _updater.Update(expectedSha256, stagedFileName, force, cancellationToken);
+        SelfUpdateResult result;
+        try
+        {
+            result = _updater.Update(expectedSha256, stagedFileName, force, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not SelfUpdateRejectedException and not ArgumentException)
+        {
+            // The whole call, not just part of it. Anything unexpected here would otherwise reach the
+            // caller as "An error occurred invoking 'update_self'." -- and this is the tool where that
+            // is least affordable, because the caller cannot tell whether the binary was replaced, the
+            // server is about to exit, or nothing happened at all. Naming the type turns an afternoon
+            // of bisecting into one line.
+            throw new SelfUpdateRejectedException(
+                $"update_self failed unexpectedly: {ex.GetType().FullName}: {ex.Message} If the server "
+                + "is still answering, nothing was installed.");
+        }
 
         return new UpdateSelfResult(Render(result), result);
     }

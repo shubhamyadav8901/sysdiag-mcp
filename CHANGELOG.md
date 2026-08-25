@@ -25,6 +25,15 @@ release fixed something that had been silently wrong, it says what the wrong ans
 - `--service-status` reports whether this machine runs windiag by hand or as a service, and how it
   is configured. The two look identical from outside and behave differently on every restart.
 
+### Known limitations
+
+- **`update_self` has not been proven to work on a server running as a service.** Install, uninstall,
+  status, and every tool through a service are verified on a target; `update_self` against one fails
+  with an exception that has not yet been identified, and the helper never reaches the point of
+  writing its script. It is safe rather than destructive -- the commit claim is released, the binary
+  is untouched and the service stays running -- but it means a service-registered target must be
+  updated with `sc stop`, replace the file, `sc start` until this is resolved.
+
 ### Fixed
 
 - **`update_self` on a service-registered target no longer desynchronises the SCM.** The restart
