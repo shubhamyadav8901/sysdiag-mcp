@@ -18,6 +18,11 @@ namespace WinDiag.Mcp.Hosting;
 /// the service comes back with fewer tools than it went away with.</para>
 /// <para>The pure parts -- parsing and argument construction -- live in
 /// <see cref="ServiceInstallOptions"/> and are tested. This file runs the commands.</para>
+/// <para>One thing install adds that uninstall deliberately does not remove: the
+/// <see cref="EventLogSink.SourceName"/> event log source. It is machine-global and shared by every
+/// windiag on the box regardless of <c>--service-name</c>, so deleting it with one service would
+/// silence any other instance still running. It is a one-time administrative registration that costs
+/// a single registry key, and leaving it is the lesser of the two surprises.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public static class ServiceInstaller
@@ -63,6 +68,18 @@ public static class ServiceInstaller
             }
 
             elevated.WaitForExit();
+
+            // The child ran in its own console window, which closed the instant it exited, taking every
+            // line it wrote with it. Without this the unelevated caller -- the common path, since that
+            // is what triggers elevation at all -- sees "requesting elevation...", a window flash, and
+            // an exit code, which is less than they had before any of this reported errors at all.
+            if (elevated.ExitCode != 0)
+            {
+                Console.Error.WriteLine(
+                    $"[windiag] the elevated run exited {elevated.ExitCode} and its window has closed. "
+                    + "Re-run this from an already-elevated terminal to see what it said.");
+            }
+
             return elevated.ExitCode;
         }
         catch (System.ComponentModel.Win32Exception)
@@ -89,6 +106,16 @@ public static class ServiceInstaller
                 $"[windiag] a service named '{options.Name}' already exists. Remove it first with "
                 + $"--uninstall-service, or install under a different --service-name.");
             return 2;
+        }
+
+        // Before the service exists, because this is the moment the rights are certainly there. A
+        // service has no stderr, so the event log is its only sink -- and an unregistered source makes
+        // writing to it throw, which once cost a working update_self on a running service.
+        if (!EventLogSink.TryRegisterSource())
+        {
+            Console.Error.WriteLine(
+                $"[windiag] could not register the '{EventLogSink.SourceName}' event log source; the "
+                + "service will run without event log output. Tools are unaffected.");
         }
 
         Run("sc.exe", options.CreateArguments(exe), "create the service");

@@ -34,3 +34,25 @@ jobs:
       # rights and a kernel driver, so it cannot run here -- see tools/verify-on-target.ps1.
       - name: Test
         run: dotnet test tests/WinDiag.Mcp.Tests --no-build --verbosity normal
+
+      # Guards a failure the unit suite structurally cannot see. EventLog reaches
+      # System.Threading.AccessControl only through a named-mutex path the compiler never records, so
+      # it is absent from the publish set unless referenced outright -- while the test host, which is
+      # not published, always has it. A shipped build therefore threw FileNotFoundException on the
+      # first event log write while every test stayed green: a service that served every tool until
+      # update_self logged one warning mid-update and died.
+      #
+      # Asserted against the publish *set* because that is what the single-file bundler embeds, so
+      # checking here covers the bundle without unpacking it.
+      - name: Publish carries the assemblies reached only by reflection
+        shell: pwsh
+        run: |
+          dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x64 `
+            --self-contained -p:PublishSingleFile=false -o artifacts/ci-publish-check
+          $required = 'System.Threading.AccessControl.dll', 'System.Diagnostics.EventLog.dll'
+          $missing = $required | Where-Object { -not (Test-Path "artifacts/ci-publish-check/$_") }
+          if ($missing) {
+            throw "Publish output is missing: $($missing -join ', '). Add a PackageReference; a " +
+                  "transitive dependency alone does not survive to the published set."
+          }
+          Write-Host "publish set carries: $($required -join ', ')"

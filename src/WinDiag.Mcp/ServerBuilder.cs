@@ -150,6 +150,12 @@ public static class ServerBuilder
         // forgotten, which is the same reason the tools are registered here.
         services.AddWindowsService();
 
+        // Immediately after, and not optional. AddWindowsService redirects logging to the event log,
+        // which throws if its source is not registered -- and that turned a log line nobody asked for
+        // into a failed update_self on a real service. A diagnostic channel must never be able to break
+        // the thing it reports on.
+        EventLogSink.MakeSafe(services);
+
         // Shared by the gate below and by SelfUpdater, so the update waits on the same count the
         // filter maintains. Constructed here rather than resolved, because a request filter closure has
         // no service provider; a fresh instance per call keeps tests isolated from each other.

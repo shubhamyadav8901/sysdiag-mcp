@@ -25,16 +25,37 @@ release fixed something that had been silently wrong, it says what the wrong ans
 - `--service-status` reports whether this machine runs windiag by hand or as a service, and how it
   is configured. The two look identical from outside and behave differently on every restart.
 
-### Known limitations
-
-- **`update_self` has not been proven to work on a server running as a service.** Install, uninstall,
-  status, and every tool through a service are verified on a target; `update_self` against one fails
-  with an exception that has not yet been identified, and the helper never reaches the point of
-  writing its script. It is safe rather than destructive -- the commit claim is released, the binary
-  is untouched and the service stays running -- but it means a service-registered target must be
-  updated with `sc stop`, replace the file, `sc start` until this is resolved.
-
 ### Fixed
+
+- **`update_self` works on a server running as a service.** It failed with
+  `AggregateException: An error occurred while writing to logger(s)`, and the cause was not in the
+  update path at all: running under the SCM there is no stderr, so logging goes to the Windows event
+  log, and writing there needs `System.Threading.AccessControl` -- which `EventLog` reaches only
+  through a named-mutex path no compiler records, so the published build did not carry it. What made
+  it look like an `update_self` bug is that the event log provider only logs at Warning and above, so
+  every Information line was filtered out and never attempted a write. The server started, served
+  every tool, and then died on the first Warning of its life -- the one noting that the staged build
+  is unsigned, emitted halfway through an update. The assembly is now referenced outright and CI
+  asserts it survives to the published set. A service-registered target updates like any other.
+- Registering the event log source cannot take the installer down with it. `--install-service`
+  caught the failures it predicted rather than all of them, so the missing assembly above surfaced as
+  an unhandled stack trace and no service at all. Service management now names the failure and points
+  at `--service-status`, instead of printing a trace. When it had to ask for elevation first, it also
+  says that the elevated run failed and took its console window with it -- previously that path
+  printed nothing but an exit code, because everything the elevated child wrote vanished with its
+  window.
+
+### Changed
+
+- A service whose event log source cannot be registered now starts with **no event log output at
+  all**, rather than with a logger that throws the first time something writes to it. Under the SCM
+  there is no stderr, so this means no server output at any level; `--install-service` says so when it
+  happens. Every tool still works, which is the point -- a diagnostic channel must not be able to
+  break the thing it is reporting on.
+- `--uninstall-service` deliberately leaves the `windiag` event log source registered. It is
+  machine-global and shared by every windiag on the box regardless of `--service-name`, so removing it
+  with one service would silence any other still running.
+
 
 - **`update_self` on a service-registered target no longer desynchronises the SCM.** The restart
   helper relaunched the executable, which starts a process the Service Control Manager knows nothing

@@ -3,6 +3,8 @@ using System.Text;
 using WinDiag.Mcp.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.EventLog;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Hosting;
 
@@ -265,5 +267,108 @@ public sealed class WindowsServiceHostingTests
         Assert.Contains("who_locks_path", tools);
         Assert.Contains("capture_activity", tools);
         Assert.NotNull(provider.GetService<ToolActivity>());
+    }
+}
+
+/// <summary>
+/// The event log must never be able to break the thing it is reporting on.
+/// </summary>
+/// <remarks>
+/// A service has no stderr, so logging is redirected to the Windows event log -- and writing there
+/// throws when the source is not registered. That turned a log line nobody asked for into a failed
+/// update_self on a running service, and it hid well: the provider's minimum level is Warning, so every
+/// Information line was filtered and never attempted a write. The server started, served every tool,
+/// and only died on the first Warning in its life, which happens to fire halfway through an update.
+/// </remarks>
+public sealed class EventLogSinkTests
+{
+    [Fact]
+    public void Pins_the_source_name_so_installer_and_server_cannot_drift()
+    {
+        // The installer registers this name and the server writes to it. Defaulting to the application
+        // name would let a rename separate them silently, which is the same failure again.
+        Assert.Equal("windiag", EventLogSink.SourceName);
+        Assert.Equal("Application", EventLogSink.LogName);
+    }
+
+    [Fact]
+    public void Does_nothing_interactively_because_the_provider_is_never_added()
+    {
+        // Run from a terminal, stderr is always writable and AddWindowsService adds no event log
+        // provider at all -- so this must not disturb the console logging that is there.
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders().AddConsole());
+
+        var before = services.Count;
+        EventLogSink.MakeSafe(services);
+
+        Assert.Equal(before, services.Count);
+
+        using var provider = services.BuildServiceProvider();
+        Assert.NotNull(provider.GetRequiredService<ILoggerFactory>().CreateLogger("x"));
+    }
+
+    [Fact]
+    public void Registering_the_source_swallows_a_failure_nobody_predicted()
+    {
+        // FileNotFoundException on purpose: it is outside every list a person would write down, and it
+        // is the one that actually happened -- System.Threading.AccessControl missing from the bundle,
+        // thrown from inside EventLog, escaping a catch that named only the plausible types and taking
+        // --install-service down with an unhandled stack trace.
+        //
+        // This asserts the return value rather than merely that nothing escaped. A no-throw assertion
+        // is unfalsifiable once the catch is broad, and calling the real registration would create an
+        // HKLM event source on whichever machine ran the suite elevated -- a test that mutates the
+        // developer's machine to prove nothing.
+        var registered = EventLogSink.TryRegisterSource(
+            () => throw new FileNotFoundException("System.Threading.AccessControl"));
+
+        Assert.False(registered);
+    }
+
+    [Fact]
+    public void A_source_that_cannot_be_registered_takes_the_sink_out_with_it()
+    {
+        // The branch the live target never exercised, because registration succeeded there. Without it
+        // a service keeps a logger that throws on first write, which is the original bug: every tool
+        // works until something logs a warning, and here that is update_self mid-update.
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders().AddEventLog());
+
+        var before = services.Count(Descriptor.IsEventLogProvider);
+        EventLogSink.MakeSafe(services, isWindowsService: true, tryRegister: () => false);
+        var after = services.Count(Descriptor.IsEventLogProvider);
+
+        // Asserted as a drop, not as "none remain". Matching on ImplementationType is a bet on a BCL
+        // detail; if AddEventLog ever registers through a factory the match finds nothing, and a bare
+        // "none remain" would pass on a collection where nothing was ever found to remove.
+        Assert.Equal(1, before);
+        Assert.Equal(0, after);
+    }
+
+    [Fact]
+    public void A_source_that_registers_keeps_the_sink_and_pins_the_name_it_writes_to()
+    {
+        // Proves the pinned name actually reaches EventLogSettings. Asserting the constant only proves
+        // the constant; what matters is that the name the installer registered and the name the
+        // provider writes under are the same string, and that is decided by Configure ordering.
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders().AddEventLog());
+
+        EventLogSink.MakeSafe(services, isWindowsService: true, tryRegister: () => true);
+
+        Assert.Equal(1, services.Count(Descriptor.IsEventLogProvider));
+
+        using var provider = services.BuildServiceProvider();
+        var settings = provider.GetRequiredService<IOptions<EventLogSettings>>().Value;
+
+        Assert.Equal(EventLogSink.SourceName, settings.SourceName);
+    }
+
+    private static class Descriptor
+    {
+        public static bool IsEventLogProvider(ServiceDescriptor descriptor) =>
+            descriptor.ServiceType == typeof(ILoggerProvider)
+            && descriptor.ImplementationType == typeof(EventLogLoggerProvider);
     }
 }

@@ -54,6 +54,25 @@ if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--servic
         Console.Error.WriteLine($"[windiag] {ex.Message}");
         return 2;
     }
+    catch (Exception ex)
+    {
+        // The installer is the one command whose audience is a person at a console who has not yet got
+        // a working server, so a raw unhandled stack trace is the least useful thing it can print. It
+        // printed one once -- a missing assembly deep inside EventLog -- and read as "the tool is
+        // broken" rather than "this step failed". Name the type, because whoever sees this is the only
+        // one who can report it.
+        Console.Error.WriteLine($"[windiag] service management failed: {ex.GetType().FullName}: {ex.Message}");
+
+        // Only install can leave a half-registered service behind, so only install gets told to clean
+        // one up. Printing that after a failed --service-status would be advice to uninstall a service
+        // because reading it went wrong.
+        Console.Error.WriteLine(args.Any(a => a is "--install-service")
+            ? "[windiag] run --service-status to see how far this got; a service that was created but "
+              + "not configured must be removed with --uninstall-service before retrying."
+            : "[windiag] nothing was changed by this command.");
+
+        return 4;
+    }
 }
 
 static string ServiceName(string[] arguments)
