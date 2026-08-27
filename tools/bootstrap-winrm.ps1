@@ -46,6 +46,15 @@ param(
     [string] $ArtifactPath = 'C:\WinDiagArtifacts',
     [string] $ServiceName = 'windiag',
     [int] $Port = 4024,
+
+    # Full bind URL, when the target's own address is the wrong thing to bind to. On DHCP a literal
+    # address is a time bomb: the lease changes, the auto-start service cannot bind, restart-on-failure
+    # spends its three retries and the machine goes quiet -- which is exactly the console visit that
+    # registering a service was meant to abolish. http://0.0.0.0:4024 survives that, at the cost of
+    # listening on every interface, which leaves the scoped firewall rule as the only thing gating an
+    # elevated server. Defaults to the resolved address, so the narrow choice stays the default.
+    [string] $Bind,
+
     [string] $FirewallFrom,
     [switch] $SkipSysinternals
 )
@@ -148,7 +157,7 @@ try {
     $installArgs = @(
         '--install-service'
         '--service-name'; $ServiceName
-        '--http'; "http://${targetIp}:${Port}"
+        '--http'; $(if ($Bind) { $Bind } else { "http://${targetIp}:${Port}" })
         '--artifacts'; $ArtifactPath
         '--firewall-from'; $FirewallFrom
     )
