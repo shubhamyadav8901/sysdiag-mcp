@@ -134,6 +134,25 @@ public sealed class ServiceInstallationTests
         Assert.Contains("WINDIAG_ALLOW_COMMAND_EXECUTION=1", granted);
         Assert.Contains(@"WINDIAG_ARTIFACT_DIR=C:\WinDiagArtifacts", granted);
         Assert.DoesNotContain("WINDIAG_READ_ONLY=1", granted);
+
+        // Asked for separately, because the two above were once the whole list: a target that had been
+        // started by hand with arbitrary write on came back from --install-service without it, and the
+        // only symptom is put_file refusing a path it used to accept.
+        Assert.DoesNotContain("WINDIAG_ALLOW_ARBITRARY_WRITE=1", granted);
+
+        Assert.DoesNotContain("WINDIAG_ALLOW_ARBITRARY_READ=1", granted);
+
+        var everything = Parse(
+            "--http", "http://x:1",
+            "--allow-self-update", "--allow-command-execution",
+            "--allow-arbitrary-write", "--allow-arbitrary-read").EnvironmentBlock();
+
+        Assert.Contains("WINDIAG_ALLOW_ARBITRARY_WRITE=1", everything);
+
+        // Read is asked for separately from write because --read-only does not imply it: a read-only
+        // service is not thereby allowed to read outside the artifact directory, so a re-registration
+        // that drops this comes back able to read less than the server it replaced.
+        Assert.Contains("WINDIAG_ALLOW_ARBITRARY_READ=1", everything);
     }
 
     [Fact]

@@ -91,6 +91,8 @@ public static class ServerBuilder
                                       C:\Windows\SystemTemp, so captures and dumps move without it
           --allow-self-update         Carry the grants across; a service registered without them
           --allow-command-execution   comes back with fewer tools than the server it replaced
+          --allow-arbitrary-write
+          --allow-arbitrary-read
           --read-only
           --firewall-from <address>   Allow the bind port inbound from one address, removed on
                                       uninstall. Scoped to an address, never a subnet

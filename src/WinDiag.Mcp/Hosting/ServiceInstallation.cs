@@ -60,6 +60,24 @@ public sealed record ServiceInstallOptions
 
     public bool AllowCommandExecution { get; init; }
 
+    /// <summary>Lets put_file write outside the artifact directory.</summary>
+    /// <remarks>
+    /// The widest of the four, and the reason it is its own flag: the other grants are bounded by what
+    /// they do -- self-update replaces one known file, command execution is at least visible in what it
+    /// was asked to run -- while this one lets anyone holding the token place a file anywhere the
+    /// service account can reach. Granted deliberately or not at all.
+    /// </remarks>
+    public bool AllowArbitraryWrite { get; init; }
+
+    /// <summary>Lets the read tools open files outside the artifact directory.</summary>
+    /// <remarks>
+    /// Registered for the same reason as the rest: a by-hand server that had it, re-registered as a
+    /// service without it, comes back able to read less than it could an hour ago. Sharper here than
+    /// elsewhere because <see cref="ReadOnly"/> does not imply it -- a read-only service is not
+    /// automatically allowed to read anywhere -- so the two look interchangeable and are not.
+    /// </remarks>
+    public bool AllowArbitraryRead { get; init; }
+
     public bool ReadOnly { get; init; }
 
     /// <summary>Remote address allowed through the firewall, or null to leave the firewall alone.</summary>
@@ -163,6 +181,8 @@ public sealed record ServiceInstallOptions
             ArtifactDirectory = Value("--artifacts"),
             AllowSelfUpdate = Flag("--allow-self-update"),
             AllowCommandExecution = Flag("--allow-command-execution"),
+            AllowArbitraryWrite = Flag("--allow-arbitrary-write"),
+            AllowArbitraryRead = Flag("--allow-arbitrary-read"),
             ReadOnly = Flag("--read-only"),
             FirewallFrom = Value("--firewall-from"),
             RestartOnFailure = !Flag("--no-restart-on-failure")
@@ -269,6 +289,16 @@ public sealed record ServiceInstallOptions
         if (AllowCommandExecution)
         {
             values.Add("WINDIAG_ALLOW_COMMAND_EXECUTION=1");
+        }
+
+        if (AllowArbitraryWrite)
+        {
+            values.Add("WINDIAG_ALLOW_ARBITRARY_WRITE=1");
+        }
+
+        if (AllowArbitraryRead)
+        {
+            values.Add("WINDIAG_ALLOW_ARBITRARY_READ=1");
         }
 
         if (ReadOnly)
