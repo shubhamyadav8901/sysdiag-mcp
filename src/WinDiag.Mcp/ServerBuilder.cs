@@ -101,6 +101,10 @@ public static class ServerBuilder
           The token is written to the service's own registry key, which only SYSTEM and
           Administrators can read -- never to a machine-wide variable, which every local user can.
 
+          Each grant flag above becomes its WINDIAG_* variable (below) in that same per-service key:
+          --allow-self-update -> WINDIAG_ALLOW_SELF_UPDATE=1, and so on. Flags and variables are two
+          spellings of one setting, so anything the environment can express, an install can too.
+
         Environment:
           WINDIAG_READ_ONLY                       1/true to drop all state-changing tools (default: false)
           WINDIAG_ALLOW_COMMAND_EXECUTION         1/true to register run_command, an arbitrary shell
@@ -108,6 +112,16 @@ public static class ServerBuilder
           WINDIAG_ALLOW_ARBITRARY_WRITE           1/true to let put_file write outside the server's own
                                                   directories (default: false; put_file itself is always
                                                   available on a writable server, scoped to those dirs)
+          WINDIAG_ALLOW_ARBITRARY_READ            1/true to let the read tools open files outside those
+                                                  directories (default: false). WINDIAG_READ_ONLY does
+                                                  NOT override this one -- reading is what a read-only
+                                                  server is for, so --read-only --allow-arbitrary-read
+                                                  is the deliberate combination for a look-but-do-not-
+                                                  touch target
+          WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
+                                                  executable and restarts (default: false)
+          WINDIAG_RELAY_FILE_ROOT                 Relay mode only: the directory push_file and pull_file
+                                                  are confined to (default: the parent of the relay exe)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
           WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS    How long update_self waits for running calls before
                                                   restarting anyway, 1..86400 (default: 1800)

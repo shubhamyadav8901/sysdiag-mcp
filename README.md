@@ -469,6 +469,98 @@ every restart.
 without it comes back with fewer tools than it went away with, and nothing announces that except a
 `capabilities` call nobody makes. `--service-status` lists what was configured.
 
+#### Every option `--install-service` takes
+
+`WinDiag.Mcp.exe --help` prints this list too, and is the authority if the two ever disagree.
+
+| Option | Meaning |
+|---|---|
+| `--http <url>` | Required. What to bind. **On DHCP, bind `http://0.0.0.0:<port>`** — a literal address stops resolving when the lease moves, the service then fails to bind on boot, and the machine goes quiet |
+| `--service-name <name>` | Default `windiag`. More than one instance per machine is fine |
+| `--display-name <text>` | What `services.msc` shows. Default: the service name |
+| `--start auto\|delayed\|demand` | Default `auto` |
+| `--account <spec>` | `LocalSystem` (default), `NetworkService`, `LocalService`, or `DOMAIN\user` with `--password` |
+| `--password <value>` | Required for an account that is not built in |
+| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it |
+| `--allow-self-update` | Registers `update_self` |
+| `--allow-command-execution` | Registers `run_command` |
+| `--allow-arbitrary-write` | Lets `put_file` write outside the server's own directories |
+| `--allow-arbitrary-read` | Lets the read tools open files outside them |
+| `--read-only` | Drops every state-changing tool |
+| `--firewall-from <address>` | Opens the bind port inbound from one address, removed on uninstall. An address, never a subnet |
+| `--no-restart-on-failure` | Default is to let the SCM restart it if the process dies |
+
+**Flags and environment variables are two spellings of one setting.** Each grant flag becomes its
+`WINDIAG_*` variable (see [Configuration](#configuration)) in the service's own registry key —
+`--allow-arbitrary-read` writes `WINDIAG_ALLOW_ARBITRARY_READ=1`. So anything the environment can
+express, an install can too, and the semantics documented there apply unchanged to the flags here.
+
+The combination worth calling out, because no example above uses it:
+
+```
+WinDiag.Mcp.exe --install-service --http http://0.0.0.0:4024 ^
+  --read-only --allow-arbitrary-read --firewall-from 10.0.0.9
+```
+
+That is a **look-but-do-not-touch** target: no `run_command`, no writes, no `update_self`, but the
+read tools can still open any file the service account can reach. `--read-only` deliberately does
+*not* override the read grant — reading is what a read-only server is for. Reach for this when
+somebody will grant you diagnostics on a machine but not a shell on it.
+
+### Bringing up a machine that has never run windiag
+
+`--install-service` assumes the executable is already on the target. Getting it there is the one step
+that needs a route in, and the two scripts under `tools/` cover the two shapes that exist. Both leave
+a registered, verified, auto-start service; after that every update goes through `update_self` and
+neither script is needed for that machine again.
+
+| Script | Route | Use it when |
+|---|---|---|
+| `tools/bootstrap-target.ps1` | Admin share (SMB 445) + PsExec (RPC 135) | The admin share is reachable. Takes `-Credential`; needs no WinRM |
+| `tools/bootstrap-winrm.ps1` | WinRM (5985), addressed **by name** | The admin share is off, or you would rather use Kerberos. Needs no credentials at all where your own logon is admin on the target |
+
+Which one applies is a property of the target, not a preference:
+
+- **`ADMIN$` answering *"The server is not configured for remote administration"* (`NET HELPMSG 3743`),
+  or `IPC$` answering system error 67, means the administrative shares are disabled.** No account,
+  however privileged, can mount a share that is not published — so `bootstrap-target.ps1` and
+  `deploy-target.ps1` both fail, PsExec included, since it needs `ADMIN$` to install its own service.
+  Use the WinRM script.
+- **Address WinRM by name, never by IP.** Negotiate against an IP requires the *caller's* machine to
+  list it in `TrustedHosts`, which is an elevated change to your own workstation. A name resolves to
+  an SPN and authenticates with Kerberos, needing nothing configured locally. Where reverse DNS is
+  missing, the machine's own RDP certificate carries its hostname:
+  ```powershell
+  $c = New-Object Net.Sockets.TcpClient($ip, 3389)
+  $s = New-Object Net.Security.SslStream($c.GetStream(), $false, {$true})
+  $s.AuthenticateAsClient($ip); $s.RemoteCertificate.Subject   # CN=host.example.com
+  ```
+
+Both take `-Grants`, and **the preset names are not a security policy — check what they pass**:
+
+| `-Grants` | Passes | Result |
+|---|---|---|
+| `None` | `--read-only` alone | Services and processes only. **Cannot read a single config file** — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
+| `Standard` | `--allow-self-update --allow-command-execution` | The usual fleet target |
+| `All` | those two plus `--allow-arbitrary-write --allow-arbitrary-read` | Full diagnostics |
+
+```powershell
+# a fleet, one credential prompt
+$c = Get-Credential
+'10.0.0.5','10.0.0.6' | ForEach-Object {
+    .\tools\bootstrap-target.ps1 -Target $_ -Credential $c -Token $token -Grants Standard
+}
+
+# admin shares off, domain-joined, no password needed
+.\tools\bootstrap-winrm.ps1 -Target host.example.com -Token $token -Grants All -Bind 'http://0.0.0.0:4024'
+```
+
+Adding a target to the relay's `~/.windiag-targets.json` does **not** deploy or start anything; it
+only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
+addresses in that file** for the same reason as the bind: a DHCP lease that moves breaks every entry
+pinned to an address.
+
 Doing it by hand instead is a few more commands, and three details are easy to lose — the token's
 location, the artifact directory, and the grants:
 
