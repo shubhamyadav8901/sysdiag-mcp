@@ -13,6 +13,22 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+### Documentation
+
+- **Said plainly that the channel is not encrypted.** The security notes covered the bearer token
+  thoroughly -- fixed-time comparison, never on a command line, never echoed -- and never mentioned
+  that it crosses the wire in cleartext on every call, along with every dump, file and command output
+  the tools return. The chunk hashing on file transfers is integrity, not confidentiality. Nothing
+  about the software changed; what changed is that an operator deciding whether to route a target
+  across a network they do not control can now find that out before doing it.
+- The full `--install-service` option list, and the fact that each grant flag becomes its `WINDIAG_*`
+  variable in the service's own registry key, are now documented rather than living only in the
+  parser. `--help` had also been missing three variables it does honour.
+- Both bootstrap scripts are documented, including what each `-Grants` preset actually passes --
+  `None` is `--read-only` alone and cannot read a file, which is a trap for anyone asked for
+  "read-only access".
+- Adds a `CLAUDE.md` the repo never had, and a `windiag-target` skill for the setup procedure.
+
 ### Added
 
 - **The executable installs itself as a service.** `--install-service`, `--uninstall-service` and

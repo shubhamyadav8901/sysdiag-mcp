@@ -116,6 +116,9 @@ output as failure, or you will report success for work that never happened.
 
 - Put the token on a serving command line — `process_list` exposes command lines to every local user.
   `--install-service --token` is fine; it writes to the ACL'd per-service key.
+- Stand a target up across a network the operator does not trust. The channel is plaintext HTTP with
+  no TLS, so the token — and every dump, file and command output — is readable by anyone on the path,
+  and `--firewall-from` scopes who can connect, not who can watch. Trusted segment, or a tunnel.
 - Scope a firewall rule to a subnet, or to whatever `Get-NetIPAddress` returns first — on a box with
   Hyper-V or WSL adapters that is a virtual address that can never reach the target. Ask the routing
   table: `Find-NetRoute -RemoteIPAddress $ip`.

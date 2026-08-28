@@ -56,6 +56,35 @@ follow from that, and which are deliberate rather than oversights:
   not a setting: unsigned development builds keep working, but a target already running a signed
   build cannot be downgraded to an unsigned one through that path.
 
+## Traffic is not encrypted
+
+Stated plainly because everything else in this file is about protecting the token, and this is the
+one place that protection stops.
+
+windiag serves **plaintext HTTP. There is no TLS support.** Consequences, all of them intended in a
+trusted-segment deployment and all of them dangerous outside one:
+
+- The bearer token is sent in an `Authorization` header on every single call. A passive observer on
+  the path captures it, and where either grant above is enabled, **the token is equivalent to code
+  execution on that host** as an elevated account.
+- Tool results are equally exposed: file contents, memory dumps, registry values, event-log text and
+  `run_command` output all cross the wire in the clear.
+- The SHA-256 hashing on `put_file`, `get_file` and the relay's chunked transfers gives **integrity,
+  not confidentiality.** It reliably catches a truncated or corrupted copy — which is why it exists —
+  but an attacker who can modify traffic can recompute the hashes.
+- `--firewall-from` restricts which address may *connect*. It does nothing about observation of
+  traffic in flight, and nothing about an attacker already on the path.
+
+**What that requires of a deployment.** Run it on a management network you already trust, scoped to
+one address, and do not route it across an untrusted one. Where confidentiality on the wire is
+needed, put windiag behind a tunnel — WireGuard, an SSH forward, an mTLS reverse proxy — rather than
+treating the scoped port as sufficient.
+
+Two adjacent paths *are* encrypted, which is easy to confuse with the above: WinRM on 5985 looks like
+plaintext HTTP but Negotiate/Kerberos encrypts the payload at the message level, so
+`tools/bootstrap-winrm.ps1` transfers are protected; SMB staging is authenticated and signed, with
+encryption depending on the target's SMB configuration. Neither changes the windiag channel itself.
+
 ## What we would consider a vulnerability
 
 - Reaching any tool without a valid bearer token, or a token comparison that leaks its length or
@@ -74,3 +103,7 @@ follow from that, and which are deliberate rather than oversights:
 - That an elevated server can read privileged data. That is the point of it.
 - Anything requiring administrator rights on the host to set up — an attacker who is already
   administrator does not need windiag.
+- That the channel is unencrypted, on its own. It is documented above and it is a real limitation, not
+  an oversight — so it needs no report, and a report of it will be closed as known. What we *do* want
+  is anything that makes it worse than stated: a token reaching a log, a crash dump, an error
+  response, or any channel the section above does not already say it travels on.

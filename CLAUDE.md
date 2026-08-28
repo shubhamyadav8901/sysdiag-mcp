@@ -48,6 +48,10 @@ dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green bef
 - **Bind to `0.0.0.0` on a DHCP target.** A literal address stops resolving when the lease moves; the
   auto-start service then fails to bind, spends its restart retries, and the machine goes quiet weeks
   later looking unrelated. Prefer hostnames in the relay's targets file for the same reason.
+- **The channel is plaintext HTTP and there is no TLS support.** The bearer token rides an
+  `Authorization` header on every call, and tool results cross the wire in the clear. The chunk
+  hashing on file transfers is integrity, not confidentiality. Never suggest this is encrypted, and
+  never route a target across a network the operator does not trust; recommend a tunnel instead.
 - **A relay-forwarded 401 after a target restarts means reconnect the alias, not a changed token.**
   Check with `tools/mcp-call.ps1` against the target directly before concluding anything.
 - **`tools/mcp-call.ps1` exits 1 on a refusal without throwing.** Callers must check `-Raw` output for
