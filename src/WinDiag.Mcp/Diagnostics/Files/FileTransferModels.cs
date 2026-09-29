@@ -106,15 +106,3 @@ public interface IFileSender
 {
     FileReadResult Read(FileReadRequest request, CancellationToken cancellationToken);
 }
-
-/// <summary>Raised when a file could not be written, or the write was not permitted.</summary>
-public sealed class FileTransferException : Exception
-{
-    public FileTransferException(string message) : base(message)
-    {
-    }
-
-    public FileTransferException(string message, Exception innerException) : base(message, innerException)
-    {
-    }
-}

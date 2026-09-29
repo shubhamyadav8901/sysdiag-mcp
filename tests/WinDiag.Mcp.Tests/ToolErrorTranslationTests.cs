@@ -104,6 +104,26 @@ public sealed class ToolErrorTranslationTests
         Assert.Empty(undeclared);
     }
 
+    /// <summary>
+    /// The same coverage for exceptions the shared core defines.
+    /// </summary>
+    /// <remarks>
+    /// The guard above reflects over this assembly only, so an exception moved into Diag.Mcp.Core would
+    /// stop being checked at the moment it moved -- FileTransferException was the first to move. Any
+    /// core exception reaches a caller through this server's filter, so every one must be listed.
+    /// </remarks>
+    [Fact]
+    public void Translates_every_diagnostic_exception_the_shared_core_defines()
+    {
+        var undeclared = typeof(PathScope).Assembly.GetTypes()
+            .Where(type => typeof(Exception).IsAssignableFrom(type) && !type.IsAbstract)
+            .Where(type => !ToolErrorTranslation.IsDiagnostic(Instantiate(type)))
+            .Select(type => type.Name)
+            .ToArray();
+
+        Assert.Empty(undeclared);
+    }
+
     /// <summary>Produces an instance of an exception type without running a constructor.</summary>
     /// <remarks>
     /// The filter's decision is a type test, so the object only has to exist. Calling constructors

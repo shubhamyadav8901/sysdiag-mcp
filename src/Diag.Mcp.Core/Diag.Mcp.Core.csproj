@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net9.0, not net9.0-windows: this is what the relay and the Windows server share, and the relay
+         has to start on macOS and Linux. Anything Windows-only belongs in the project that needs it. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Diag.Mcp.Core</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

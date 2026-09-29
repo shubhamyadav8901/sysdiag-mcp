@@ -17,26 +17,10 @@ namespace WinDiag.Mcp.Diagnostics.Files;
 internal static class FileScope
 {
     /// <summary>The directory the running server executable lives in.</summary>
-    public static string ServerDirectory =>
-        Path.GetDirectoryName(Environment.ProcessPath) ?? Environment.CurrentDirectory;
+    public static string ServerDirectory => PathScope.ProcessDirectory;
 
     /// <summary>Canonicalises a caller-supplied path, or explains why it is unusable.</summary>
-    public static string Resolve(string? path, string what)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            throw new FileTransferException($"No {what} was given.");
-        }
-
-        try
-        {
-            return Path.GetFullPath(path.Trim());
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            throw new FileTransferException($"'{path}' is not a usable file path: {ex.Message}");
-        }
-    }
+    public static string Resolve(string? path, string what) => PathScope.Resolve(path, what);
 
     /// <summary>Whether the path sits inside a windiag-owned directory or anywhere else.</summary>
     public static WriteScope Of(string fullPath, WinDiagOptions options) =>
@@ -49,27 +33,6 @@ internal static class FileScope
         $"{ServerDirectory} and {options.ArtifactDirectory}";
 
     /// <summary>True when <paramref name="candidate"/> is the directory itself or something inside it.</summary>
-    /// <remarks>
-    /// Compared on the canonical forms with a trailing separator, so <c>C:\WinDiagX\f</c> does not count
-    /// as being under <c>C:\WinDiag</c> — a prefix match without the separator boundary is the classic
-    /// way a scope check is escaped.
-    /// </remarks>
-    public static bool IsUnder(string candidate, string directory)
-    {
-        string root;
-        try
-        {
-            root = Path.GetFullPath(directory);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
-
-        var rootWithSep = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                          + Path.DirectorySeparatorChar;
-
-        return candidate.Equals(root, StringComparison.OrdinalIgnoreCase)
-               || candidate.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
-    }
+    /// <remarks>Delegates, so the server and the relay can never disagree about containment.</remarks>
+    public static bool IsUnder(string candidate, string directory) => PathScope.IsUnder(candidate, directory);
 }

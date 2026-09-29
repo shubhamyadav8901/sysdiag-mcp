@@ -48,6 +48,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Diag.Mcp.Core\Diag.Mcp.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- FileTransferException and PathScope moved to the shared core; one global using keeps the ~20
+         call sites unchanged instead of editing each of them. -->
+    <Using Include="Diag.Mcp.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Embedded, not copied alongside: a single-file publish has no directory to read it from.
          Hand-exported from the Procmon GUI; it pins the capture filter set. -->
     <EmbeddedResource Include="Resources\windiag.pmc" />
