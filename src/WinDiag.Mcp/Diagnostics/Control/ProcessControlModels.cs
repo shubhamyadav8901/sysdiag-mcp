@@ -35,7 +35,7 @@ public interface IProcessController
 }
 
 /// <summary>Raised when an action on a process is refused or fails.</summary>
-public sealed class ProcessControlException : Exception
+public sealed class ProcessControlException : Exception, IDiagnosticException
 {
     public ProcessControlException(string message) : base(message)
     {

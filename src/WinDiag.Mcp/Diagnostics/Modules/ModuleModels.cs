@@ -57,7 +57,7 @@ public interface IModuleInspector
 }
 
 /// <summary>Raised when a process's modules could not be read.</summary>
-public sealed class ModuleQueryException : Exception
+public sealed class ModuleQueryException : Exception, IDiagnosticException
 {
     public ModuleQueryException(string message) : base(message)
     {

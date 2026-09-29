@@ -15,11 +15,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\WinDiag.Mcp\WinDiag.Mcp.csproj" />
+    <!-- For the shared guards only (e.g. DiagnosticExceptionGuardTests.AssertMarked): one implementation
+         of each reflection check, applied to this server's assembly as well as the kit's. -->
+    <ProjectReference Include="..\Diag.Mcp.Server.Tests\Diag.Mcp.Server.Tests.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="Diag.Mcp.Core" />
+    <Using Include="Diag.Mcp.Server" />
   </ItemGroup>
 
   <ItemGroup>

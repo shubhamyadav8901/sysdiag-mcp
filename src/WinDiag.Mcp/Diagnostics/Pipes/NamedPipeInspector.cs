@@ -296,7 +296,7 @@ public sealed class NamedPipeInspector : INamedPipeInspector
 }
 
 /// <summary>Raised when named pipes could not be enumerated at all.</summary>
-public sealed class NamedPipeQueryException : Exception
+public sealed class NamedPipeQueryException : Exception, IDiagnosticException
 {
     public NamedPipeQueryException(string message) : base(message)
     {

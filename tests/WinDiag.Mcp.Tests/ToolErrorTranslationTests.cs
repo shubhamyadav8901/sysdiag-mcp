@@ -1,7 +1,5 @@
-using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Control;
 using WinDiag.Mcp.Diagnostics.External;
-using WinDiag.Mcp.Hosting;
 
 namespace WinDiag.Mcp.Tests;
 
@@ -89,16 +87,9 @@ public sealed class ToolErrorTranslationTests
     [Fact]
     public void Translates_every_diagnostic_exception_this_assembly_defines()
     {
-        var undeclared = typeof(ToolErrorTranslation).Assembly.GetTypes()
-            .Where(type => typeof(Exception).IsAssignableFrom(type) && !type.IsAbstract)
-            // Startup configuration is validated before any transport exists, so it can never reach a
-            // tool call. Everything else here can.
-            .Where(type => type != typeof(ConfigurationException))
-            .Where(type => !ToolErrorTranslation.IsDiagnostic(Instantiate(type)))
-            .Select(type => type.Name)
-            .ToArray();
-
-        Assert.Empty(undeclared);
+        // Now decided by the IDiagnosticException marker; the shared guard also exempts
+        // ConfigurationException, which is validated before any transport exists.
+        Diag.Mcp.Server.Tests.DiagnosticExceptionGuard.AssertMarked(typeof(ServerBuilder).Assembly);
     }
 
     /// <summary>
@@ -112,22 +103,6 @@ public sealed class ToolErrorTranslationTests
     [Fact]
     public void Translates_every_diagnostic_exception_the_shared_core_defines()
     {
-        var undeclared = typeof(PathScope).Assembly.GetTypes()
-            .Where(type => typeof(Exception).IsAssignableFrom(type) && !type.IsAbstract)
-            .Where(type => !ToolErrorTranslation.IsDiagnostic(Instantiate(type)))
-            .Select(type => type.Name)
-            .ToArray();
-
-        Assert.Empty(undeclared);
+        Diag.Mcp.Server.Tests.DiagnosticExceptionGuard.AssertMarked(typeof(PathScope).Assembly);
     }
-
-    /// <summary>Produces an instance of an exception type without running a constructor.</summary>
-    /// <remarks>
-    /// The filter's decision is a type test, so the object only has to exist. Calling constructors
-    /// instead would make this test a survey of constructor signatures -- it already failed once on
-    /// ToolTimeoutException, which takes a TimeSpan -- and every such failure would be about the test
-    /// rather than about the coverage it is checking.
-    /// </remarks>
-    private static Exception Instantiate(Type type) =>
-        (Exception)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
 }

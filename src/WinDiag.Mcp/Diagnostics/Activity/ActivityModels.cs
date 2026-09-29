@@ -63,7 +63,7 @@ public interface IActivityInspector
 }
 
 /// <summary>Raised when a capture could not be performed.</summary>
-public sealed class ActivityCaptureException : Exception
+public sealed class ActivityCaptureException : Exception, IDiagnosticException
 {
     public ActivityCaptureException(string message) : base(message)
     {

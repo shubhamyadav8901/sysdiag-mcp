@@ -1,23 +1,9 @@
+using Diag.Mcp.Core;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using WinDiag.Mcp.Diagnostics;
-using WinDiag.Mcp.Diagnostics.Access;
-using WinDiag.Mcp.Diagnostics.Activity;
-using WinDiag.Mcp.Diagnostics.Commands;
-using WinDiag.Mcp.Diagnostics.Files;
-using WinDiag.Mcp.Diagnostics.Control;
-using WinDiag.Mcp.Diagnostics.Dumps;
-using WinDiag.Mcp.Diagnostics.EventLogs;
-using WinDiag.Mcp.Diagnostics.External;
-using WinDiag.Mcp.Diagnostics.Locks;
-using WinDiag.Mcp.Diagnostics.Modules;
-using WinDiag.Mcp.Diagnostics.Network;
-using WinDiag.Mcp.Diagnostics.Pipes;
-using WinDiag.Mcp.Diagnostics.RegistryInspection;
-using WinDiag.Mcp.Diagnostics.SelfUpdate;
 
-namespace WinDiag.Mcp.Hosting;
+namespace Diag.Mcp.Server;
 
 /// <summary>
 /// Turns a thrown diagnostic failure into a tool result the caller can actually read.
@@ -39,31 +25,14 @@ public static class ToolErrorTranslation
 {
     /// <summary>Failures that represent a diagnosis, not a defect, and are safe to report verbatim.</summary>
     /// <remarks>
-    /// <c>ToolErrorTranslationTests.Translates_every_diagnostic_exception_this_assembly_defines</c>
-    /// reflects over the assembly and fails if a new exception type is not listed here. Without that
-    /// guard the omission is invisible until someone triggers the failure on a target and gets back
-    /// "An error occurred invoking 'x'." -- which is how <see cref="ModuleQueryException"/> and
-    /// <see cref="ToolArchitectureException"/> both got missed.
+    /// Decided by the <see cref="IDiagnosticException"/> marker rather than a list. The list this
+    /// replaced had to name every type, and had silently missed two; a marker travels with the type, so
+    /// there is nothing to forget. DiagnosticExceptionGuardTests fails for any unmarked exception.
     /// </remarks>
-    internal static bool IsDiagnostic(Exception exception) => exception is
-        ExternalToolException          // missing, wrong architecture, timed out, or refused
-        or LockQueryException
-        or AccessQueryException
-        or EventLogQueryException
-        or NetworkQueryException
-        or NamedPipeQueryException
-        or DumpCaptureException
-        or ActivityCaptureException
-        or ModuleQueryException
-        or RegistryQueryException
-        or RegistryPathException
-        or CommandExecutionException
-        or FileTransferException
-        or ProcessControlException
-        or ServiceControlException
-        or SelfUpdateRejectedException
-        or ArgumentException            // a parameter the caller can correct
-        or FormatException;             // tool output that did not match the expected shape
+    internal static bool IsDiagnostic(Exception exception) =>
+        exception is IDiagnosticException
+            or ArgumentException    // a parameter the caller can correct
+            or FormatException;     // tool output that did not match the expected shape
 
     /// <summary>Registers the filter on the call-tool pipeline.</summary>
     public static IMcpServerBuilder WithReadableToolErrors(this IMcpServerBuilder builder)

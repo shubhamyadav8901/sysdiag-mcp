@@ -48,7 +48,7 @@ public interface IAccessInspector
 }
 
 /// <summary>Raised when an object's security information could not be read.</summary>
-public sealed class AccessQueryException : Exception
+public sealed class AccessQueryException : Exception, IDiagnosticException
 {
     public AccessQueryException(string message) : base(message)
     {

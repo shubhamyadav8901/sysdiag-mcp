@@ -8,7 +8,7 @@ namespace WinDiag.Mcp.Diagnostics.External;
 /// what to do about it, because the text is surfaced directly in the tool result. Resist the urge to
 /// shorten them into developer shorthand.
 /// </remarks>
-public class ExternalToolException : Exception
+public class ExternalToolException : Exception, IDiagnosticException
 {
     public ExternalToolException(string message) : base(message)
     {

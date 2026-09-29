@@ -42,7 +42,7 @@ public interface IRegistryInspector
 }
 
 /// <summary>Raised when a registry key or value could not be read.</summary>
-public sealed class RegistryQueryException : Exception
+public sealed class RegistryQueryException : Exception, IDiagnosticException
 {
     public RegistryQueryException(string message) : base(message)
     {

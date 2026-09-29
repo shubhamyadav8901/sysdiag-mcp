@@ -59,7 +59,7 @@ public interface ICommandRunner
 /// non-zero exit code. This is only for the request itself being unrunnable: an empty command line, a
 /// working directory that does not exist, a shell that could not be launched.
 /// </remarks>
-public sealed class CommandExecutionException : Exception
+public sealed class CommandExecutionException : Exception, IDiagnosticException
 {
     public CommandExecutionException(string message) : base(message)
     {

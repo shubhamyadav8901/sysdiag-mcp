@@ -3,7 +3,7 @@ using Microsoft.Win32;
 namespace WinDiag.Mcp.Diagnostics;
 
 /// <summary>Raised when a registry path cannot be understood.</summary>
-public sealed class RegistryPathException : Exception
+public sealed class RegistryPathException : Exception, IDiagnosticException
 {
     public RegistryPathException(string message) : base(message)
     {

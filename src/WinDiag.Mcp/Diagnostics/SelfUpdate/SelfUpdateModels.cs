@@ -49,7 +49,7 @@ public interface ISelfUpdater
 /// Every rejection is deliberate and final: this mechanism replaces an executable that runs elevated,
 /// so "probably fine" is never an acceptable verdict.
 /// </remarks>
-public sealed class SelfUpdateRejectedException : Exception
+public sealed class SelfUpdateRejectedException : Exception, IDiagnosticException
 {
     public SelfUpdateRejectedException(string message) : base(message)
     {

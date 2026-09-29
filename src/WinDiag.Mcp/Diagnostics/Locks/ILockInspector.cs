@@ -13,7 +13,7 @@ public interface ILockInspector
 /// The distinction matters to the caller: "I could not look" and "I looked and found nothing" lead to
 /// very different next steps, and collapsing them is how an investigation stops early on a false negative.
 /// </remarks>
-public sealed class LockQueryException : Exception
+public sealed class LockQueryException : Exception, IDiagnosticException
 {
     public LockQueryException(string message) : base(message)
     {

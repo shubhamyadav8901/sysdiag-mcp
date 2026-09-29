@@ -342,7 +342,7 @@ public sealed class IpHelperNetworkInspector : INetworkInspector
 }
 
 /// <summary>Raised when the connection tables could not be read.</summary>
-public sealed class NetworkQueryException : Exception
+public sealed class NetworkQueryException : Exception, IDiagnosticException
 {
     public NetworkQueryException(string message) : base(message)
     {

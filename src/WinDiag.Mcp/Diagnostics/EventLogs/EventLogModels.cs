@@ -57,7 +57,7 @@ public interface IEventLogInspector
 }
 
 /// <summary>Raised when an event log query cannot be performed.</summary>
-public sealed class EventLogQueryException : Exception
+public sealed class EventLogQueryException : Exception, IDiagnosticException
 {
     public EventLogQueryException(string message) : base(message)
     {

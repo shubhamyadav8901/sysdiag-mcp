@@ -47,7 +47,7 @@ public interface IDumpWriter
 }
 
 /// <summary>Raised when a dump could not be written.</summary>
-public sealed class DumpCaptureException : Exception
+public sealed class DumpCaptureException : Exception, IDiagnosticException
 {
     public DumpCaptureException(string message) : base(message)
     {

@@ -25,7 +25,7 @@ public interface IServiceController
 }
 
 /// <summary>Raised when an action on a service is refused or fails.</summary>
-public sealed class ServiceControlException : Exception
+public sealed class ServiceControlException : Exception, IDiagnosticException
 {
     public ServiceControlException(string message) : base(message)
     {
