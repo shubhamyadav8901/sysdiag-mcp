@@ -18,7 +18,7 @@ public sealed class SelfUpdaterEngineTests : IDisposable
     private sealed class Inspector(string sha) : IStagedBuildInspector
     {
         public StagedBuild Inspect(string path, CancellationToken cancellationToken) =>
-            new(sha, 3, "Unsigned", null);
+            new(path, sha, 3, "Unsigned", null);
     }
 
     private sealed class AnyGuard : IUpdateGuard

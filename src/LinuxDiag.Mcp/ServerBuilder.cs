@@ -5,6 +5,7 @@ using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
 using LinuxDiag.Mcp.Diagnostics.Commands;
+using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
 using LinuxDiag.Mcp.Diagnostics.SystemInfo;
 using LinuxDiag.Mcp.Tools;
 using Microsoft.Extensions.DependencyInjection;
@@ -71,6 +72,12 @@ public static class ServerBuilder
             mcp.WithTools<CommandTools>(DiagServerKit.ToolJsonOptions);
         }
 
+        // Lets the token replace the root-owned binary and run it: its own grant, refused under read-only.
+        if (options.AllowSelfUpdate && !options.ReadOnly)
+        {
+            mcp.WithTools<SelfUpdateTools>(DiagServerKit.ToolJsonOptions);
+        }
+
         return mcp;
     }
 
@@ -86,5 +93,10 @@ public static class ServerBuilder
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
         services.TryAddSingleton<CommandTools>();
+        services.TryAddSingleton<IStagedBuildInspector, LinuxStagedBuildInspector>();
+        services.TryAddSingleton<IUpdateGuard, ElfUpdateGuard>();
+        services.TryAddSingleton<IRestartHelper, SystemdRestartHelper>();
+        services.TryAddSingleton<ISelfUpdater, SelfUpdater>();
+        services.TryAddSingleton<SelfUpdateTools>();
     }
 }

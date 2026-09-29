@@ -57,10 +57,11 @@ public sealed class SelfUpdateRejectedException : Exception, IDiagnosticExceptio
 }
 
 /// <summary>What was found about a staged build, before anything is decided about it.</summary>
+/// <param name="Path">The staged file itself, for a guard that must read it.</param>
 /// <param name="Sha256">Uppercase hex of the staged file.</param>
 /// <param name="SignatureVerdict">The platform's verdict on its signature, as reported to the caller.</param>
 /// <param name="SignatureDetail">Why, when the verdict is not a clean pass; null otherwise.</param>
-public sealed record StagedBuild(string Sha256, long SizeBytes, string SignatureVerdict, string? SignatureDetail);
+public sealed record StagedBuild(string Path, string Sha256, long SizeBytes, string SignatureVerdict, string? SignatureDetail);
 
 /// <summary>Hashes a staged build and reads its signature, the platform's way.</summary>
 public interface IStagedBuildInspector

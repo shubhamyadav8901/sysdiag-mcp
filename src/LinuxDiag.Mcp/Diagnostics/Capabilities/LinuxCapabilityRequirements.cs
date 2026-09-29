@@ -23,5 +23,6 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "can only read what the current account already can"),
             ["system_overview"] = new("/proc, /etc/os-release and statvfs per mount", null, null),
             ["run_command"] = new("/bin/sh -c, /bin/bash -c, or a direct exec", null, null),
+            ["update_self"] = new("staged-build swap through a systemd-run helper", "systemd-run", null, RequiresElevation: true),
         };
 }

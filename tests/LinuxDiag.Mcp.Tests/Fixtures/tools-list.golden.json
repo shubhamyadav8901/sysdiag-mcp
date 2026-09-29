@@ -490,5 +490,98 @@
       "openWorldHint": true,
       "readOnlyHint": true
     }
+  },
+  {
+    "name": "update_self",
+    "title": "Install a staged server build",
+    "description": "Replace this server\u0027s own executable with a build already copied next to it (with put_file), then restart the service. You must pass the SHA-256 you expect; anything else is refused and nothing is changed. The staged file must be an x86-64 Linux executable. By default the server FINISHES whatever tool calls are already running before it restarts, refusing new calls meanwhile; pass force to cut them off instead, and call update_self again with force to stop waiting. Either way THIS CONNECTION WILL DROP - that is success, not failure. Reconnect and check the version; if it does not come back, read the helper log named in the result.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "expectedSha256": {
+          "description": "SHA-256 of the staged build, as put_file or push_file reported it",
+          "type": "string"
+        },
+        "stagedFileName": {
+          "description": "Name of the staged file beside the server. Must be a file name, not a path.",
+          "type": "string",
+          "default": "LinuxDiag.Mcp.new"
+        },
+        "force": {
+          "description": "Set true to restart without waiting for running tool calls; their work is cut off. Default false, which waits.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "expectedSha256"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "stagedPath": {
+              "type": "string"
+            },
+            "livePath": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "signatureVerdict": {
+              "type": "string"
+            },
+            "helperLogPath": {
+              "type": "string"
+            },
+            "restartScheduled": {
+              "type": "boolean"
+            },
+            "forced": {
+              "type": "boolean"
+            },
+            "otherCallsInFlight": {
+              "type": "integer"
+            },
+            "drainTimeoutSeconds": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "stagedPath",
+            "livePath",
+            "sizeBytes",
+            "sha256",
+            "signatureVerdict",
+            "helperLogPath",
+            "restartScheduled",
+            "forced",
+            "otherCallsInFlight",
+            "drainTimeoutSeconds"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "update"
+      ]
+    },
+    "annotations": {
+      "title": "Install a staged server build",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
   }
 ]

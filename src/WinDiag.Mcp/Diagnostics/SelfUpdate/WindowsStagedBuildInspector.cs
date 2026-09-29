@@ -18,6 +18,6 @@ public sealed class WindowsStagedBuildInspector : IStagedBuildInspector
     public StagedBuild Inspect(string path, CancellationToken cancellationToken)
     {
         var file = _signatures.Inspect([path], cancellationToken).Files.Single();
-        return new StagedBuild(file.Sha256, file.SizeBytes, file.Verdict.ToString(), file.Detail);
+        return new StagedBuild(path, file.Sha256, file.SizeBytes, file.Verdict.ToString(), file.Detail);
     }
 }

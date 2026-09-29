@@ -39,8 +39,12 @@ public sealed class ToolRegistrationTests
         Assert.Equal(names.Distinct(StringComparer.Ordinal).Count(), names.Length);
     }
 
-    // The_gated_tools_follow_their_grants is added in Task 6, once both gated tools exist, so that no
-    // commit in between carries a knowingly red test.
+    [Fact]
+    public void The_gated_tools_follow_their_grants()
+    {
+        GatedToolGuard.AssertGatedToolsFollowTheirGrants(
+            (readOnly, selfUpdate, commands) => ToolNames(Options(readOnly, selfUpdate, commands)));
+    }
 
     [Fact]
     public void The_tool_surface_matches_the_recorded_snapshot()
