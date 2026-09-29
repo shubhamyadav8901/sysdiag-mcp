@@ -130,55 +130,17 @@ async Task<int> RunHttp(WinDiagOptions opts, string address)
     // rather than reporting stdio while a TCP port is open.
     opts = opts with { HttpBind = address };
 
-    var builder = WebApplication.CreateBuilder();
-    ConfigureLogging(builder.Logging);
-
-    // Kestrel caps request bodies at 30 MB by default, which would reject a put_file carrying a
-    // base64'd server binary (~64 MB encoded). Raised to sit above put_file's own 128 MB decoded limit
-    // plus base64 inflation, so the tool -- not the transport -- gives the size error, with a message
-    // that names the cap. Configured through DI rather than builder.WebHost.ConfigureKestrel to avoid
-    // depending on the hosting extension namespace.
-    builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(
-        kestrel => kestrel.Limits.MaxRequestBodySize = 220L * 1024 * 1024);
-
-    ServerBuilder.ConfigureServices(builder.Services, opts).WithHttpTransport();
-
-    var app = builder.Build();
-    app.UseMiddleware<BearerTokenGate>(token);
-    app.MapMcp();
-
-    WarnIfMisdeployed();
-    Console.Error.WriteLine($"[windiag] serving MCP over HTTP on {address}");
-
-    // Printed only when generated. Echoing a configured token would put a long-lived credential into
-    // whatever captures stderr -- and running an elevated listener under a service wrapper with
-    // `2> windiag.log` is the normal way to do this, so that file is the expected case, not the
-    // exotic one.
-    if (opts.Token is null)
-    {
-        Console.Error.WriteLine($"[windiag] generated bearer token: {token}");
-        Console.Error.WriteLine(
-            "[windiag] this token was generated for this run and changes on restart. " +
-            "Set WINDIAG_TOKEN to pin it.");
-    }
-    else
-    {
-        Console.Error.WriteLine("[windiag] bearer token: taken from WINDIAG_TOKEN (not logged)");
-    }
-
-    if (CommandLine.IsWildcardBind(address))
-    {
-        Console.Error.WriteLine(
-            "[windiag] WARNING: this address accepts connections on every network interface. " +
-            "This process is elevated, so anyone who reaches the port and holds the token can run " +
-            "commands as the current account. Scope the firewall rule to the base machine's address, " +
-            "or bind to a specific interface.");
-    }
-
-    Log(app.Services, $"starting http server ({opts.Describe()})");
-
-    await app.RunAsync(address).ConfigureAwait(false);
-    return 0;
+    // The host itself -- body limit, bearer gate, MCP at the root, the token banner -- is the kit's,
+    // shared with every server the relay fronts. What is left here is this server's own wording.
+    return await DiagServerHost.RunHttpAsync(
+        new HttpHostSettings(address, opts.Token, "[windiag]", "WINDIAG_TOKEN", token),
+        builder =>
+        {
+            ConfigureLogging(builder.Logging);
+            ServerBuilder.ConfigureServices(builder.Services, opts).WithHttpTransport();
+        },
+        beforeBanner: _ => WarnIfMisdeployed(),
+        afterBanner: app => Log(app.Services, $"starting http server ({opts.Describe()})")).ConfigureAwait(false);
 }
 
 // stdout is the MCP JSON-RPC channel in stdio mode. A single log line written there corrupts the
