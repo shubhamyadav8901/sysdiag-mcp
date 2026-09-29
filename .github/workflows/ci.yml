@@ -35,6 +35,9 @@ jobs:
       - name: Test
         run: dotnet test tests/WinDiag.Mcp.Tests --no-build --verbosity normal
 
+      - name: Test the relay
+        run: dotnet test tests/DiagRelay.Mcp.Tests --no-build --verbosity normal
+
       # Guards a failure the unit suite structurally cannot see. EventLog reaches
       # System.Threading.AccessControl only through a named-mutex path the compiler never records, so
       # it is absent from the publish set unless referenced outright -- while the test host, which is
@@ -56,3 +59,26 @@ jobs:
                   "transitive dependency alone does not survive to the published set."
           }
           Write-Host "publish set carries: $($required -join ', ')"
+
+  relay:
+    # The relay and its shared core are net9.0 and must stay that way, so they are built and tested on
+    # the platforms they exist for. Per project, not per solution: the solution also holds net9.0-windows
+    # projects, which fail to restore here with NETSDK1100.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build
+        run: dotnet build tests/DiagRelay.Mcp.Tests -warnaserror
+
+      - name: Test
+        run: dotnet test tests/DiagRelay.Mcp.Tests --no-build --verbosity normal

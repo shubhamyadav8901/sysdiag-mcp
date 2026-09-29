@@ -30,6 +30,7 @@ jobs:
         run: |
           dotnet build -warnaserror
           dotnet test tests/WinDiag.Mcp.Tests --no-build
+          dotnet test tests/DiagRelay.Mcp.Tests --no-build
 
       # Self-contained and single-file: a target is a machine with no .NET SDK and often no way to
       # install one. Compression roughly halves the payload for a slow link to a lab VM.
@@ -57,3 +58,49 @@ jobs:
           path: |
             artifacts/${{ matrix.rid }}/WinDiag.Mcp.exe
             artifacts/${{ matrix.rid }}/SHA256.txt
+
+  publish-relay:
+    # Each built on its own OS. An osx-arm64 executable must carry at least an ad-hoc code signature to
+    # run on Apple Silicon, and the SDK can only apply one when it builds on macOS -- cross-published from
+    # Windows it is produced unsigned and refuses to start.
+    strategy:
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64,     exe: DiagRelay.Mcp.exe }
+          - { os: ubuntu-latest,  rid: linux-x64,   exe: DiagRelay.Mcp }
+          - { os: macos-latest,   rid: osx-arm64,   exe: DiagRelay.Mcp }
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build and test
+        run: |
+          dotnet build tests/DiagRelay.Mcp.Tests -warnaserror
+          dotnet test tests/DiagRelay.Mcp.Tests --no-build
+
+      - name: Publish ${{ matrix.rid }}
+        run: >
+          dotnet publish src/DiagRelay.Mcp
+          -c Release -r ${{ matrix.rid }} --self-contained
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o artifacts/diagrelay-${{ matrix.rid }}
+
+      - name: Hash
+        shell: pwsh
+        run: |
+          $exe = "artifacts/diagrelay-${{ matrix.rid }}/${{ matrix.exe }}"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash
+          "$sha  ${{ matrix.exe }}" | Set-Content "artifacts/diagrelay-${{ matrix.rid }}/SHA256.txt"
+          Write-Host "${{ matrix.rid }} $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diagrelay-${{ matrix.rid }}
+          path: |
+            artifacts/diagrelay-${{ matrix.rid }}/${{ matrix.exe }}
+            artifacts/diagrelay-${{ matrix.rid }}/SHA256.txt
