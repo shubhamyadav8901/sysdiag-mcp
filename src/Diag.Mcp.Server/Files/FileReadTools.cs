@@ -13,7 +13,7 @@ namespace Diag.Mcp.Server.Files;
 public sealed record GetFileResult(string Summary, FileReadResult File);
 
 /// <summary>
-/// Reading a file back off the host, so retrieval needs no SMB share.
+/// Reading a file back off the host, so retrieval needs no file share.
 /// </summary>
 /// <remarks>
 /// Deliberately a separate tool type from <see cref="FileTools"/>, which carries the write side and is
@@ -41,19 +41,18 @@ public sealed class FileReadTools
         OpenWorld = true,
         UseStructuredContent = true)]
     [Description(
-        "Read a file off the machine hosting this server, returned as base64, without needing an SMB " +
-        "share. This is the reverse of put_file and the way to retrieve what the server produced - the " +
-        "dump capture_dump wrote, the .pml or .csv capture_activity wrote - without touching the admin " +
-        "share. By default it may only read inside the directories this server owns (its own folder and " +
+        "Read a file off the machine hosting this server, returned as base64 over the same authenticated " +
+        "channel as every other tool. This is the reverse of put_file and the way to retrieve what the " +
+        "server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and " +
         "the artifact directory, which is where every capture lands); reading anywhere else requires the " +
-        "server to have been started with WINDIAG_ALLOW_ARBITRARY_READ. " +
+        "server to have been started with its arbitrary-read grant. " +
         "A file larger than one slice is fetched by walking offset forward until endOfFile is true, " +
         "appending each slice; ask for includeWholeFileHash on the last one and compare it against the " +
         "reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the " +
         "slice rather than as an opaque mismatch at the end. " +
         "IMPORTANT: the bytes come back in the response, so they land in the caller's context - pulling " +
-        "a multi-megabyte dump this way is enormous. Use tools/fetch-from-target.ps1, which drives this " +
-        "same loop and streams straight to a local file.")]
+        "a multi-megabyte dump this way is enormous. Use the relay's pull_file, which drives this same " +
+        "loop and streams straight to a local file.")]
     public GetFileResult GetFile(
         [Description(@"Path on the host to read, e.g. the path capture_dump or capture_activity returned")]
         string path,

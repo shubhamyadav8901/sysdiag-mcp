@@ -868,7 +868,7 @@
   {
     "name": "get_file",
     "title": "Read a file back off the host",
-    "description": "Read a file off the machine hosting this server, returned as base64, without needing an SMB share. This is the reverse of put_file and the way to retrieve what the server produced - the dump capture_dump wrote, the .pml or .csv capture_activity wrote - without touching the admin share. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with WINDIAG_ALLOW_ARBITRARY_READ. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use tools/fetch-from-target.ps1, which drives this same loop and streams straight to a local file.",
+    "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1714,12 +1714,12 @@
   {
     "name": "put_file",
     "title": "Write a file on the host",
-    "description": "Write a file onto the machine hosting this server, sent as base64, without needing an SMB share. Use it to stage an updated server build for update_self, to place the Sysinternals binaries, or to drop an input file - anything that previously went over \\\\host\\C$. By default it may only write inside the directories this server owns (its own folder and the artifact directory), which is all staging needs; writing anywhere else requires the server to have been started with WINDIAG_ALLOW_ARBITRARY_WRITE. Pass expectedSha256 to have the written file verified and rolled back on mismatch - the same integrity check the share copy did. A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each later call sets append=true, and only the last passes expectedSha256, of the whole assembled file. Any one call is capped at ~128 MB; multi-gigabyte dumps stay on the UNC path capture_dump returns.",
+    "description": "Write a file onto the machine hosting this server, sent as base64 over the same authenticated channel as every other tool. Use it to stage an updated server build for update_self, to place the helper binaries a tool needs, or to drop an input file. By default it may only write inside the directories this server owns (its own folder and the artifact directory), which is all staging needs; writing anywhere else requires the server to have been started with its arbitrary-write grant. Pass expectedSha256 to have the written file verified and rolled back on mismatch. A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each later call sets append=true, and only the last passes expectedSha256, of the whole assembled file. Any one call is capped at ~128 MB.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "path": {
-          "description": "Destination path on the host, e.g. C:\\WinDiag\\WinDiag.Mcp.new.exe",
+          "description": "Destination path on the host, as the host spells it.",
           "type": "string"
         },
         "contentBase64": {

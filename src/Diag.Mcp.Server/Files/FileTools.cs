@@ -8,20 +8,19 @@ namespace Diag.Mcp.Server.Files;
 /// <summary>Structured result of <c>put_file</c>.</summary>
 public sealed record PutFileResult(string Summary, FileWriteResult File);
 
-/// <summary>Receiving a file over the server's own channel, so staging needs no SMB share.</summary>
+/// <summary>Receiving a file over the server's own channel, so staging needs no file share.</summary>
 /// <remarks>The read side lives in <see cref="FileReadTools"/>, which a read-only server still gets.</remarks>
 [McpServerToolType]
 public sealed class FileTools
 {
     /// <summary>
     /// Largest file accepted in one call, decoded. Kept in step with the HTTP request-body limit set in
-    /// Program.cs — this is the smaller of the two, so the tool gives the clearer error.
+    /// DiagServerHost — this is the smaller of the two, so the tool gives the clearer error.
     /// </summary>
     /// <remarks>
-    /// Generous enough for the compressed server binary (~48&#160;MB) and every Sysinternals binary, and
+    /// Generous enough for the compressed server binary (~48&#160;MB) and every helper binary, and
     /// bounded because the content arrives as base64 in a single JSON message held in memory on both
-    /// ends. Genuinely large artifacts — multi-gigabyte dumps — are not moved this way; they stay on the
-    /// UNC path capture_dump already returns, for exactly this reason.
+    /// ends. A larger file is sent in chunks with append, never in one message, for exactly this reason.
     /// </remarks>
     public const int MaxFileBytes = 128 * 1024 * 1024;
 
@@ -41,21 +40,19 @@ public sealed class FileTools
         OpenWorld = true,
         UseStructuredContent = true)]
     [Description(
-        "Write a file onto the machine hosting this server, sent as base64, without needing an SMB " +
-        "share. Use it to stage an updated server build for update_self, to place the Sysinternals " +
-        "binaries, or to drop an input file - anything that previously went over \\\\host\\C$. " +
+        "Write a file onto the machine hosting this server, sent as base64 over the same authenticated " +
+        "channel as every other tool. Use it to stage an updated server build for update_self, to place " +
+        "the helper binaries a tool needs, or to drop an input file. " +
         "By default it may only write inside the directories this server owns (its own folder and the " +
         "artifact directory), which is all staging needs; writing anywhere else requires the server to " +
-        "have been started with WINDIAG_ALLOW_ARBITRARY_WRITE. " +
-        "Pass expectedSha256 to have the written file verified and rolled back on mismatch - the same " +
-        "integrity check the share copy did. " +
+        "have been started with its arbitrary-write grant. " +
+        "Pass expectedSha256 to have the written file verified and rolled back on mismatch. " +
         "A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server " +
         "cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each " +
         "later call sets append=true, and only the last passes expectedSha256, of the whole assembled " +
-        "file. Any one call is capped at ~128 MB; multi-gigabyte dumps stay on the UNC path " +
-        "capture_dump returns.")]
+        "file. Any one call is capped at ~128 MB.")]
     public PutFileResult PutFile(
-        [Description(@"Destination path on the host, e.g. C:\WinDiag\WinDiag.Mcp.new.exe")]
+        [Description("Destination path on the host, as the host spells it.")]
         string path,
         [Description("The file's bytes (or this chunk's bytes), base64-encoded.")]
         string contentBase64,
@@ -75,8 +72,8 @@ public sealed class FileTools
         {
             throw new FileTransferException(
                 $"The file is {content.Length:N0} bytes, over the {MaxFileBytes:N0}-byte limit for a " +
-                "single put_file. Multi-gigabyte artifacts are not moved this way; a dump stays on the " +
-                "UNC path capture_dump returns.");
+                "single put_file. Send a larger file in chunks with append, as the relay's push_file " +
+                "does, rather than in one call.");
         }
 
         var result = _receiver.Receive(
@@ -88,9 +85,10 @@ public sealed class FileTools
     /// <summary>Decodes the payload, turning malformed base64 into a message the caller can act on.</summary>
     private static byte[] Decode(string contentBase64)
     {
+        // An empty payload is a valid, empty file -- and it is how the relay sends a zero-byte one.
         if (string.IsNullOrEmpty(contentBase64))
         {
-            throw new FileTransferException("contentBase64 is empty. Send the file's bytes base64-encoded.");
+            return [];
         }
 
         try

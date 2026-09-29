@@ -290,11 +290,17 @@ public sealed class PutFileToolTests
     }
 
     [Fact]
-    public void Rejects_an_empty_payload()
+    public void Empty_content_writes_an_empty_file_rather_than_being_refused()
     {
-        var tool = new FileTools(new StubReceiver());
+        // The relay sends a zero-byte file as one call with contentBase64 = "", so refusing empty
+        // content made pushing an empty file impossible. An empty payload is a valid file.
+        var stub = new StubReceiver();
+        var tool = new FileTools(stub);
 
-        Assert.Throws<FileTransferException>(() => tool.PutFile(@"C:\WinDiag\x.bin", ""));
+        tool.PutFile(Path.Combine(Path.GetTempPath(), "empty.bin"), "");
+
+        Assert.NotNull(stub.Last);
+        Assert.Empty(stub.Last!.Content);
     }
 
     [Fact]

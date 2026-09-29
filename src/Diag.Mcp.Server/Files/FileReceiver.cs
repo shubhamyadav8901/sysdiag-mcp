@@ -100,12 +100,35 @@ public sealed class FileReceiver : IFileReceiver
         return new FileWriteResult(full, request.Content.LongLength, sha, scope, existed);
     }
 
+    private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    private const UnixFileMode OwnerOnlyDirectory = OwnerOnly | UnixFileMode.UserExecute;
+
     private static void Write(string fullPath, byte[] content)
     {
         try
         {
             EnsureDirectory(fullPath);
-            File.WriteAllBytes(fullPath, content);
+
+            if (OperatingSystem.IsWindows())
+            {
+                File.WriteAllBytes(fullPath, content);
+                return;
+            }
+
+            // Cleared first: deleting a link removes the link, not what it points at. Recreated with
+            // CreateNew, which is O_EXCL -- it cannot follow a link and fails if one reappears -- and born
+            // 0600, so a file replacing a loose one never inherits its mode. The same pattern as the
+            // relay's partial files, for the same reason: this process may be root.
+            File.Delete(fullPath);
+            using var stream = new FileStream(fullPath, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                UnixCreateMode = OwnerOnly,
+            });
+            stream.Write(content, 0, content.Length);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -118,6 +141,15 @@ public sealed class FileReceiver : IFileReceiver
 
     private static void Append(string fullPath, byte[] content)
     {
+        // Every chunk after the first lands here. Off Windows a destination that has become a link since
+        // the first chunk is refused rather than followed; FileStream has no O_NOFOLLOW, so it is checked
+        // first, which narrows the window to the instant between the check and the open.
+        if (!OperatingSystem.IsWindows() && new FileInfo(fullPath).LinkTarget is not null)
+        {
+            throw new FileTransferException(
+                $"'{fullPath}' is a symbolic link, so this chunk was not appended. Start the transfer over.");
+        }
+
         try
         {
             EnsureDirectory(fullPath);
@@ -135,9 +167,19 @@ public sealed class FileReceiver : IFileReceiver
     private static void EnsureDirectory(string fullPath)
     {
         var directory = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrEmpty(directory))
+        if (string.IsNullOrEmpty(directory))
+        {
+            return;
+        }
+
+        if (OperatingSystem.IsWindows())
         {
             Directory.CreateDirectory(directory);
+        }
+        else
+        {
+            // Only directories this creates get the mode; an existing one is left as the operator set it.
+            Directory.CreateDirectory(directory, OwnerOnlyDirectory);
         }
     }
 
