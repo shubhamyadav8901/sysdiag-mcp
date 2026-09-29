@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
@@ -270,6 +271,44 @@ public sealed class RelayFileTransferTests : IDisposable
         Assert.Contains("already exists", ex.Message, StringComparison.Ordinal);
         Assert.Equal("collected earlier", await File.ReadAllTextAsync(path));
     }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public async Task A_pulled_file_and_the_directory_made_for_it_are_owner_only_on_unix()
+    {
+        // Pulls are process dumps and traces -- memory, and often credentials. Under the default umask
+        // they would land 0644 in a 0755 directory, readable by every local user.
+        var content = new byte[] { 1, 2, 3, 4 };
+        var path = Path.Combine(_directory, "made-for-it", "dump.bin");
+
+        await RelayFileTransfer.PullAsync(
+            Server(content), @"C:\WinDiag\x.bin", path, overwrite: false, CancellationToken.None);
+
+        Assert.Equal(content, await File.ReadAllBytesAsync(path));
+        Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path));
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            File.GetUnixFileMode(Path.GetDirectoryName(path)!));
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public async Task A_symlink_planted_at_the_partial_name_is_replaced_not_followed_on_unix()
+    {
+        // Anyone who can write the destination directory can put a link at <name>.partial. Followed, it
+        // makes the relay overwrite a file of their choosing with the operator's own rights.
+        var victim = Local("victim.txt");
+        await File.WriteAllTextAsync(victim, "not yours");
+        var path = Local("pulled.bin");
+        File.CreateSymbolicLink(path + ".partial", victim);
+
+        await RelayFileTransfer.PullAsync(
+            Server([9, 9, 9]), @"C:\WinDiag\x.bin", path, overwrite: false, CancellationToken.None);
+
+        Assert.Equal("not yours", await File.ReadAllTextAsync(victim));
+        Assert.Equal(new byte[] { 9, 9, 9 }, await File.ReadAllBytesAsync(path));
+        Assert.Null(new FileInfo(path).LinkTarget);
+    }
 }
 
 /// <summary>
@@ -296,7 +335,7 @@ public sealed class RelayFileScopeTests
     [Fact]
     public void The_default_build_root_is_the_tree_the_relay_sits_in_not_a_directory_below_it()
     {
-        // The relay ships at artifacts/relay/ and sends builds from artifacts/win-x64/, so the root has
+        // The relay ships at artifacts/diagrelay/ and sends builds from artifacts/win-x64/, so the root has
         // to be the level above the executable. A first version appended "artifacts" to the executable's
         // own directory, yielding artifacts/relay/artifacts -- a default that existed nowhere, so every
         // push of a build was refused until the environment variable was set.

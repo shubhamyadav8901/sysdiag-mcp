@@ -83,6 +83,17 @@ public sealed class RelayFileScopePortableTests
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), $"diag-scope-{Guid.NewGuid():N}");
 
+    [UnixFact]
+    public void The_default_artifact_root_is_not_the_shared_temp_directory_on_unix()
+    {
+        // On Linux the temp directory is /tmp, shared and world-writable: another user could create
+        // /tmp/windiag first and own it, read every dump pulled into it, and plant files inside
+        // push_file's default scope for the next deploy to send to a target.
+        Assert.False(
+            PathScope.IsUnder(RelayFileScope.DefaultArtifactRoot, Path.GetTempPath()),
+            $"'{RelayFileScope.DefaultArtifactRoot}' is under the shared temp directory '{Path.GetTempPath()}'.");
+    }
+
     [Fact]
     public void A_path_inside_a_root_is_allowed()
     {

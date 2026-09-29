@@ -25,7 +25,7 @@ body:
       options:
         - stdio (local)
         - HTTP (target machine)
-        - through the relay (--relay)
+        - through the relay (DiagRelay.Mcp)
     validations:
       required: true
   - type: textarea

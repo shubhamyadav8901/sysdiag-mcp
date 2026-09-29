@@ -172,7 +172,17 @@ internal static class RelayFileTransfer
         var directory = Path.GetDirectoryName(localFullPath);
         if (!string.IsNullOrEmpty(directory))
         {
-            Directory.CreateDirectory(directory);
+            // Owner-only off Windows: a pull is a dump or a trace, and a directory created under the
+            // default umask would be listable, and its files readable, by every local user.
+            if (OperatingSystem.IsWindows())
+            {
+                Directory.CreateDirectory(directory);
+            }
+            else
+            {
+                Directory.CreateDirectory(
+                    directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
 
         // Written to a temporary name and moved into place at the end, so an interrupted pull cannot
@@ -186,8 +196,7 @@ internal static class RelayFileTransfer
 
         try
         {
-            await using (var destination = new FileStream(
-                partial, FileMode.Create, FileAccess.Write, FileShare.None, ChunkBytes, useAsync: true))
+            await using (var destination = OpenPartial(partial))
             {
                 while (true)
                 {
@@ -271,6 +280,33 @@ internal static class RelayFileTransfer
         byte[] Content, string ChunkSha256, long TotalBytes, bool EndOfFile, string? WholeSha256);
 
     /// <summary>Pulls one slice out of a get_file response, insisting on the fields it must carry.</summary>
+    /// <summary>Opens the temporary file a pull writes into, owner-only and never through a link.</summary>
+    /// <remarks>
+    /// FileMode.Create follows a symlink and keeps an existing file's mode, so a link planted at
+    /// <c>name.partial</c> -- by anyone who can write the destination directory -- turned a pull into an
+    /// overwrite of a file of their choosing, with the operator's rights. Off Windows the name is cleared
+    /// first (deleting a link removes the link, not what it points at) and recreated with CreateNew,
+    /// which is O_EXCL: it cannot follow a link and fails if one reappears, and it is born 0600.
+    /// </remarks>
+    private static FileStream OpenPartial(string partial)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, ChunkBytes, useAsync: true);
+        }
+
+        File.Delete(partial);
+        return new FileStream(partial, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            BufferSize = ChunkBytes,
+            Options = FileOptions.Asynchronous,
+            UnixCreateMode = RelayTargetsFile.OwnerOnly,
+        });
+    }
+
     private static FileSlice Slice(CallToolResult result, string remotePath)
     {
         if (result.StructuredContent is not { } root

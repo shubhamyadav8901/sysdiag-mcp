@@ -15,7 +15,8 @@ if (args.Any(a => a is "--help" or "-h" or "/?"))
         Environment:
           WINDIAG_RELAY_FILE_ROOT  semicolon-separated local directories push_file may read from and
                                    pull_file may write to (default: the parent of this executable's
-                                   directory, plus the OS temp directory's 'windiag' folder)
+                                   directory, plus a per-user 'windiag' folder: %TEMP%\windiag on
+                                   Windows, $XDG_CACHE_HOME/windiag or ~/.cache/windiag elsewhere)
         """);
     return 0;
 }
