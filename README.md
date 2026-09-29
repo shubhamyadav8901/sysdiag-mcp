@@ -55,6 +55,17 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
 | `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
 
+## Requirements
+
+| Component | Runs on |
+|---|---|
+| `WinDiag.Mcp` — the diagnostics server | **Windows only**, x64 or x86. Its tools are Windows primitives: the registry, the SCM, the event log, Authenticode, Sysinternals. |
+| `DiagRelay.Mcp` — the local relay | Windows and Linux, verified — Linux with `tools/test-linux.sh`. macOS is built for but **untested** until the CI job has run on a pushed branch. |
+
+The relay is what lets a Mac or Linux machine drive Windows targets. Build it for the machine you are on:
+
+    dotnet publish src/DiagRelay.Mcp -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o artifacts/diagrelay
+
 ## Build and test
 
 ```
@@ -71,7 +82,7 @@ Sysinternals installed, rather than failing or silently passing.
 ```
 dotnet run --project src/WinDiag.Mcp                      # stdio
 dotnet run --project src/WinDiag.Mcp -- --http http://127.0.0.1:7777
-dotnet run --project src/WinDiag.Mcp -- --relay           # local relay to any target (see below)
+dotnet run --project src/DiagRelay.Mcp                   # local relay to any target (see below)
 WinDiag.Mcp --help
 ```
 
@@ -91,7 +102,7 @@ Locally over stdio:
 ### One stable MCP entry for a fleet of targets — the relay
 
 The targets are lab VMs whose IP changes every time, so a fixed `--http <url>` registration goes stale
-on every reboot. `--relay` solves that: it runs a **local stdio** MCP server on the base machine — no
+on every reboot. The relay solves that. `DiagRelay.Mcp` is its own executable that runs a **local stdio** MCP server on the base machine — no
 address of its own, so the registration never changes — that forwards to whichever target you point it
 at *at runtime*.
 
@@ -99,8 +110,10 @@ Register it once:
 
 ```json
 { "mcpServers": { "windiag": { "type": "stdio",
-    "command": "…/artifacts/relay/WinDiag.Mcp.exe", "args": ["--relay"] } } }
+    "command": "…/artifacts/diagrelay/DiagRelay.Mcp.exe", "args": [] } } }
 ```
+
+Keep the entry named `windiag`: forwarded tools are named after the registration — `windiag__runner1__capabilities` — not after the executable, so the name is what keeps them stable.
 
 It exposes five control tools — `connect`, `disconnect`, `status`, and the two transfer tools
 [`push_file` / `pull_file`](#moving-files-without-spending-context) below. Call `connect` with the target's
@@ -192,7 +205,7 @@ of it. `WINDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that rep
 build tree the relay sits in plus the local artifact directory; a `..` is judged by where it lands.
 
 That first default is the directory *above* the relay executable's own, which is what makes
-`push_file` work out of the box: the relay ships in `artifacts/relay` and the builds it exists to send
+`push_file` work out of the box: the relay ships in `artifacts/diagrelay` and the builds it exists to send
 sit beside it in `artifacts/win-x64`. The climb is one level and stops short of a drive root, so a relay
 unpacked somewhere odd cannot quietly default to an entire disk. Both defaults resolve against the
 running executable, so under `dotnet run` they point into dotnet's install directory — set the variable
@@ -673,7 +686,7 @@ level through an ordinary tool call. The token is the whole boundary.
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
-| `WINDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus `%TEMP%\windiag` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/relay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
+| `WINDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus the OS temp directory's `windiag` folder | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/diagrelay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
 silently defaulting, because the flag removes capability.

@@ -13,6 +13,23 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING: `WinDiag.Mcp.exe --relay`.** The relay is now its own executable, `DiagRelay.Mcp`,
+  published to `artifacts/diagrelay/`. Running the server with `--relay` now exits 2 with a message
+  naming the new executable, rather than falling through to stdio mode and silently serving this
+  machine's own tools in the fleet's place. To move over, point your MCP registration at
+  `DiagRelay.Mcp` and keep its name — every forwarded tool name stays the same. Because this removes a
+  documented interface, the next release is **2.0.0**, not a minor bump.
+
+### Added
+
+- **The relay runs on Linux** (verified), and is built for macOS (untested until CI has run on it). A
+  Linux machine can now drive Windows targets. Off Windows the relay's token file is created owner-only
+  (`0600`), concurrent relays serialise on a kernel-held file lock, and local paths are compared
+  case-sensitively — including on macOS, since APFS can be formatted case-sensitive and the check that
+  confines `push_file` fails closed.
+
 ### Documentation
 
 - **Said plainly that the channel is not encrypted.** The security notes covered the bearer token

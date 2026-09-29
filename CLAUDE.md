@@ -1,7 +1,8 @@
 # windiag — working notes for agents
 
 A Windows diagnostics MCP server. One self-contained executable that serves MCP over stdio locally
-or authenticated HTTP on a target machine, plus a relay mode that forwards to a fleet of targets.
+or authenticated HTTP on a target machine, plus a separate cross-platform relay, DiagRelay.Mcp, that
+forwards to a fleet of targets.
 
 ## Do not read source to answer a configuration question
 
@@ -9,8 +10,8 @@ Every operator-facing knob is documented, and the source is the slowest place to
 
 | Question | Answer lives in |
 |---|---|
-| What CLI options exist, including every `--install-service` flag | `WinDiag.Mcp.exe --help` — authoritative; `ServerBuilder.HelpText` is the same string |
-| What `WINDIAG_*` variables exist and what each defaults to | README **Configuration** table, and `--help` |
+| What CLI options exist, including every `--install-service` flag | `WinDiag.Mcp.exe --help` — authoritative; `ServerBuilder.HelpText` is the same string — for the server. The relay's options are in `DiagRelay.Mcp --help`. |
+| What `WINDIAG_*` variables exist and what each defaults to | README **Configuration** table, and each executable's `--help` |
 | Which flag sets which variable | Two spellings of one setting: `--allow-arbitrary-read` → `WINDIAG_ALLOW_ARBITRARY_READ=1`, written into the service's own registry key |
 | How to reach a machine that has never run windiag | README **Bringing up a machine that has never run windiag** |
 | What each `-Grants` preset actually passes | Same section. `None` is `--read-only` alone and **cannot read files** |
@@ -32,7 +33,9 @@ dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green bef
 - `tests/WinDiag.Mcp.OnTarget` needs a real machine, administrator rights and a kernel driver. It does
   not run in CI — see `tools/verify-on-target.ps1`.
 - Publishing is `-r win-x64` or `win-x86`, `--self-contained -p:PublishSingleFile=true`, into
-  `artifacts/win-<arch>/`. The relay runs the same binary with `--relay`.
+  `artifacts/win-<arch>/`. The relay is its own net9.0 project, `src/DiagRelay.Mcp`, published to
+  `artifacts/diagrelay/`. Test it on real Linux with `tools/test-linux.sh` through WSL — mode, lock and
+  case-sensitivity tests only run there.
 - **A dependency reached only by reflection must be an explicit `PackageReference`.** It will not
   otherwise survive to the published set, while the test host — which is not published — always has
   it, so the suite stays green and only the shipped build breaks. CI asserts the known cases.
