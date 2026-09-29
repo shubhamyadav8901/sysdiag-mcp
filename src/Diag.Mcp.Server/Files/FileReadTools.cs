@@ -1,11 +1,9 @@
 using System.ComponentModel;
 using System.Globalization;
-using System.Runtime.Versioning;
 using System.Text;
 using ModelContextProtocol.Server;
-using WinDiag.Mcp.Diagnostics.Files;
 
-namespace WinDiag.Mcp.Tools;
+namespace Diag.Mcp.Server.Files;
 
 /// <summary>Structured result of <c>get_file</c>.</summary>
 /// <remarks>
@@ -25,7 +23,6 @@ public sealed record GetFileResult(string Summary, FileReadResult File);
 /// ActivityCaptureTools/ActivityQueryTools split for the same reason.
 /// </remarks>
 [McpServerToolType]
-[SupportedOSPlatform("windows")]
 public sealed class FileReadTools
 {
     private readonly IFileSender _sender;

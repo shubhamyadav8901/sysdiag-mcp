@@ -1,0 +1,22 @@
+namespace Diag.Mcp.Server.Files;
+
+/// <summary>What the transfer tools may touch, and how to tell a caller to widen it.</summary>
+/// <param name="ArtifactDirectory">
+/// Owned by the server, beside its own directory. There is deliberately no default: on Linux the
+/// obvious one, the temp directory, is the shared world-writable /tmp -- the defect already fixed once
+/// in the relay. Each server must choose.
+/// </param>
+/// <param name="AllowArbitraryWrite">Whether <c>put_file</c> may write outside the owned directories.</param>
+/// <param name="AllowArbitraryRead">Whether <c>get_file</c> may read outside the owned directories.</param>
+/// <param name="ArbitraryWriteSetting">The setting a refusal names, e.g. "WINDIAG_ALLOW_ARBITRARY_WRITE=1".</param>
+/// <param name="ArbitraryReadSetting">The setting a refusal names, e.g. "WINDIAG_ALLOW_ARBITRARY_READ=1".</param>
+/// <remarks>
+/// There is no read-only flag here: a read-only server does not register <c>put_file</c> at all, so a
+/// flag the receiver would never read has no place on it.
+/// </remarks>
+public sealed record FileTransferOptions(
+    string ArtifactDirectory,
+    bool AllowArbitraryWrite,
+    bool AllowArbitraryRead,
+    string ArbitraryWriteSetting,
+    string ArbitraryReadSetting);

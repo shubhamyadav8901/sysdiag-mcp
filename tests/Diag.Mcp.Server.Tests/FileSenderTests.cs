@@ -1,10 +1,8 @@
-using System.Collections;
 using System.Security.Cryptography;
+using Diag.Mcp.Server.Files;
 using Microsoft.Extensions.Logging.Abstractions;
-using WinDiag.Mcp.Configuration;
-using WinDiag.Mcp.Diagnostics.Files;
 
-namespace WinDiag.Mcp.Tests;
+namespace Diag.Mcp.Server.Tests;
 
 /// <summary>
 /// Reading a file back off the host. The scope boundary is the security-critical part and is the same
@@ -32,13 +30,10 @@ public sealed class FileSenderTests : IDisposable
         }
     }
 
-    private WindowsFileSender Sender(bool allowArbitrary = false) =>
-        new(WinDiagOptions.FromEnvironment(new Hashtable
-            {
-                ["WINDIAG_ARTIFACT_DIR"] = _artifactDir,
-                ["WINDIAG_ALLOW_ARBITRARY_READ"] = allowArbitrary ? "1" : "0"
-            }),
-            NullLogger<WindowsFileSender>.Instance);
+    private FileSender Sender(bool allowArbitrary = false) =>
+        new(new FileTransferOptions(_artifactDir, false, allowArbitrary,
+                "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1"),
+            NullLogger<FileSender>.Instance);
 
     /// <summary>Writes a file of <paramref name="size"/> bytes with a recognisable, position-dependent pattern.</summary>
     private string Fixture(string name, int size, string? directory = null)
@@ -156,23 +151,23 @@ public sealed class FileSenderTests : IDisposable
     [Fact]
     public void A_length_over_the_cap_is_clamped_rather_than_refused()
     {
-        var path = Fixture("big.bin", WindowsFileSender.MaxLength + 5000);
+        var path = Fixture("big.bin", FileSender.MaxLength + 5000);
 
         var result = Sender().Read(
             new FileReadRequest(path, 0, int.MaxValue), CancellationToken.None);
 
-        Assert.Equal(WindowsFileSender.MaxLength, result.Length);
+        Assert.Equal(FileSender.MaxLength, result.Length);
         Assert.False(result.EndOfFile);
     }
 
     [Fact]
     public void A_length_of_zero_takes_the_default()
     {
-        var path = Fixture("big.bin", WindowsFileSender.DefaultLength * 2);
+        var path = Fixture("big.bin", FileSender.DefaultLength * 2);
 
         var result = Sender().Read(new FileReadRequest(path), CancellationToken.None);
 
-        Assert.Equal(WindowsFileSender.DefaultLength, result.Length);
+        Assert.Equal(FileSender.DefaultLength, result.Length);
     }
 
     [Fact]

@@ -1,9 +1,7 @@
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
-using WinDiag.Mcp.Configuration;
 
-namespace WinDiag.Mcp.Diagnostics.Files;
+namespace Diag.Mcp.Server.Files;
 
 /// <summary>
 /// Writes a received file to disk, confined to windiag's own directories unless arbitrary write is
@@ -22,13 +20,12 @@ namespace WinDiag.Mcp.Diagnostics.Files;
 /// The path is canonicalised with <see cref="Path.GetFullPath(string)"/> first, so a <c>..</c> that
 /// climbs out of an owned directory is judged by where it actually lands, not by how it was spelled.</para>
 /// </remarks>
-[SupportedOSPlatform("windows")]
-public sealed class WindowsFileReceiver : IFileReceiver
+public sealed class FileReceiver : IFileReceiver
 {
-    private readonly WinDiagOptions _options;
-    private readonly ILogger<WindowsFileReceiver> _logger;
+    private readonly FileTransferOptions _options;
+    private readonly ILogger<FileReceiver> _logger;
 
-    public WindowsFileReceiver(WinDiagOptions options, ILogger<WindowsFileReceiver> logger)
+    public FileReceiver(FileTransferOptions options, ILogger<FileReceiver> logger)
     {
         _options = options;
         _logger = logger;
@@ -47,7 +44,7 @@ public sealed class WindowsFileReceiver : IFileReceiver
             throw new FileTransferException(
                 $"'{full}' is outside the directories this server owns ({FileScope.Describe(_options)}), " +
                 "so writing it needs arbitrary write, which is off. " +
-                "Set WINDIAG_ALLOW_ARBITRARY_WRITE=1 to allow writing anywhere, or choose a path under " +
+                $"Set {_options.ArbitraryWriteSetting} to allow writing anywhere, or choose a path under " +
                 "one of those directories. (run_command can also place a file anywhere if it is enabled.)");
         }
 

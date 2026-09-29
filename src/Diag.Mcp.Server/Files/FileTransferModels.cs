@@ -1,4 +1,4 @@
-namespace WinDiag.Mcp.Diagnostics.Files;
+namespace Diag.Mcp.Server.Files;
 
 /// <summary>Where a transferred file sits, relative to the directories windiag owns.</summary>
 /// <remarks>Reported for reads as well as writes; the same boundary governs both directions.</remarks>

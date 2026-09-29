@@ -1,16 +1,14 @@
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
-using WinDiag.Mcp.Configuration;
 
-namespace WinDiag.Mcp.Diagnostics.Files;
+namespace Diag.Mcp.Server.Files;
 
 /// <summary>
 /// Reads a file back off the target, confined to windiag's own directories unless arbitrary read is
 /// enabled.
 /// </summary>
 /// <remarks>
-/// <para>The counterpart to <see cref="WindowsFileReceiver"/>, and it exists for the same reason: to
+/// <para>The counterpart to <see cref="FileReceiver"/>, and it exists for the same reason: to
 /// take SMB out of the loop. Until now everything the server PRODUCED -- a minidump, a Procmon trace --
 /// came back only as a UNC path on the admin share, so retrieving it dragged in the whole
 /// "System error 5" token-filtering dance that <c>put_file</c> had already removed from staging. Reading
@@ -24,8 +22,7 @@ namespace WinDiag.Mcp.Diagnostics.Files;
 /// directory is arbitrary read as the server's account -- on an elevated server that is exfiltration of
 /// anything it can open -- so it is refused unless explicitly enabled.</para>
 /// </remarks>
-[SupportedOSPlatform("windows")]
-public sealed class WindowsFileSender : IFileSender
+public sealed class FileSender : IFileSender
 {
     /// <summary>Largest slice a single call will return, matching the write side's chunk size.</summary>
     /// <remarks>
@@ -37,10 +34,10 @@ public sealed class WindowsFileSender : IFileSender
     /// <summary>What a caller gets when it does not say. Small, because a slice lands in its context.</summary>
     public const int DefaultLength = 64 * 1024;
 
-    private readonly WinDiagOptions _options;
-    private readonly ILogger<WindowsFileSender> _logger;
+    private readonly FileTransferOptions _options;
+    private readonly ILogger<FileSender> _logger;
 
-    public WindowsFileSender(WinDiagOptions options, ILogger<WindowsFileSender> logger)
+    public FileSender(FileTransferOptions options, ILogger<FileSender> logger)
     {
         _options = options;
         _logger = logger;
@@ -58,7 +55,7 @@ public sealed class WindowsFileSender : IFileSender
         {
             throw new FileTransferException(
                 $"'{full}' is outside the directories this server owns ({FileScope.Describe(_options)}), " +
-                "so reading it needs arbitrary read, which is off. Set WINDIAG_ALLOW_ARBITRARY_READ=1 to " +
+                $"so reading it needs arbitrary read, which is off. Set {_options.ArbitraryReadSetting} to " +
                 "allow reading anywhere, or copy the file into one of those directories first. " +
                 "(run_command can also read a file out if it is enabled.)");
         }

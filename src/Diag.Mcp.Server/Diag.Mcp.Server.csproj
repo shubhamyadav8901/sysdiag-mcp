@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Using Include="Diag.Mcp.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Diag.Mcp.Server.Tests" />
     <InternalsVisibleTo Include="WinDiag.Mcp.Tests" />
   </ItemGroup>

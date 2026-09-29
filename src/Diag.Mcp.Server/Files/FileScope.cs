@@ -1,7 +1,5 @@
-using System.Runtime.Versioning;
-using WinDiag.Mcp.Configuration;
 
-namespace WinDiag.Mcp.Diagnostics.Files;
+namespace Diag.Mcp.Server.Files;
 
 /// <summary>
 /// Decides whether a path is inside a directory windiag owns. Shared by both directions of transfer.
@@ -13,7 +11,6 @@ namespace WinDiag.Mcp.Diagnostics.Files;
 /// canonicalised first, so a <c>..</c> that climbs out of an owned directory is judged by where it
 /// actually lands, not by how it was spelled.
 /// </remarks>
-[SupportedOSPlatform("windows")]
 internal static class FileScope
 {
     /// <summary>The directory the running server executable lives in.</summary>
@@ -23,13 +20,13 @@ internal static class FileScope
     public static string Resolve(string? path, string what) => PathScope.Resolve(path, what);
 
     /// <summary>Whether the path sits inside a windiag-owned directory or anywhere else.</summary>
-    public static WriteScope Of(string fullPath, WinDiagOptions options) =>
+    public static WriteScope Of(string fullPath, FileTransferOptions options) =>
         IsUnder(fullPath, ServerDirectory) || IsUnder(fullPath, options.ArtifactDirectory)
             ? WriteScope.WinDiag
             : WriteScope.Arbitrary;
 
     /// <summary>Names the owned directories, for an error message that says where a path *would* be allowed.</summary>
-    public static string Describe(WinDiagOptions options) =>
+    public static string Describe(FileTransferOptions options) =>
         $"{ServerDirectory} and {options.ArtifactDirectory}";
 
     /// <summary>True when <paramref name="candidate"/> is the directory itself or something inside it.</summary>

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Diag.Mcp.Server.Files;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol;
@@ -13,7 +14,6 @@ using WinDiag.Mcp.Diagnostics.Commands;
 using WinDiag.Mcp.Diagnostics.Dumps;
 using WinDiag.Mcp.Diagnostics.EventLogs;
 using WinDiag.Mcp.Diagnostics.External;
-using WinDiag.Mcp.Diagnostics.Files;
 using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Locks;
 using WinDiag.Mcp.Diagnostics.Network;
@@ -126,6 +126,9 @@ public static class ServerBuilder
         ArgumentNullException.ThrowIfNull(options);
 
         services.AddSingleton(options);
+        services.AddSingleton(new FileTransferOptions(
+            options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
+            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1"));
         services.TryAddDiagnostics();
 
         // Lets the same executable run under the Service Control Manager as well as from a terminal.
@@ -244,8 +247,8 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IAccessInspector, WindowsAccessInspector>();
         services.AddSingletonIfMissing<IRegistryInspector, WindowsRegistryInspector>();
         services.AddSingletonIfMissing<ICommandRunner, WindowsCommandRunner>();
-        services.AddSingletonIfMissing<IFileReceiver, WindowsFileReceiver>();
-        services.AddSingletonIfMissing<IFileSender, WindowsFileSender>();
+        services.AddSingletonIfMissing<IFileReceiver, FileReceiver>();
+        services.AddSingletonIfMissing<IFileSender, FileSender>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();

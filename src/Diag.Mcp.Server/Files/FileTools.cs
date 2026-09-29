@@ -1,11 +1,9 @@
 using System.ComponentModel;
 using System.Globalization;
-using System.Runtime.Versioning;
 using System.Text;
 using ModelContextProtocol.Server;
-using WinDiag.Mcp.Diagnostics.Files;
 
-namespace WinDiag.Mcp.Tools;
+namespace Diag.Mcp.Server.Files;
 
 /// <summary>Structured result of <c>put_file</c>.</summary>
 public sealed record PutFileResult(string Summary, FileWriteResult File);
@@ -13,7 +11,6 @@ public sealed record PutFileResult(string Summary, FileWriteResult File);
 /// <summary>Receiving a file over the server's own channel, so staging needs no SMB share.</summary>
 /// <remarks>The read side lives in <see cref="FileReadTools"/>, which a read-only server still gets.</remarks>
 [McpServerToolType]
-[SupportedOSPlatform("windows")]
 public sealed class FileTools
 {
     /// <summary>

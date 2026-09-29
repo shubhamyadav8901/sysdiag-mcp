@@ -12,9 +12,14 @@ public sealed class CapabilityReporterTests
     private static FakeToolLocator FullyStaged() =>
         new("handle.exe", "handle64.exe", "Procmon.exe", "Procmon64.exe");
 
-    /// <summary>Every tool name the assembly actually registers with the MCP SDK.</summary>
+    /// <summary>Every tool name this server's assembly and the shared kit declare to the MCP SDK.</summary>
+    /// <remarks>
+    /// Both assemblies, because put_file, get_file and capabilities are declared in the kit: a guard
+    /// over this assembly alone would stop covering them the moment they moved.
+    /// </remarks>
     private static IEnumerable<string> RegisteredToolNames() =>
-        typeof(FileLockTools).Assembly.GetTypes()
+        new[] { typeof(FileLockTools).Assembly, typeof(DiagServerKit).Assembly }
+            .SelectMany(assembly => assembly.GetTypes())
             .Where(type => type.GetCustomAttribute<McpServerToolTypeAttribute>() is not null)
             .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             .Select(method => method.GetCustomAttribute<McpServerToolAttribute>())

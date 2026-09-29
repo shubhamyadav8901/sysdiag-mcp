@@ -1,11 +1,8 @@
-using System.Collections;
 using System.Security.Cryptography;
+using Diag.Mcp.Server.Files;
 using Microsoft.Extensions.Logging.Abstractions;
-using WinDiag.Mcp.Configuration;
-using WinDiag.Mcp.Diagnostics.Files;
-using WinDiag.Mcp.Tools;
 
-namespace WinDiag.Mcp.Tests;
+namespace Diag.Mcp.Server.Tests;
 
 /// <summary>
 /// The scope boundary is the security-critical part: a write lands freely only inside a windiag-owned
@@ -32,13 +29,10 @@ public sealed class FileReceiverTests : IDisposable
         }
     }
 
-    private WindowsFileReceiver Receiver(bool allowArbitrary = false) =>
-        new(WinDiagOptions.FromEnvironment(new Hashtable
-            {
-                ["WINDIAG_ARTIFACT_DIR"] = _artifactDir,
-                ["WINDIAG_ALLOW_ARBITRARY_WRITE"] = allowArbitrary ? "1" : "0"
-            }),
-            NullLogger<WindowsFileReceiver>.Instance);
+    private FileReceiver Receiver(bool allowArbitrary = false) =>
+        new(new FileTransferOptions(_artifactDir, allowArbitrary, false,
+                "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1"),
+            NullLogger<FileReceiver>.Instance);
 
     private static byte[] Bytes(string s) => System.Text.Encoding.UTF8.GetBytes(s);
 

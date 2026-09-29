@@ -103,9 +103,12 @@ public sealed class OutputSerializationTests
         var found = new HashSet<Type>();
         var queue = new Queue<Type>();
 
-        var returnTypes = typeof(ServerBuilder).Assembly
-            .GetTypes()
-            .Where(type => type.Namespace?.StartsWith("WinDiag.Mcp.Tools", StringComparison.Ordinal) == true)
+        // Both assemblies: tool classes shared with other servers live in the kit, and a guard that
+        // reflected over this assembly alone would stop checking their results the moment they moved.
+        var returnTypes = new[] { typeof(ServerBuilder).Assembly, typeof(DiagServerKit).Assembly }
+            .SelectMany(assembly => assembly.GetTypes())
+            .Where(type => type.Namespace?.StartsWith("WinDiag.Mcp.Tools", StringComparison.Ordinal) == true
+                || type.Namespace?.StartsWith("Diag.Mcp.Server", StringComparison.Ordinal) == true)
             .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
                 | BindingFlags.Instance | BindingFlags.Static))
             .Where(method => method.GetCustomAttributes()
