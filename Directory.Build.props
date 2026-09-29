@@ -16,6 +16,13 @@
     <!-- P/Invoke signatures are hand-written and reviewed; the analyzer's source-generated
          LibraryImport suggestion is noise for the small surface we declare. -->
     <NoWarn>$(NoWarn);SYSLIB1054</NoWarn>
+
+    <!-- One version for the whole family: the server and the relay ship as one release. Each project
+         once carried its own copy and the release step bumped only the server's, so they would have
+         shipped different numbers. VersioningTests fails if any project grows its own copy again. -->
+    <Version>1.3.0</Version>
+    <FileVersion>1.3.0.0</FileVersion>
+    <AssemblyVersion>1.3.0.0</AssemblyVersion>
   </PropertyGroup>
 
 </Project>
