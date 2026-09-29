@@ -93,4 +93,32 @@ public sealed class UnixFileWriteTests : IDisposable
             new FileWriteRequest(path, [1], Append: true), CancellationToken.None));
         Assert.Equal("not yours", File.ReadAllText(victim));
     }
+
+    [LinuxFact]
+    [SupportedOSPlatform("linux")]
+    public void The_no_follow_open_refuses_a_link_by_itself()
+    {
+        // Called directly, with no check before it: the refusal has to come from open(2) itself, which
+        // is what closes the window between checking the path and opening it.
+        var victim = Path.Combine(_root, "victim.txt");
+        File.WriteAllText(victim, "not yours");
+        var link = Path.Combine(_root, "link.bin");
+        File.CreateSymbolicLink(link, victim);
+
+        Assert.Throws<FileTransferException>(() => LinuxNoFollow.OpenForAppend(link).Dispose());
+        Assert.Equal("not yours", File.ReadAllText(victim));
+    }
+
+    [LinuxFact]
+    [SupportedOSPlatform("linux")]
+    public void The_no_follow_open_creates_the_file_owner_only_and_appends()
+    {
+        var path = Path.Combine(_root, "fresh.bin");
+
+        using (var stream = LinuxNoFollow.OpenForAppend(path)) { stream.Write([1, 2]); }
+        using (var stream = LinuxNoFollow.OpenForAppend(path)) { stream.Write([3]); }
+
+        Assert.Equal(OwnerReadWrite, File.GetUnixFileMode(path));
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(path));
+    }
 }

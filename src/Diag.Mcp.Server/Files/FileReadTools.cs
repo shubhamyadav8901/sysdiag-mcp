@@ -54,7 +54,7 @@ public sealed class FileReadTools
         "a multi-megabyte dump this way is enormous. Use the relay's pull_file, which drives this same " +
         "loop and streams straight to a local file.")]
     public GetFileResult GetFile(
-        [Description(@"Path on the host to read, e.g. the path capture_dump or capture_activity returned")]
+        [Description("Path on the host to read, e.g. the path a capture or dump tool returned")]
         string path,
         [Description("Byte offset to start at. Walk this forward to fetch a whole file. Default 0.")]
         long offset = 0,

@@ -134,16 +134,35 @@ public sealed class FileReceiver : IFileReceiver
         {
             throw new FileTransferException(
                 $"Could not write '{fullPath}': {ex.Message}. The file may be locked (a running binary " +
-                "cannot be overwritten in place — stage to a .new name and use update_self), or the " +
+                "cannot be overwritten in place — stage it under a new name and use update_self), or the " +
                 "account may lack write access there.", ex);
         }
     }
 
     private static void Append(string fullPath, byte[] content)
     {
-        // Every chunk after the first lands here. Off Windows a destination that has become a link since
-        // the first chunk is refused rather than followed; FileStream has no O_NOFOLLOW, so it is checked
-        // first, which narrows the window to the instant between the check and the open.
+        // Every chunk after the first lands here, and a destination that has become a link since the
+        // first chunk must be refused rather than followed. On x86-64 Linux open(2) itself refuses it,
+        // in the same system call that opens: no window between checking and opening.
+        if (OperatingSystem.IsLinux() && LinuxNoFollow.Supported)
+        {
+            try
+            {
+                EnsureDirectory(fullPath);
+                using var noFollow = LinuxNoFollow.OpenForAppend(fullPath);
+                noFollow.Write(content, 0, content.Length);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new FileTransferException(
+                    $"Could not append to '{fullPath}': {ex.Message}. If a previous chunked transfer was " +
+                    "interrupted, delete the partial file and start over.", ex);
+            }
+        }
+
+        // The fallback, for every other Unix: FileStream has no O_NOFOLLOW, so the link is checked first,
+        // which narrows the window to the instant between the check and the open.
         if (!OperatingSystem.IsWindows() && new FileInfo(fullPath).LinkTarget is not null)
         {
             throw new FileTransferException(

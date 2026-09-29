@@ -13,9 +13,8 @@ public sealed record CapabilitiesResult(
 /// <summary>The <c>capabilities</c> tool: what can this server actually see on this machine.</summary>
 /// <remarks>
 /// Shared, with the rules in <see cref="CapabilityReporter"/>; what a server's tools need is its own
-/// <see cref="ICapabilityRequirements"/>. The description still names Sysinternals, because a
-/// description is compile-time text and the Windows server's tool list is pinned; the Linux server's
-/// part of the program is where that wording is generalised.
+/// <see cref="ICapabilityRequirements"/>. The description is compile-time text served by every server,
+/// so it names no platform's helper programs.
 /// </remarks>
 [McpServerToolType]
 public sealed class CapabilityTools
@@ -39,7 +38,7 @@ public sealed class CapabilityTools
         UseStructuredContent = true)]
     [Description(
         "Report which of this server's tools can actually answer completely on this machine, and why " +
-        "any cannot - a missing Sysinternals binary, or a tool that silently returns partial results " +
+        "any cannot - a missing helper program, or a tool that silently returns partial results " +
         "because the server is not elevated. Call this when a result looks surprisingly empty, before " +
         "concluding that nothing was found.")]
     public CapabilitiesResult Capabilities()

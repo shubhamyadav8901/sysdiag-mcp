@@ -38,6 +38,48 @@ public sealed class FileReceiverTests : IDisposable
 
     private static string Sha(byte[] b) => Convert.ToHexString(SHA256.HashData(b));
 
+    [UnixFact]
+    public void A_link_inside_an_owned_directory_does_not_widen_write_scope()
+    {
+        // The owned directory is judged by where a path really lands. A link planted inside it that
+        // points elsewhere must not turn "confined to my directories" into "anywhere the link goes".
+        Directory.CreateSymbolicLink(Path.Combine(_artifactDir, "escape"), _outsideDir);
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+            new FileWriteRequest(Path.Combine(_artifactDir, "escape", "planted.bin"), [1]), CancellationToken.None));
+
+        Assert.Contains("arbitrary write", ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(_outsideDir, "planted.bin")));
+    }
+
+    [WindowsFact]
+    public void A_junction_inside_an_owned_directory_does_not_widen_write_scope()
+    {
+        // The Windows form of the same escape. A junction needs no privilege to create, unlike a symlink.
+        var junction = Path.Combine(_artifactDir, "escape");
+        using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                   "cmd.exe", $"/c mklink /J \"{junction}\" \"{_outsideDir}\"") { CreateNoWindow = true, UseShellExecute = false })!)
+        {
+            mklink.WaitForExit();
+            Assert.Equal(0, mklink.ExitCode);
+        }
+
+        try
+        {
+            var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+                new FileWriteRequest(Path.Combine(junction, "planted.bin"), [1]), CancellationToken.None));
+
+            Assert.Contains("arbitrary write", ex.Message, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(_outsideDir, "planted.bin")));
+        }
+        finally
+        {
+            // Removed by itself, non-recursively: a recursive delete of the folder holding a junction is
+            // refused with access denied, which would fail the test on cleanup rather than on its claim.
+            Directory.Delete(junction);
+        }
+    }
+
     [Fact]
     public void Writes_freely_into_the_artifact_directory_with_no_flag()
     {

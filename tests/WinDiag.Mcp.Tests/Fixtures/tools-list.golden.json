@@ -178,7 +178,7 @@
   {
     "name": "capabilities",
     "title": "Server capabilities",
-    "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing Sysinternals binary, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
+    "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing helper program, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -873,7 +873,7 @@
       "type": "object",
       "properties": {
         "path": {
-          "description": "Path on the host to read, e.g. the path capture_dump or capture_activity returned",
+          "description": "Path on the host to read, e.g. the path a capture or dump tool returned",
           "type": "string"
         },
         "offset": {

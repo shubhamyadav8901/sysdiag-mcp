@@ -27,3 +27,15 @@ public sealed class UnixFactAttribute : FactAttribute
         }
     }
 }
+
+/// <summary>A fact that runs only on Linux -- run it with tools/test-linux.sh.</summary>
+public sealed class LinuxFactAttribute : FactAttribute
+{
+    public LinuxFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip = "Linux only. Run tools/test-linux.sh.";
+        }
+    }
+}

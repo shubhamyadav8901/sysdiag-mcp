@@ -63,8 +63,8 @@ public sealed class FileSender : IFileSender
         if (!File.Exists(full))
         {
             throw new FileTransferException(
-                $"'{full}' does not exist on this machine. capture_dump and capture_activity return the " +
-                "path they wrote; pass that verbatim.");
+                $"'{full}' does not exist on this machine. A tool that writes a file returns the path it " +
+                "wrote; pass that verbatim.");
         }
 
         if (request.Offset < 0)

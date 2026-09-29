@@ -51,6 +51,18 @@ public sealed class FileSenderTests : IDisposable
 
     private static string Sha(byte[] b) => Convert.ToHexString(SHA256.HashData(b));
 
+    [UnixFact]
+    public void A_link_inside_an_owned_directory_does_not_widen_read_scope()
+    {
+        File.WriteAllText(Path.Combine(_outsideDir, "secret.txt"), "not for you");
+        File.CreateSymbolicLink(Path.Combine(_artifactDir, "looks-owned.txt"), Path.Combine(_outsideDir, "secret.txt"));
+
+        var ex = Assert.Throws<FileTransferException>(() => Sender().Read(
+            new FileReadRequest(Path.Combine(_artifactDir, "looks-owned.txt")), CancellationToken.None));
+
+        Assert.Contains("arbitrary read", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Reads_freely_from_the_artifact_directory_with_no_flag()
     {

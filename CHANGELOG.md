@@ -35,6 +35,10 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Fixed
 
+- **`put_file` and `get_file` judge a path by where it really resolves.** A symlink (Linux) or junction
+  (Windows) inside a server-owned directory no longer carries a write or a read outside it without
+  the arbitrary grant: containment was checked on the path as spelled, so a link planted in an owned
+  folder looked owned wherever it pointed.
 - **`push_file` of an empty file now works.** The relay sends a zero-byte file as one call with no
   content, which the server refused as "contentBase64 is empty", so an empty file could not be pushed
   at all. Empty content is now an empty file; *missing* content (`null`) is still refused, since with
@@ -42,12 +46,14 @@ release fixed something that had been silently wrong, it says what the wrong ans
 - **`put_file` no longer follows a symbolic link off Windows, and writes owner-only there.** The write
   path is now shared with the coming Linux server, which runs as root: a file is replaced rather than
   written through a link at its path, and new files and directories — including a file an append
-  creates — are created `0600` and `0700`. An append is refused when the path is already a link as the
-  chunk arrives; a link swapped in during the instant between that check and the open is not caught
-  yet, and closing it needs `O_NOFOLLOW`. Windows behaviour is unchanged.
+  creates — are created `0600` and `0700`. An append to a path that has become a link is refused; on
+  x86-64 Linux the refusal comes from `open(2)` with `O_NOFOLLOW` itself, so no link can be swapped in
+  between the check and the open. Windows behaviour is unchanged.
 
 ### Changed
 
+- **The `capabilities` description, the `get_file` path hint and three put_file/get_file messages no
+  longer name Windows-only tools**, because the Linux server serves them too.
 - **`put_file` and `get_file` describe themselves without Windows-only wording** — no `C:\WinDiag`,
   SMB or UNC examples — because every server in the family now serves the same two tools. Their
   parameters and answers are unchanged. The refusal for a file over the single-call limit now says to
