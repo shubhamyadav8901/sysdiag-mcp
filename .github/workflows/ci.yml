@@ -38,6 +38,9 @@ jobs:
       - name: Test the relay
         run: dotnet test tests/DiagRelay.Mcp.Tests --no-build --verbosity normal
 
+      - name: Test the server kit
+        run: dotnet test tests/Diag.Mcp.Server.Tests --no-build --verbosity normal
+
       # Guards a failure the unit suite structurally cannot see. EventLog reaches
       # System.Threading.AccessControl only through a named-mutex path the compiler never records, so
       # it is absent from the publish set unless referenced outright -- while the test host, which is
@@ -82,3 +85,23 @@ jobs:
 
       - name: Test
         run: dotnet test tests/DiagRelay.Mcp.Tests --no-build --verbosity normal
+
+      # The shared server kit, including the Unix write-path tests that report Skipped on Windows and
+      # the relay<->kit contract test, which runs the relay's real transfer code against the kit.
+      - name: Build the server kit
+        run: dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
+
+      - name: Test the server kit
+        run: dotnet test tests/Diag.Mcp.Server.Tests --no-build --verbosity normal
+
+      # The kit carries a web server; the relay is a stdio client and must not. Checked on the publish
+      # set because a transitive reference would not show in the project file.
+      - name: The relay does not ship a web server
+        shell: pwsh
+        run: |
+          $rid = if ($IsMacOS) { 'osx-arm64' } else { 'linux-x64' }
+          dotnet publish src/DiagRelay.Mcp -c Release -r $rid --self-contained -p:PublishSingleFile=false `
+            -o artifacts/relay-k1
+          $web = Get-ChildItem artifacts/relay-k1 -Filter 'Microsoft.AspNetCore*'
+          if ($web) { throw "The relay's publish set contains ASP.NET Core: $($web.Name -join ', ')" }
+          Write-Host "relay publish set: no ASP.NET Core"

@@ -71,6 +71,8 @@ The relay is what lets a Mac or Linux machine drive Windows targets. Build it fo
 ```
 dotnet build -warnaserror
 dotnet test tests/WinDiag.Mcp.Tests          # offline; never touches the live machine
+dotnet test tests/Diag.Mcp.Server.Tests      # the shared server kit; also runs on Linux
+dotnet test tests/DiagRelay.Mcp.Tests        # the relay
 dotnet test tests/WinDiag.Mcp.OnTarget       # creates real locks on this machine
 ```
 

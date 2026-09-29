@@ -27,6 +27,7 @@ parser is a fact the next person greps for; that has already cost one session an
 dotnet build -warnaserror                 # 0 warnings is the gate, not just 0 errors
 dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green before any commit
 dotnet test tests/DiagRelay.Mcp.Tests     # the relay's suite; Unix-only tests report Skipped here
+dotnet test tests/Diag.Mcp.Server.Tests   # the shared server kit; runs on Linux too
 ```
 
 - **Gate on the exit code, never on grepping the output.** `dotnet build | grep "Error(s)"` *succeeds*
@@ -47,6 +48,12 @@ dotnet test tests/DiagRelay.Mcp.Tests     # the relay's suite; Unix-only tests r
 
 ## Things that are true and non-obvious
 
+- **Server code a Linux server will also need lives in `src/Diag.Mcp.Server`, not in `WinDiag.Mcp`.**
+  That is the relay's target contract (`put_file`/`get_file`), the bearer gate, error translation,
+  capabilities, and the update and command engines. A change to the contract is made there, once;
+  `RelayContractTests` runs the relay's real transfer code against it. An exception a tool throws on
+  purpose implements `IDiagnosticException`, or its message never reaches the caller. The kit is
+  `net9.0` and the relay must never reference it — CI checks the relay's publish set for ASP.NET Core.
 - **A diagnostic channel must never be able to break the thing it reports on.** Under the SCM there is
   no stderr, so logging goes to the event log; a sink that can throw took down `update_self` mid-run.
   Sinks are made safe or removed, never left to throw.

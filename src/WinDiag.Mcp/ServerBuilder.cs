@@ -128,10 +128,6 @@ public static class ServerBuilder
         ArgumentNullException.ThrowIfNull(options);
 
         services.AddSingleton(options);
-        services.AddSingleton(new FileTransferOptions(
-            options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
-            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1"));
-        services.AddSingleton(new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout));
         services.AddSingleton(new CommandRunnerOptions(options.ExternalToolTimeout));
         services.TryAddDiagnostics();
 
@@ -154,31 +150,18 @@ public static class ServerBuilder
         // the thing it reports on.
         EventLogSink.MakeSafe(services);
 
-        // Shared by the gate below and by SelfUpdater, so the update waits on the same count the
-        // filter maintains. Constructed here rather than resolved, because a request filter closure has
-        // no service provider; a fresh instance per call keeps tests isolated from each other.
-        var activity = new ToolActivity();
-        services.AddSingleton(activity);
-
-        // Pinned rather than inherited. This is the window the host allows for in-flight work to stop
-        // once shutdown begins, and the default happened to be 30s -- which is what truncated a
-        // 90-second capture during an update. An ordinary update no longer reaches it, because the drain
-        // waits for the server to be idle first; it still applies when that drain hits its own budget,
-        // and on the forced path, where it is the time in which capture_activity's cancellation kills
-        // Procmon. Shortening it would trade a truncated capture for an orphaned kernel driver.
-        services.Configure<HostOptions>(host => host.ShutdownTimeout = TimeSpan.FromSeconds(30));
+        // The surface every server in the family shares -- the two call-tool filters, file transfer and
+        // capabilities, the activity tracker and the shutdown window -- registered by the kit in one
+        // call. This server's own tools follow, on the builder it returns.
+        var files = new FileTransferOptions(
+            options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
+            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1");
+        var update = new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout);
 
         var mcp = services
-            .AddMcpServer()
-
-            // Before any tool: a refusal the caller cannot read is a refusal they will retry into.
-            .WithReadableToolErrors()
-
-            // Counts what is running, so update_self can wait for it instead of cutting it off.
-            .WithToolActivityGate(activity)
+            .AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _)
             .WithTools<FileLockTools>(ToolJsonOptions)
             .WithTools<SystemTools>(ToolJsonOptions)
-            .WithTools<CapabilityTools>(ToolJsonOptions)
             .WithTools<ServiceTools>(ToolJsonOptions)
             .WithTools<EventLogTools>(ToolJsonOptions)
             .WithTools<ProcessTools>(ToolJsonOptions)
@@ -187,13 +170,7 @@ public static class ServerBuilder
             .WithTools<ActivityQueryTools>(ToolJsonOptions)
             .WithTools<ModuleTools>(ToolJsonOptions)
             .WithTools<AutostartTools>(ToolJsonOptions)
-            .WithTools<RegistryTools>(ToolJsonOptions)
-
-            // Read side of the transfer, so it stays available on a read-only server: collecting a dump
-            // or a trace off a machine is exactly what someone pointed at one is doing, and the directory
-            // confinement -- not the mode -- is what bounds it. WINDIAG_ALLOW_ARBITRARY_READ only widens
-            // WHERE it may read, and is enforced per-call.
-            .WithTools<FileReadTools>(ToolJsonOptions);
+            .WithTools<RegistryTools>(ToolJsonOptions);
 
         // Write tools are registered here only when the server is not read-only, so a read-only server
         // does not advertise capabilities it will refuse. capture_dump and capture_activity write files
@@ -204,11 +181,7 @@ public static class ServerBuilder
             mcp.WithTools<ActivityCaptureTools>(ToolJsonOptions);
             mcp.WithTools<ControlTools>(ToolJsonOptions);
 
-            // Always available on a writable server, not behind a flag: confined to windiag's own
-            // directories it grants nothing SMB-to-those-folders plus update_self did not already, and
-            // its whole purpose is to remove SMB from the staging loop. The WINDIAG_ALLOW_ARBITRARY_WRITE
-            // flag only widens WHERE it may write, and is enforced per-call, not here.
-            mcp.WithTools<FileTools>(ToolJsonOptions);
+            // put_file is the kit's, and AddDiagServer registers it under the same read-only rule.
         }
 
         // Gated twice over, and off by default: this one lets the caller replace the server's own
@@ -255,8 +228,6 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IRegistryInspector, WindowsRegistryInspector>();
         services.AddSingletonIfMissing<IShellSet, WindowsShellSet>();
         services.AddSingletonIfMissing<ICommandRunner, CommandRunner>();
-        services.AddSingletonIfMissing<IFileReceiver, FileReceiver>();
-        services.AddSingletonIfMissing<IFileSender, FileSender>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
         services.AddSingletonIfMissing<IStagedBuildInspector, WindowsStagedBuildInspector>();
@@ -272,7 +243,6 @@ public static class ServerBuilder
             Diagnostics.Control.IServiceController, Diagnostics.Control.WindowsServiceControllerAdapter>();
         services.AddSingletonIfMissing<FileLockTools, FileLockTools>();
         services.AddSingletonIfMissing<SystemTools, SystemTools>();
-        services.AddSingletonIfMissing<CapabilityTools, CapabilityTools>();
         services.AddSingletonIfMissing<ServiceTools, ServiceTools>();
         services.AddSingletonIfMissing<EventLogTools, EventLogTools>();
         services.AddSingletonIfMissing<ProcessTools, ProcessTools>();
@@ -287,8 +257,6 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<AutostartTools, AutostartTools>();
         services.AddSingletonIfMissing<RegistryTools, RegistryTools>();
         services.AddSingletonIfMissing<CommandTools, CommandTools>();
-        services.AddSingletonIfMissing<FileTools, FileTools>();
-        services.AddSingletonIfMissing<FileReadTools, FileReadTools>();
         return services;
     }
 

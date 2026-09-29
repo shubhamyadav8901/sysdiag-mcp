@@ -33,6 +33,23 @@ release fixed something that had been silently wrong, it says what the wrong ans
   directory rather than the shared `/tmp`, where another local user could read them or plant a file
   for the next `push_file` to send to a target.
 
+### Fixed
+
+- **`push_file` of an empty file now works.** The relay sends a zero-byte file as one call with no
+  content, which the server refused as "contentBase64 is empty", so an empty file could not be pushed
+  at all.
+- **`put_file` no longer follows a symbolic link off Windows, and writes owner-only there.** The write
+  path is now shared with the coming Linux server, which runs as root: a file is replaced rather than
+  written through a link at its path, an append to a path that has become a link is refused, and new
+  files and directories are created `0600` and `0700`. Windows behaviour is unchanged.
+
+### Changed
+
+- **`put_file` and `get_file` describe themselves without Windows-only wording** — no `C:\WinDiag`,
+  SMB or UNC examples — because every server in the family now serves the same two tools. Their
+  parameters and answers are unchanged. The refusal for a file over the single-call limit now says to
+  send it in chunks, rather than pointing at a UNC path.
+
 ### Documentation
 
 - **Said plainly that the channel is not encrypted.** The security notes covered the bearer token

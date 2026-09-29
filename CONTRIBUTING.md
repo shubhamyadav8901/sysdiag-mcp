@@ -22,9 +22,11 @@ None of these looked like errors. If a result can be incomplete, say so in the r
 ```
 dotnet build -warnaserror
 dotnet test tests/WinDiag.Mcp.Tests
+dotnet test tests/Diag.Mcp.Server.Tests
+dotnet test tests/DiagRelay.Mcp.Tests
 ```
 
-Both must be clean before you push. `tests/WinDiag.Mcp.OnTarget` needs a real Windows target and is
+All must be clean before you push; the last two also run on Linux through `tools/test-linux.sh`. `tests/WinDiag.Mcp.OnTarget` needs a real Windows target and is
 not part of the normal loop.
 
 Run it locally over stdio:
