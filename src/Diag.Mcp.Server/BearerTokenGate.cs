@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 
-namespace WinDiag.Mcp.Hosting;
+namespace Diag.Mcp.Server;
 
 /// <summary>
 /// Rejects HTTP requests that do not carry the expected bearer token.

@@ -1,6 +1,5 @@
-using WinDiag.Mcp.Hosting;
 
-namespace WinDiag.Mcp.Tests;
+namespace Diag.Mcp.Server.Tests;
 
 /// <summary>
 /// Whether an update can tell that the server is busy.

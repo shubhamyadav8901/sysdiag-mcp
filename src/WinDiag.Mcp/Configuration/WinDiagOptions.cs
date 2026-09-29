@@ -1,16 +1,7 @@
 using System.Collections;
-using System.Globalization;
+using static Diag.Mcp.Server.EnvironmentSettings;
 
 namespace WinDiag.Mcp.Configuration;
-
-/// <summary>Raised when the environment configures the server into an unusable state.</summary>
-/// <remarks>Fails fast at startup rather than surfacing as a confusing failure on the first tool call.</remarks>
-public sealed class ConfigurationException : Exception
-{
-    public ConfigurationException(string message) : base(message)
-    {
-    }
-}
 
 /// <summary>Server configuration, read from <c>WINDIAG_*</c> environment variables.</summary>
 /// <remarks>
@@ -163,7 +154,7 @@ public sealed record WinDiagOptions
             MaxResults = ReadInt32(environment, "WINDIAG_MAX_RESULTS", 50_000, min: 1, max: 10_000_000),
             HttpBind = NullIfBlank(Read(environment, "WINDIAG_HTTP_BIND")),
             Token = NullIfBlank(Read(environment, "WINDIAG_TOKEN")),
-            ArtifactDirectory = ReadDirectory(environment, "WINDIAG_ARTIFACT_DIR")
+            ArtifactDirectory = ReadDirectory(environment, "WINDIAG_ARTIFACT_DIR", DefaultArtifactDirectory)
         };
     }
 
@@ -178,73 +169,4 @@ public sealed record WinDiagOptions
 
     /// <summary>Redacted by construction — see the note on the type.</summary>
     public override string ToString() => Describe();
-
-    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
-
-    /// <summary>Reads a directory path, rejecting a malformed one at startup rather than mid-capture.</summary>
-    /// <remarks>
-    /// Deliberately resolved to a full path here. A relative artifact directory would otherwise land
-    /// wherever the process happened to be started from, which on a target machine is unpredictable and
-    /// makes the returned path useless to the caller.
-    /// </remarks>
-    private static string ReadDirectory(IDictionary environment, string name)
-    {
-        var raw = NullIfBlank(Read(environment, name));
-        if (raw is null)
-        {
-            return DefaultArtifactDirectory;
-        }
-
-        try
-        {
-            return Path.GetFullPath(raw.Trim());
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            throw new ConfigurationException($"{name}='{raw}' is not a usable directory path: {ex.Message}");
-        }
-    }
-
-    private static string? Read(IDictionary environment, string name) =>
-        environment.Contains(name) ? environment[name] as string : null;
-
-    private static bool ReadBoolean(IDictionary environment, string name, bool defaultValue)
-    {
-        var raw = Read(environment, name);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return defaultValue;
-        }
-
-        // Deliberately strict. These flags remove capability or add risk, so a typo like
-        // WINDIAG_READ_ONLY=ture must fail loudly rather than silently granting write access.
-        return raw.Trim().ToLowerInvariant() switch
-        {
-            "1" or "true" or "yes" or "on" => true,
-            "0" or "false" or "no" or "off" => false,
-            _ => throw new ConfigurationException(
-                $"{name}='{raw}' is not a boolean. Use one of: 1/true/yes/on or 0/false/no/off.")
-        };
-    }
-
-    private static int ReadInt32(IDictionary environment, string name, int defaultValue, int min, int max)
-    {
-        var raw = Read(environment, name);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return defaultValue;
-        }
-
-        if (!int.TryParse(raw.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
-        {
-            throw new ConfigurationException($"{name}='{raw}' is not an integer.");
-        }
-
-        if (value < min || value > max)
-        {
-            throw new ConfigurationException($"{name}={value} is out of range; expected {min}..{max}.");
-        }
-
-        return value;
-    }
 }

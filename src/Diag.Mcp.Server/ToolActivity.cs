@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
-namespace WinDiag.Mcp.Hosting;
+namespace Diag.Mcp.Server;
 
 /// <summary>
 /// Counts the tool calls running right now, so an update can wait for them instead of cutting them off.

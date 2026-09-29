@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
-namespace WinDiag.Mcp.Hosting;
+namespace Diag.Mcp.Server;
 
 /// <summary>
 /// Reports every tool call to <see cref="ToolActivity"/>, and turns callers away during an update.
