@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using WinDiag.Mcp.Configuration;
+using Diag.Mcp.Server.SelfUpdate;
 using WinDiag.Mcp.Diagnostics.SelfUpdate;
 using WinDiag.Mcp.Diagnostics.Signatures;
 using WinDiag.Mcp.Hosting;
@@ -29,13 +30,21 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     /// <summary>The activity tracker the updater under test reports to, so a test can inspect it.</summary>
     private readonly ToolActivity _activity = new();
 
-    private SelfUpdater Updater() =>
-        new(
-            new WinTrustSignatureInspector(),
-            WinDiagOptions.FromEnvironment(new Hashtable { ["WINDIAG_ARTIFACT_DIR"] = _directory }),
+    /// <summary>The shared engine with this server's real inspector, ratchet and helper.</summary>
+    private SelfUpdater Updater()
+    {
+        var options = WinDiagOptions.FromEnvironment(new Hashtable { ["WINDIAG_ARTIFACT_DIR"] = _directory });
+        var signatures = new WinTrustSignatureInspector();
+
+        return new(
+            new WindowsStagedBuildInspector(signatures),
+            new WindowsSignatureRatchet(signatures, NullLogger<WindowsSignatureRatchet>.Instance),
+            new WindowsRestartHelper(options, NullLogger<WindowsRestartHelper>.Instance),
+            new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout),
             new StubLifetime(),
             _activity,
             NullLogger<SelfUpdater>.Instance);
+    }
 
     [Fact]
     public void Refuses_a_staged_name_that_is_a_path()
@@ -112,7 +121,7 @@ public sealed class SelfUpdateRejectionTests : IDisposable
         // port is taken. A machine in a state nobody inspecting it would predict -- and since the whole
         // reason to register a service is remote restart, that failure would land precisely when the
         // console visit it was meant to avoid is hardest to make.
-        var command = SelfUpdater.RelaunchCommand("windiag", @"C:\WinDiag\WinDiag.Mcp.exe", "--http http://x:4024");
+        var command = WindowsRestartHelper.RelaunchCommand("windiag", @"C:\WinDiag\WinDiag.Mcp.exe", "--http http://x:4024");
 
         Assert.Equal("sc start \"windiag\"", command);
         Assert.DoesNotContain("WinDiag.Mcp.exe", command, StringComparison.Ordinal);
@@ -123,7 +132,7 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     {
         // The path every existing deployment uses. Both arguments and the quoted path have to survive,
         // or the relaunched server comes back without its bind address and listens nowhere.
-        var command = SelfUpdater.RelaunchCommand(
+        var command = WindowsRestartHelper.RelaunchCommand(
             null, @"C:\WinDiag\WinDiag.Mcp.exe", "--http http://192.168.32.93:4024");
 
         Assert.Equal(
@@ -137,7 +146,7 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     {
         // The name is looked up by process id and that lookup can fail. Falling back to the by-hand
         // behaviour keeps a server running; emitting `sc start ""` would leave the machine with none.
-        Assert.StartsWith("start ", SelfUpdater.RelaunchCommand(serviceName, @"C:\w\x.exe", "--http h"),
+        Assert.StartsWith("start ", WindowsRestartHelper.RelaunchCommand(serviceName, @"C:\w\x.exe", "--http h"),
             StringComparison.Ordinal);
     }
 

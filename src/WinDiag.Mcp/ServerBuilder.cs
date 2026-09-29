@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Diag.Mcp.Server.Files;
+using Diag.Mcp.Server.SelfUpdate;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol;
@@ -129,6 +130,7 @@ public static class ServerBuilder
         services.AddSingleton(new FileTransferOptions(
             options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
             "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1"));
+        services.AddSingleton(new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout));
         services.TryAddDiagnostics();
 
         // Lets the same executable run under the Service Control Manager as well as from a terminal.
@@ -254,6 +256,9 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IFileSender, FileSender>();
         services.AddSingletonIfMissing<IDumpWriter, MiniDumpWriter>();
         services.AddSingletonIfMissing<IActivityInspector, ProcmonActivityInspector>();
+        services.AddSingletonIfMissing<IStagedBuildInspector, WindowsStagedBuildInspector>();
+        services.AddSingletonIfMissing<IUpdateGuard, WindowsSignatureRatchet>();
+        services.AddSingletonIfMissing<IRestartHelper, WindowsRestartHelper>();
         services.AddSingletonIfMissing<ISelfUpdater, SelfUpdater>();
         services.AddSingletonIfMissing<Diagnostics.Modules.IModuleInspector, Diagnostics.Modules.WindowsModuleInspector>();
         // Fully qualified: Diagnostics.Control.IServiceController would otherwise collide with

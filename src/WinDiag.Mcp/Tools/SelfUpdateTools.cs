@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
 using ModelContextProtocol.Server;
+using Diag.Mcp.Server.SelfUpdate;
 using WinDiag.Mcp.Diagnostics.SelfUpdate;
 
 namespace WinDiag.Mcp.Tools;

@@ -1,4 +1,4 @@
-namespace WinDiag.Mcp.Diagnostics.SelfUpdate;
+namespace Diag.Mcp.Server.SelfUpdate;
 
 /// <summary>Outcome of accepting a staged build for installation.</summary>
 /// <param name="RestartScheduled">
@@ -55,3 +55,35 @@ public sealed class SelfUpdateRejectedException : Exception, IDiagnosticExceptio
     {
     }
 }
+
+/// <summary>What was found about a staged build, before anything is decided about it.</summary>
+/// <param name="Sha256">Uppercase hex of the staged file.</param>
+/// <param name="SignatureVerdict">The platform's verdict on its signature, as reported to the caller.</param>
+/// <param name="SignatureDetail">Why, when the verdict is not a clean pass; null otherwise.</param>
+public sealed record StagedBuild(string Sha256, long SizeBytes, string SignatureVerdict, string? SignatureDetail);
+
+/// <summary>Hashes a staged build and reads its signature, the platform's way.</summary>
+public interface IStagedBuildInspector
+{
+    StagedBuild Inspect(string path, CancellationToken cancellationToken);
+}
+
+/// <summary>A per-platform rule the staged build must satisfy beyond its hash.</summary>
+/// <remarks>Throws <see cref="SelfUpdateRejectedException"/> to refuse; returning means acceptable.</remarks>
+public interface IUpdateGuard
+{
+    void RequireAcceptable(string livePath, StagedBuild staged, CancellationToken cancellationToken);
+}
+
+/// <summary>Starts whatever swaps the staged build in once this process has exited, and brings it back.</summary>
+/// <remarks>
+/// Must re-verify the hash itself before moving anything: the window between the engine's check and the
+/// swap is one an attacker with file access could otherwise use.
+/// </remarks>
+public interface IRestartHelper
+{
+    void Launch(string livePath, string stagedPath, string sha256, string logPath);
+}
+
+/// <summary>Where the update engine keeps its helper log, and how long it waits for running calls.</summary>
+public sealed record SelfUpdateOptions(string ArtifactDirectory, TimeSpan DrainTimeout);
