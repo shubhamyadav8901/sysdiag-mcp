@@ -12,6 +12,20 @@ namespace Diag.Mcp.Core;
 /// </remarks>
 public static class PathScope
 {
+    /// <summary>How paths compare on this OS: case-insensitively on Windows, case-sensitively elsewhere.</summary>
+    /// <remarks>
+    /// Case-sensitive on macOS too. APFS is case-insensitive by default but can be formatted
+    /// case-sensitive, and on such a volume a case-insensitive check admits a directory that is not the
+    /// root. This is a confinement boundary, so it fails closed: the cost on a default macOS volume is
+    /// that a path typed in a different case from its root is refused.
+    /// </remarks>
+    public static StringComparison PathComparison { get; } =
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    /// <summary><see cref="PathComparison"/> as a comparer, for collections of paths.</summary>
+    public static StringComparer PathComparer { get; } =
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
     /// <summary>The directory this process's executable lives in.</summary>
     public static string ProcessDirectory =>
         Path.GetDirectoryName(Environment.ProcessPath) ?? Environment.CurrentDirectory;
@@ -35,12 +49,19 @@ public static class PathScope
     }
 
     /// <summary>True when <paramref name="candidate"/> is the directory itself or something inside it.</summary>
+    public static bool IsUnder(string candidate, string directory) =>
+        IsUnder(candidate, directory, PathComparison);
+
+    /// <summary>
+    /// <see cref="IsUnder(string, string)"/> with the comparison chosen by the caller -- so the logic of
+    /// both platforms' branches can be pinned by tests on either platform.
+    /// </summary>
     /// <remarks>
     /// Compared on the canonical forms with a trailing separator, so <c>C:\WinDiagX\f</c> does not count
     /// as being under <c>C:\WinDiag</c> -- a prefix match without the separator boundary is the classic
     /// way a scope check is escaped.
     /// </remarks>
-    public static bool IsUnder(string candidate, string directory)
+    public static bool IsUnder(string candidate, string directory, StringComparison comparison)
     {
         string root;
         try
@@ -55,7 +76,6 @@ public static class PathScope
         var rootWithSep = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                           + Path.DirectorySeparatorChar;
 
-        return candidate.Equals(root, StringComparison.OrdinalIgnoreCase)
-               || candidate.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
+        return candidate.Equals(root, comparison) || candidate.StartsWith(rootWithSep, comparison);
     }
 }

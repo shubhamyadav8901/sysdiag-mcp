@@ -305,7 +305,7 @@ public sealed class RelayFileScopeTests
                                   ?? System.Environment.CurrentDirectory;
 
         Assert.True(
-            FileScopeIsUnder(executableDirectory, root),
+            PathScope.IsUnder(executableDirectory, root),
             $"the executable's directory '{executableDirectory}' should sit inside the default build " +
             $"root, but the root is '{root}'.");
 
@@ -322,13 +322,6 @@ public sealed class RelayFileScopeTests
 
         Assert.NotNull(Directory.GetParent(root));
     }
-
-    /// <summary>Mirrors the containment test the scope itself uses, for readability above.</summary>
-    private static bool FileScopeIsUnder(string candidate, string root) =>
-        candidate.Equals(root, StringComparison.OrdinalIgnoreCase)
-        || candidate.StartsWith(
-            root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
-            StringComparison.OrdinalIgnoreCase);
 
     [WindowsFact]
     public void The_variable_replaces_the_defaults_rather_than_adding_to_them()

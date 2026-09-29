@@ -47,7 +47,7 @@ internal static class RelayFileScope
             try
             {
                 var full = Path.GetFullPath(root);
-                if (!resolved.Contains(full, StringComparer.OrdinalIgnoreCase))
+                if (!resolved.Contains(full, PathScope.PathComparer))
                 {
                     resolved.Add(full);
                 }
@@ -124,11 +124,21 @@ internal static class RelayFileScope
             "arbitrary local file onto a target.");
     }
 
+    /// <summary>
+    /// Environment variable names are case-insensitive on Windows and case-sensitive everywhere else.
+    /// </summary>
+    /// <remarks>
+    /// Matters here more than most places: this variable sets the confinement root, and on Linux a
+    /// case-insensitive lookup could read a differently-named variable than the one the operator set.
+    /// </remarks>
+    private static StringComparison VariableNameComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     private static string? Value(IDictionary environment, string key)
     {
         foreach (DictionaryEntry entry in environment)
         {
-            if (entry.Key is string name && string.Equals(name, key, StringComparison.OrdinalIgnoreCase))
+            if (entry.Key is string name && string.Equals(name, key, VariableNameComparison))
             {
                 return entry.Value as string;
             }
