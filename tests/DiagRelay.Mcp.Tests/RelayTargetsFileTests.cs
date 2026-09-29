@@ -420,9 +420,54 @@ public sealed class RelayTargetsFileTests
         }
     }
 
+    [UnixFact]
+    public void A_held_lock_makes_a_second_relay_wait_and_then_give_up_with_a_reason()
+    {
+        // Two relays racing the same file is the normal case: one per Claude Code session.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            using (RelayTargetsFile.Lock(path, TimeSpan.FromSeconds(10)))
+            {
+                var ex = Assert.Throws<RelayException>(
+                    () => RelayTargetsFile.Lock(path, TimeSpan.FromMilliseconds(300)));
+
+                Assert.Contains("held the targets file lock", ex.Message, StringComparison.Ordinal);
+            }
+
+            // Released with its holder, so the next caller gets it at once.
+            using (RelayTargetsFile.Lock(path, TimeSpan.FromMilliseconds(300)))
+            {
+            }
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [UnixFact]
+    public void A_lock_file_left_by_a_relay_that_died_does_not_block_the_next_one()
+    {
+        // The kernel drops the lock with its holder; the file itself staying behind means nothing.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path + RelayTargetsFile.LockSuffix, "");
+
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "t", null));
+
+            Assert.Single(RelayTargetsFile.Load(path)!);
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
     private static void Delete(string path)
     {
-        foreach (var candidate in new[] { path, path + ".bak", path + ".tmp" })
+        foreach (var candidate in new[] { path, path + ".bak", path + ".tmp", path + ".lock" })
         {
             try { File.Delete(candidate); } catch (IOException) { /* best effort */ }
         }

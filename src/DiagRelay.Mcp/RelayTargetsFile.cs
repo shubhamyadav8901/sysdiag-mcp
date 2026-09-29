@@ -36,6 +36,9 @@ internal static class RelayTargetsFile
     /// <summary>Kept beside the file by every atomic write, so a torn or corrupted file has a fallback.</summary>
     private const string BackupSuffix = ".bak";
 
+    /// <summary>The sibling file Unix relays lock; it holds nothing, and a leftover one is harmless.</summary>
+    internal const string LockSuffix = ".lock";
+
     /// <summary>Owner read and write, nothing else: the Unix equivalent of the Windows ACL (0600).</summary>
     internal const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
@@ -354,16 +357,28 @@ internal static class RelayTargetsFile
     }
 
     /// <summary>Takes the cross-process lock that serialises every relay's access to this file.</summary>
-    private static IDisposable Lock(string path)
+    private static IDisposable Lock(string path) => Lock(path, LockTimeout);
+
+    /// <remarks>
+    /// A named mutex on Windows, where it is proven; an exclusive file lock everywhere else. .NET takes
+    /// FileShare.None on Unix with flock, whose locks belong to open file descriptions -- so two opens
+    /// conflict even inside one process, which lets an in-process test prove the cross-process
+    /// behaviour -- and the kernel releases it when its holder dies, with no abandonment to handle.
+    /// Setting DOTNET_SYSTEM_IO_DISABLEFILELOCKING turns that off and with it this lock; do not.
+    /// </remarks>
+    internal static IDisposable Lock(string path, TimeSpan timeout) =>
+        OperatingSystem.IsWindows() ? LockWithMutex(path, timeout) : LockWithFile(path, timeout);
+
+    private static IDisposable LockWithMutex(string path, TimeSpan timeout)
     {
         var mutex = CreateMutex(path);
 
         try
         {
-            if (!mutex.WaitOne(LockTimeout))
+            if (!mutex.WaitOne(timeout))
             {
                 throw new RelayException(
-                    $"another process has held the targets file lock for over {LockTimeout.TotalSeconds:0}s. " +
+                    $"another process has held the targets file lock for over {timeout.TotalSeconds:0}s. " +
                     "Retry, or check for a stuck relay process.");
             }
         }
@@ -379,6 +394,35 @@ internal static class RelayTargetsFile
         }
 
         return new Guard(mutex);
+    }
+
+    private static FileStream LockWithFile(string path, TimeSpan timeout)
+    {
+        var full = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            try
+            {
+                return new FileStream(full + LockSuffix, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(25);
+            }
+            catch (IOException ex)
+            {
+                throw new RelayException(
+                    $"another process has held the targets file lock for over {timeout.TotalSeconds:0}s. " +
+                    "Retry, or check for a stuck relay process.", ex);
+            }
+        }
     }
 
     private static Mutex CreateMutex(string path)
