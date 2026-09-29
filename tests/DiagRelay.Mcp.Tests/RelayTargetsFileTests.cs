@@ -453,6 +453,10 @@ public sealed class RelayTargetsFileTests
         // Created under the default umask it was readable by any local user, and that is all it takes:
         // .NET locks with flock whatever the access mode, so a read-only open could take LOCK_EX on it
         // and stall every relay of the owner's at startup.
+        //
+        // What this does NOT prove: that the file is 0600 at the moment it is created. TightenLeftover
+        // repairs the mode right after the open, so removing UnixCreateMode alone leaves this green.
+        // UnixCreateMode only closes the instant between create and chmod, which no test observes.
         var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
         try
         {

@@ -78,10 +78,10 @@ obvious one. Long bodies are welcome; the history is documentation.
 
 ## Releases
 
-Tags are `vMAJOR.MINOR.PATCH`, annotated, on the commit that shipped the change. Bump
-`<Version>`/`<FileVersion>`/`<AssemblyVersion>` in `Directory.Build.props` — the one definition the
-server and the relay both take their version from — move the `Unreleased` entries into a dated
-section, then tag:
+Tags are `vMAJOR.MINOR.PATCH`, annotated, on the commit that shipped the change. Bump `<Version>` in
+`Directory.Build.props` — the one number the server and the relay both take their version from; file
+and assembly versions are derived from it — move the `Unreleased` entries into a dated section, then
+tag:
 
 ```
 git tag -a v1.4.0 -m "windiag v1.4.0" -m "<the changelog section>"
