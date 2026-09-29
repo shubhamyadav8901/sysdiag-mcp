@@ -24,6 +24,7 @@
     <Using Include="Xunit" />
     <Using Include="Diag.Mcp.Core" />
     <Using Include="Diag.Mcp.Server" />
+    <Using Include="Diag.Mcp.Server.Capabilities" />
   </ItemGroup>
 
   <ItemGroup>

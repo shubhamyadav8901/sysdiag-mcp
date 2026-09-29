@@ -55,6 +55,7 @@
     <Using Include="Diag.Mcp.Core" />
     <!-- The shared server kit: gate, filters, file transfer and the engines behind the gated tools. -->
     <Using Include="Diag.Mcp.Server" />
+    <Using Include="Diag.Mcp.Server.Capabilities" />
   </ItemGroup>
 
   <ItemGroup>

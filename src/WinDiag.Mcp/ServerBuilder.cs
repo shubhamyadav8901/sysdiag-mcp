@@ -174,6 +174,7 @@ public static class ServerBuilder
             .WithToolActivityGate(activity)
             .WithTools<FileLockTools>(ToolJsonOptions)
             .WithTools<SystemTools>(ToolJsonOptions)
+            .WithTools<CapabilityTools>(ToolJsonOptions)
             .WithTools<ServiceTools>(ToolJsonOptions)
             .WithTools<EventLogTools>(ToolJsonOptions)
             .WithTools<ProcessTools>(ToolJsonOptions)
@@ -237,6 +238,8 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IHandleInspector, HandleExeInspector>();
         services.AddSingletonIfMissing<IAutostartInspector, AutorunscInspector>();
         services.AddSingletonIfMissing<ISystemInspector, WindowsSystemInspector>();
+        services.AddSingletonIfMissing<ICapabilityRequirements, WindowsCapabilityRequirements>();
+        services.AddSingletonIfMissing<IExecutableResolver, SysinternalsExecutableResolver>();
         services.AddSingletonIfMissing<ICapabilityReporter, CapabilityReporter>();
         services.AddSingletonIfMissing<IServiceInspector, WindowsServiceInspector>();
         services.AddSingletonIfMissing<IEventLogInspector, WindowsEventLogInspector>();
@@ -261,6 +264,7 @@ public static class ServerBuilder
             Diagnostics.Control.IServiceController, Diagnostics.Control.WindowsServiceControllerAdapter>();
         services.AddSingletonIfMissing<FileLockTools, FileLockTools>();
         services.AddSingletonIfMissing<SystemTools, SystemTools>();
+        services.AddSingletonIfMissing<CapabilityTools, CapabilityTools>();
         services.AddSingletonIfMissing<ServiceTools, ServiceTools>();
         services.AddSingletonIfMissing<EventLogTools, EventLogTools>();
         services.AddSingletonIfMissing<ProcessTools, ProcessTools>();

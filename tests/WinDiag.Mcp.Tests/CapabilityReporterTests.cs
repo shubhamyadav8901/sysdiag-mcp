@@ -2,6 +2,7 @@ using System.Reflection;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Capabilities;
+using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Tools;
 
 namespace WinDiag.Mcp.Tests;
@@ -11,6 +12,10 @@ public sealed class CapabilityReporterTests
     /// <summary>A target that deploy-target.ps1 has staged completely: every build of every tool.</summary>
     private static FakeToolLocator FullyStaged() =>
         new("handle.exe", "handle64.exe", "Procmon.exe", "Procmon64.exe");
+
+    /// <summary>The shared engine, with this server's table and its Sysinternals resolver.</summary>
+    private static CapabilityReporter Reporter(IToolLocator locator, IPrivilegeProbe privileges) =>
+        new(new WindowsCapabilityRequirements(), new SysinternalsExecutableResolver(locator), privileges);
 
     /// <summary>Every tool name this server's assembly and the shared kit declare to the MCP SDK.</summary>
     /// <remarks>
@@ -33,7 +38,7 @@ public sealed class CapabilityReporterTests
         // tools are added -- and `capabilities` would then confidently report on a subset while the
         // caller believed it was seeing everything. Adding a tool must mean declaring what it needs.
         var registered = RegisteredToolNames().OrderBy(name => name, StringComparer.Ordinal).ToArray();
-        var declared = CapabilityReporter.Requirements.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var declared = new WindowsCapabilityRequirements().Requirements.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
         Assert.Equal(registered, declared);
     }
@@ -41,7 +46,7 @@ public sealed class CapabilityReporterTests
     [Fact]
     public void Reports_a_tool_as_unavailable_when_its_executable_is_missing()
     {
-        var reporter = new CapabilityReporter(new FakeToolLocator(), new FakePrivilegeProbe(true));
+        var reporter = Reporter(new FakeToolLocator(), new FakePrivilegeProbe(true));
 
         var handleSearch = reporter.Describe().Single(c => c.Tool == "path_handle_search");
 
@@ -59,7 +64,7 @@ public sealed class CapabilityReporterTests
     {
         // Two copies of a Sysinternals binary on one machine is the normal case. "Available" without a
         // path leaves the reader unable to tell which one answered.
-        var reporter = new CapabilityReporter(
+        var reporter = Reporter(
             new FakeToolLocator("handle.exe", "handle64.exe"), new FakePrivilegeProbe(true));
 
         var detail = reporter.Describe().Single(c => c.Tool == "path_handle_search").Detail;
@@ -77,7 +82,7 @@ public sealed class CapabilityReporterTests
 
         // Available would be the dangerous answer: the tool would run and return nothing, and nothing
         // reads as a clean result.
-        var reporter = new CapabilityReporter(
+        var reporter = Reporter(
             new FixedArchitectureLocator(PeImageHeader.MachineI386), new FakePrivilegeProbe(true));
 
         var handleSearch = reporter.Describe().Single(c => c.Tool == "path_handle_search");
@@ -91,7 +96,7 @@ public sealed class CapabilityReporterTests
     {
         // Degraded, not unavailable: handle.exe runs unelevated and returns a SHORTER list rather than
         // an error, so the distinction is exactly what stops a partial result being read as complete.
-        var reporter = new CapabilityReporter(FullyStaged(), new FakePrivilegeProbe(false));
+        var reporter = Reporter(FullyStaged(), new FakePrivilegeProbe(false));
 
         var handleSearch = reporter.Describe().Single(c => c.Tool == "path_handle_search");
 
@@ -102,7 +107,7 @@ public sealed class CapabilityReporterTests
     [Fact]
     public void Reports_native_tools_as_available_even_without_elevation()
     {
-        var reporter = new CapabilityReporter(new FakeToolLocator(), new FakePrivilegeProbe(false));
+        var reporter = Reporter(new FakeToolLocator(), new FakePrivilegeProbe(false));
 
         Assert.Equal(CapabilityStatus.Available, reporter.Describe().Single(c => c.Tool == "who_locks_path").Status);
     }
@@ -110,7 +115,7 @@ public sealed class CapabilityReporterTests
     [Fact]
     public void Lists_tools_in_a_stable_order()
     {
-        var reporter = new CapabilityReporter(FullyStaged(), new FakePrivilegeProbe(true));
+        var reporter = Reporter(FullyStaged(), new FakePrivilegeProbe(true));
 
         var names = reporter.Describe().Select(c => c.Tool).ToArray();
 
