@@ -447,6 +447,74 @@ public sealed class RelayTargetsFileTests
     }
 
     [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void The_lock_file_is_owner_only_on_unix()
+    {
+        // Created under the default umask it was readable by any local user, and that is all it takes:
+        // .NET locks with flock whatever the access mode, so a read-only open could take LOCK_EX on it
+        // and stall every relay of the owner's at startup.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            using (RelayTargetsFile.Lock(path, TimeSpan.FromSeconds(5)))
+            {
+                Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path + RelayTargetsFile.LockSuffix));
+            }
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void A_loose_lock_file_left_behind_is_tightened_on_unix()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path + RelayTargetsFile.LockSuffix, "");
+            File.SetUnixFileMode(path + RelayTargetsFile.LockSuffix, (UnixFileMode)0b110_100_100); // 0644
+
+            using (RelayTargetsFile.Lock(path, TimeSpan.FromSeconds(5)))
+            {
+                Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path + RelayTargetsFile.LockSuffix));
+            }
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [UnixFact]
+    public void A_lock_that_fails_for_another_reason_fails_at_once_with_the_real_cause()
+    {
+        // Only contention is worth waiting out. Anything else -- here a symlink loop, ELOOP -- used to
+        // spin for the whole timeout and then be reported as another relay holding the lock, which sent
+        // the operator looking for a process that did not exist.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var lockPath = path + RelayTargetsFile.LockSuffix;
+        try
+        {
+            File.CreateSymbolicLink(lockPath, lockPath);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            var ex = Assert.Throws<RelayException>(() => RelayTargetsFile.Lock(path, TimeSpan.FromSeconds(5)));
+
+            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), $"waited {clock.Elapsed} for a failure that cannot clear");
+            Assert.DoesNotContain("held the targets file lock", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("symbolic links", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(lockPath);
+            Delete(path);
+        }
+    }
+
+    [UnixFact]
     public void A_lock_file_left_by_a_relay_that_died_does_not_block_the_next_one()
     {
         // The kernel drops the lock with its holder; the file itself staying behind means nothing.

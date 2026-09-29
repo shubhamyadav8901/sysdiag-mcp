@@ -396,6 +396,17 @@ internal static class RelayTargetsFile
         return new Guard(mutex);
     }
 
+    /// <summary>EWOULDBLOCK: the one way of failing to take the lock that is worth waiting out.</summary>
+    /// <remarks>
+    /// On Unix .NET reports a failed flock as an IOException whose HResult is the raw errno, and that is
+    /// the only thing telling contention apart from a failure that cannot clear -- a symlink loop is an
+    /// IOException too. Retrying every IOException waited out the whole timeout on those and then blamed
+    /// another relay. The value is 11 on Linux (measured) and 35 on macOS and the BSDs, where it is the
+    /// platform's documented EWOULDBLOCK and unverified until the macOS CI job runs.
+    /// </remarks>
+    private static int WouldBlock => OperatingSystem.IsLinux() ? 11 : 35;
+
+    [UnsupportedOSPlatform("windows")]
     private static FileStream LockWithFile(string path, TimeSpan timeout)
     {
         var full = Path.GetFullPath(path);
@@ -405,23 +416,59 @@ internal static class RelayTargetsFile
             Directory.CreateDirectory(directory);
         }
 
+        var lockPath = full + LockSuffix;
         var deadline = DateTime.UtcNow + timeout;
         while (true)
         {
             try
             {
-                return new FileStream(full + LockSuffix, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                // Owner-only from birth: .NET takes flock whatever the access mode, so a lock file any
+                // local user could open read-only was one any local user could hold, stalling every
+                // relay of the owner's at startup.
+                var stream = new FileStream(lockPath, new FileStreamOptions
+                {
+                    Mode = FileMode.OpenOrCreate,
+                    Access = FileAccess.ReadWrite,
+                    Share = FileShare.None,
+                    UnixCreateMode = OwnerOnly,
+                });
+                TightenLeftover(stream, lockPath);
+                return stream;
             }
-            catch (IOException) when (DateTime.UtcNow < deadline)
+            catch (IOException ex) when (ex.HResult == WouldBlock && DateTime.UtcNow < deadline)
             {
                 Thread.Sleep(25);
             }
-            catch (IOException ex)
+            catch (IOException ex) when (ex.HResult == WouldBlock)
             {
                 throw new RelayException(
                     $"another process has held the targets file lock for over {timeout.TotalSeconds:0}s. " +
                     "Retry, or check for a stuck relay process.", ex);
             }
+            catch (IOException ex)
+            {
+                throw new RelayException($"could not take the targets file lock at {lockPath}: {ex.Message}", ex);
+            }
+        }
+    }
+
+    /// <summary>Restricts a lock file an older relay left behind; UnixCreateMode only applies to new ones.</summary>
+    /// <remarks>
+    /// Through the open handle rather than the path, so the file restricted is the one actually locked.
+    /// Best effort, like <see cref="Restrict"/>: failing to tighten it leaves it readable, but the lock
+    /// still works, and refusing to start would be the worse outcome.
+    /// </remarks>
+    [UnsupportedOSPlatform("windows")]
+    private static void TightenLeftover(FileStream stream, string lockPath)
+    {
+        try
+        {
+            File.SetUnixFileMode(stream.SafeFileHandle, OwnerOnly);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            Console.Error.WriteLine(
+                $"[windiag-relay] WARNING: could not restrict {lockPath} to your account ({ex.Message}).");
         }
     }
 
