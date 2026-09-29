@@ -262,6 +262,110 @@
     }
   },
   {
+    "name": "run_command",
+    "title": "Run a command on the host",
+    "description": "Run an arbitrary command on the machine hosting this server, as the account the server runs under (normally root), and return its exit code, stdout and stderr. This is a general shell, not a diagnostic query - use it for package tools, build tools, or anything the other tools do not cover. shell selects how the command is read: \u0027sh\u0027 (default) runs it through /bin/sh -c, so pipes, redirection and \u0026\u0026 all work; \u0027bash\u0027 uses /bin/bash -c for bash syntax; \u0027none\u0027 runs the first token as a program with the rest as literal arguments. Set workingDirectory to run somewhere other than the server\u0027s own folder. A non-zero exit code is returned, not treated as an error. Output is capped; the result says when it was truncated.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The command line to run, interpreted according to shell.",
+          "type": "string"
+        },
+        "shell": {
+          "description": "\u0027sh\u0027 (default), \u0027bash\u0027, or \u0027none\u0027",
+          "type": "string",
+          "default": "sh"
+        },
+        "workingDirectory": {
+          "description": "Directory to run in; defaults to the server\u0027s own directory. Must already exist.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeoutSeconds": {
+          "description": "Per-command timeout override in seconds (1..3600); omit for the server default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "command": {
+          "type": "object",
+          "properties": {
+            "commandLine": {
+              "type": "string"
+            },
+            "shell": {
+              "type": "string"
+            },
+            "workingDirectory": {
+              "type": "string"
+            },
+            "exitCode": {
+              "type": "integer"
+            },
+            "standardOutput": {
+              "type": "string"
+            },
+            "standardError": {
+              "type": "string"
+            },
+            "outputTruncated": {
+              "type": "boolean"
+            },
+            "timedOut": {
+              "type": "boolean"
+            },
+            "durationSeconds": {
+              "type": "number"
+            },
+            "elevated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "commandLine",
+            "shell",
+            "workingDirectory",
+            "exitCode",
+            "standardOutput",
+            "standardError",
+            "outputTruncated",
+            "timedOut",
+            "durationSeconds",
+            "elevated"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "command"
+      ]
+    },
+    "annotations": {
+      "title": "Run a command on the host",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "system_overview",
     "title": "System overview",
     "description": "Describe the machine: distribution and kernel, architecture, uptime and boot time, processor count, memory, mounted filesystems with free space, the account the server runs as, and whether it is root. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full disk, a very recent reboot, exhausted memory) before you go looking for something subtler.",
