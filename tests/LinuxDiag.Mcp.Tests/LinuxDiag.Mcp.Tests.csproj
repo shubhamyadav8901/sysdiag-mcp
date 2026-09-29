@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Text captured from real Ubuntu and Debian, so parsers are tested against what the kernel writes. -->
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="Diag.Mcp.Core" />
     <Using Include="Diag.Mcp.Server" />

@@ -260,5 +260,131 @@
       "openWorldHint": true,
       "readOnlyHint": false
     }
+  },
+  {
+    "name": "system_overview",
+    "title": "System overview",
+    "description": "Describe the machine: distribution and kernel, architecture, uptime and boot time, processor count, memory, mounted filesystems with free space, the account the server runs as, and whether it is root. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full disk, a very recent reboot, exhausted memory) before you go looking for something subtler.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "system": {
+          "type": "object",
+          "properties": {
+            "machineName": {
+              "type": "string"
+            },
+            "userName": {
+              "type": "string"
+            },
+            "operatingSystem": {
+              "type": "string"
+            },
+            "kernel": {
+              "type": "string"
+            },
+            "architecture": {
+              "type": "string"
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "bootTime": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "uptime": {
+              "$comment": "Represents a System.TimeSpan value.",
+              "type": "string",
+              "pattern": "^-?(\\d\u002B\\.)?\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?$"
+            },
+            "processorCount": {
+              "type": "integer"
+            },
+            "totalPhysicalMemoryBytes": {
+              "type": "integer"
+            },
+            "availablePhysicalMemoryBytes": {
+              "type": "integer"
+            },
+            "filesystems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "mountPoint": {
+                    "type": "string"
+                  },
+                  "device": {
+                    "type": "string"
+                  },
+                  "fileSystem": {
+                    "type": "string"
+                  },
+                  "totalBytes": {
+                    "type": "integer"
+                  },
+                  "freeBytes": {
+                    "type": "integer"
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "percentFree": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "canRunOutOfSpace": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "mountPoint",
+                  "device",
+                  "fileSystem",
+                  "totalBytes",
+                  "freeBytes",
+                  "readOnly"
+                ]
+              }
+            }
+          },
+          "required": [
+            "machineName",
+            "userName",
+            "operatingSystem",
+            "kernel",
+            "architecture",
+            "elevated",
+            "bootTime",
+            "uptime",
+            "processorCount",
+            "totalPhysicalMemoryBytes",
+            "availablePhysicalMemoryBytes",
+            "filesystems"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "system"
+      ]
+    },
+    "annotations": {
+      "title": "System overview",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
   }
 ]

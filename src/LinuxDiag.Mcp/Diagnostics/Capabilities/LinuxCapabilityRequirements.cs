@@ -21,5 +21,6 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "hash-verified sliced file read over the server's own channel",
                 null,
                 "can only read what the current account already can"),
+            ["system_overview"] = new("/proc, /etc/os-release and statvfs per mount", null, null),
         };
 }

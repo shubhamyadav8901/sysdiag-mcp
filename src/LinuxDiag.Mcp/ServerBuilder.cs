@@ -4,6 +4,8 @@ using Diag.Mcp.Server.SelfUpdate;
 using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
+using LinuxDiag.Mcp.Diagnostics.SystemInfo;
+using LinuxDiag.Mcp.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -58,7 +60,8 @@ public static class ServerBuilder
             "LINUXDIAG_ALLOW_ARBITRARY_WRITE=1", "LINUXDIAG_ALLOW_ARBITRARY_READ=1");
         var update = new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout);
 
-        var mcp = services.AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _);
+        var mcp = services.AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _)
+            .WithTools<SystemTools>(DiagServerKit.ToolJsonOptions);
 
         return mcp;
     }
@@ -70,5 +73,7 @@ public static class ServerBuilder
         services.TryAddSingleton<IExecutableResolver, PathExecutableResolver>();
         services.TryAddSingleton<ICapabilityRequirements, LinuxCapabilityRequirements>();
         services.TryAddSingleton<ICapabilityReporter, CapabilityReporter>();
+        services.TryAddSingleton<ISystemInspector, LinuxSystemInspector>();
+        services.TryAddSingleton<SystemTools>();
     }
 }
