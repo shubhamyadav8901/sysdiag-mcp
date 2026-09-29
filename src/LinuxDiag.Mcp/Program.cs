@@ -1,6 +1,7 @@
 using Diag.Mcp.Server;
 using LinuxDiag.Mcp;
 using LinuxDiag.Mcp.Configuration;
+using LinuxDiag.Mcp.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,43 @@ if (!OperatingSystem.IsLinux())
 {
     Console.Error.WriteLine("[linuxdiag] this server runs on Linux only; on Windows use WinDiag.Mcp.");
     return 2;
+}
+
+// Service management: sets this machine up from the one file already on it, and never starts a server.
+// Handled before the options below because these switches configure the environment the service will
+// get, not the one this process happens to have.
+if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--service-status"))
+{
+    try
+    {
+        if (!Environment.IsPrivilegedProcess)
+        {
+            Console.Error.WriteLine("[linuxdiag] service management needs root; run it with sudo.");
+            return 2;
+        }
+
+        var name = LinuxServiceInstallOptions.ServiceName(args);
+        if (args.Contains("--service-status"))
+        {
+            return LinuxServiceInstaller.Status(name);
+        }
+
+        return args.Contains("--uninstall-service")
+            ? LinuxServiceInstaller.Uninstall(name)
+            : LinuxServiceInstaller.Install(LinuxServiceInstallOptions.Parse(args));
+    }
+    catch (ConfigurationException ex)
+    {
+        Console.Error.WriteLine($"[linuxdiag] {ex.Message}");
+        return 2;
+    }
+    catch (Exception ex)
+    {
+        // The installer's audience is a person at a console without a working server yet, so a raw stack
+        // trace is the least useful thing it could print. Name the type; they are the one who can report it.
+        Console.Error.WriteLine($"[linuxdiag] service management failed: {ex.GetType().FullName}: {ex.Message}");
+        return 4;
+    }
 }
 
 LinuxDiagOptions options;

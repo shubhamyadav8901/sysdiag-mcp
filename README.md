@@ -292,6 +292,46 @@ No flag is needed for anything a capture wrote: the artifact directory is one of
 elsewhere needs `WINDIAG_ALLOW_ARBITRARY_READ`. Multi-gigabyte `full` dumps still belong on the UNC
 path — the same caveat `put_file` carries in the other direction.
 
+### Linux targets
+
+`LinuxDiag.Mcp` is the Linux server: Ubuntu and Debian, **x86-64 only**. It is reached through the same
+relay, with the same bearer token model and the same plaintext-HTTP caveat as windiag. It serves
+`capabilities`, `put_file`, `get_file`, `system_overview`, `run_command` (`sh`, `bash`, `none`) and
+`update_self`; the process, container, systemd and host-configuration tools follow.
+
+Publish it, then install it over SSH:
+
+```
+dotnet publish src/LinuxDiag.Mcp -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o artifacts/linux-x64
+.\tools\bootstrap-linux.ps1 -Target build-01 -User ops -Token <64 hex> -Grants Standard
+```
+
+(`tools/bootstrap-linux.sh` is the same for a Linux or macOS operator.) The script copies the binary into
+the SSH user's home directory -- not the shared `/tmp`, where another account could swap it -- checks its
+hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the same presets as
+`bootstrap-target.ps1`. That installs:
+
+| Path | What |
+|---|---|
+| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary |
+| `/etc/linuxdiag/linuxdiag.env` | root-owned `0600`: the token, bind address and grants |
+| `/var/lib/linuxdiag` | `0700`: the artifact directory |
+| `/etc/systemd/system/linuxdiag.service` | `Type=notify`, `Restart=on-failure` |
+
+The unit is deliberately **not** sandboxed (no `ProtectSystem` and similar): a diagnostics server has to
+see every process's `/proc`, and a sandbox would silently hide exactly what it is asked about.
+`--uninstall-service` and `--service-status` do what they say; `LinuxDiag.Mcp --help` lists every switch.
+
+Add it to the relay's `~/.windiag-targets.json` like any target:
+
+```json
+{ "as": "build-01", "target": "build-01", "token": "…" }
+```
+
+Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `update_self`. The staged
+file must be an x86-64 Linux executable. The swap runs from a helper started with `systemd-run`, because
+a child of the service would be killed along with it before it could swap anything.
+
 ### Reaching the admin share
 
 Both the first-deploy hop and `-Smb` write to `\\<target>\C$`, which only opens to an administrator whose
@@ -676,6 +716,8 @@ level through an ordinary tool call. The token is the whole boundary.
   destructive grants (`WINDIAG_ALLOW_COMMAND_EXECUTION`, `update_self`) off unless a run needs them.
 
 ## Configuration
+
+The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`. `LinuxDiag.Mcp --help` lists them.
 
 | Variable | Default | Meaning |
 |---|---|---|

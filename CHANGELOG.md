@@ -24,6 +24,10 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Added
 
+- **LinuxDiag.Mcp, a Linux diagnostics server** for Ubuntu and Debian (x86-64), reached through the same
+  relay. It serves `capabilities`, `put_file`, `get_file`, `system_overview`, `run_command` (`sh`/`bash`)
+  and `update_self`, installs as a systemd service with `--install-service`, and is brought up over SSH
+  by `tools/bootstrap-linux.ps1`. The process, container and systemd tools follow.
 - **The relay runs on Linux**, and is built for macOS (untested until CI has run on it). A Linux machine
   can now drive Windows targets: verified end to end from a native Linux build — pre-connect,
   forwarded calls, and a byte-identical `push_file`/`pull_file` round trip against a live target. Off Windows the relay's token file is created owner-only
