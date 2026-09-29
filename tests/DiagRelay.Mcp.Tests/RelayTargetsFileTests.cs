@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
@@ -349,6 +350,73 @@ public sealed class RelayTargetsFileTests
         finally
         {
             Delete(path);
+        }
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void The_file_and_its_backup_are_owner_only_on_unix()
+    {
+        // The Unix counterpart of the ACL test above, and asserted after a SECOND write for the same
+        // reason: the backup is the previous file renamed, so it carries whatever mode that file had.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "t", null));
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w10", "192.168.32.76", "t", null));
+
+            Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path));
+            Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path + ".bak"));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void A_hand_made_world_readable_file_is_tightened_by_the_next_write()
+    {
+        // The usual first contact: an operator creates the file in an editor, under the default umask.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """{"targets":[{"as":"w11","target":"192.168.32.93","token":"t"}]}""");
+            File.SetUnixFileMode(path, (UnixFileMode)0b110_100_100); // 0644
+
+            RelayTargetsFile.Upsert(path, new RelayTargetEntry("w10", "192.168.32.76", "t", null));
+
+            Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path));
+            Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(path + ".bak"));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void The_temporary_file_is_born_owner_only_even_over_a_stale_loose_one()
+    {
+        // Every token is written into the .tmp before anything restricts it, so restricting afterwards
+        // leaves a window. Worse, FileMode.Create on a .tmp left by a crashed write keeps THAT file's
+        // mode. Asserted while the stream is still open -- i.e. before any restriction could run.
+        var temp = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json.tmp");
+        try
+        {
+            File.WriteAllText(temp, "stale");
+            File.SetUnixFileMode(temp, (UnixFileMode)0b110_110_110); // 0666
+
+            using (RelayTargetsFile.OpenTemp(temp))
+            {
+                Assert.Equal(RelayTargetsFile.OwnerOnly, File.GetUnixFileMode(temp));
+            }
+        }
+        finally
+        {
+            File.Delete(temp);
         }
     }
 

@@ -36,6 +36,9 @@ internal static class RelayTargetsFile
     /// <summary>Kept beside the file by every atomic write, so a torn or corrupted file has a fallback.</summary>
     private const string BackupSuffix = ".bak";
 
+    /// <summary>Owner read and write, nothing else: the Unix equivalent of the Windows ACL (0600).</summary>
+    internal const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
     /// <summary>Generous: the critical section is one small read and one rename, never a network call.</summary>
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(10);
 
@@ -228,7 +231,7 @@ internal static class RelayTargetsFile
 
         var temp = path + ".tmp";
 
-        using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var stream = OpenTemp(temp))
         using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
         {
             writer.Write(json);
@@ -262,6 +265,31 @@ internal static class RelayTargetsFile
         }
     }
 
+    /// <summary>Opens the file the next write goes to, restricted from the moment it exists.</summary>
+    /// <remarks>
+    /// On Unix the file is created 0600 rather than tightened after the tokens are written into it --
+    /// tightening afterwards leaves a window in which every token is world-readable. It is deleted first
+    /// because FileMode.Create on an existing file keeps that file's mode, and UnixCreateMode applies only
+    /// when a file is created, so a .tmp left behind by a crashed write would carry its old mode into this
+    /// one. The delete cannot race another relay: callers hold the targets-file lock.
+    /// </remarks>
+    internal static FileStream OpenTemp(string temp)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None);
+        }
+
+        File.Delete(temp);
+        return new FileStream(temp, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            UnixCreateMode = OwnerOnly,
+        });
+    }
+
     /// <summary>
     /// Restricts the file to the current user, because it stores every target's bearer token in clear.
     /// </summary>
@@ -281,9 +309,7 @@ internal static class RelayTargetsFile
             }
             else
             {
-                Console.Error.WriteLine(
-                    $"[windiag-relay] WARNING: {path} is not restricted to your account on this platform. " +
-                    "It holds bearer tokens in plain text -- tighten its permissions by hand.");
+                File.SetUnixFileMode(path, OwnerOnly);
             }
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException
