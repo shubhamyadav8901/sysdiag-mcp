@@ -106,23 +106,23 @@ public sealed class ExternalToolRunner : IExternalToolRunner
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             KillQuietly(process);
-            var partial = await DrainAsync(stdoutTask).ConfigureAwait(false);
-            Observe(stderrTask);
+            var partial = await ProcessStreams.DrainAsync(stdoutTask).ConfigureAwait(false);
+            ProcessStreams.Observe(stderrTask);
             throw new ToolTimeoutException(executableName, timeout, partial);
         }
         catch (OperationCanceledException)
         {
             KillQuietly(process);
-            Observe(stdoutTask);
-            Observe(stderrTask);
+            ProcessStreams.Observe(stdoutTask);
+            ProcessStreams.Observe(stderrTask);
             throw;
         }
 
         // Trimmed here rather than in each parser: a byte-order mark decoded from the stream arrives as
         // a real U+FEFF character, and it would otherwise become part of the first column name -- so
         // every header match fails for a reason that nothing in the visible output shows.
-        var stdout = (await DrainAsync(stdoutTask).ConfigureAwait(false)).TrimStart(ByteOrderMark);
-        var stderr = await DrainAsync(stderrTask).ConfigureAwait(false);
+        var stdout = (await ProcessStreams.DrainAsync(stdoutTask).ConfigureAwait(false)).TrimStart(ByteOrderMark);
+        var stderr = await ProcessStreams.DrainAsync(stderrTask).ConfigureAwait(false);
         stopwatch.Stop();
 
         _logger.LogDebug(
@@ -173,34 +173,6 @@ public sealed class ExternalToolRunner : IExternalToolRunner
         return argv;
     }
 
-    /// <summary>
-    /// Awaits a stream drain with its own bound, so a stuck pipe cannot outlive the tool's timeout.
-    /// </summary>
-    /// <remarks>
-    /// <see cref="StreamReader.ReadToEndAsync()"/> on a redirected pipe completes only when every write
-    /// handle closes -- including any a grandchild process inherited. Killing the child normally closes
-    /// them, but if a grandchild survives, an unbounded await here would hang the MCP call forever
-    /// despite the timeout that was supposed to bound it. Returning what we have is strictly better
-    /// than never returning.
-    /// </remarks>
-    internal static async Task<string> DrainAsync(Task<string> readTask)
-    {
-        var completed = await Task.WhenAny(readTask, Task.Delay(DrainGrace)).ConfigureAwait(false);
-        if (!ReferenceEquals(completed, readTask))
-        {
-            Observe(readTask);
-            return string.Empty;
-        }
-
-        return await readTask.ConfigureAwait(false);
-    }
-
-    /// <summary>Grace period for a stream to finish draining after the process has exited or been killed.</summary>
-    private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(5);
-
-    /// <summary>Marks an abandoned task's exception as observed so it cannot surface as unhandled.</summary>
-    private static void Observe(Task task) =>
-        _ = task.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
 
     private static void Validate(string value)
     {

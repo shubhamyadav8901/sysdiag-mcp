@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Commands;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics.Commands;
 
@@ -70,13 +71,13 @@ public sealed class CommandTools
         return new RunCommandResult(Render(result), result);
     }
 
-    /// <summary>Maps the caller's shell word onto the enum, or refuses it.</summary>
-    internal static CommandShell ParseShell(string? shell) =>
+    /// <summary>Maps the caller's shell word onto one of this server's shells, or refuses it.</summary>
+    internal static string ParseShell(string? shell) =>
         shell?.Trim().ToLowerInvariant() switch
         {
-            null or "" or "cmd" => CommandShell.Cmd,
-            "powershell" or "pwsh" or "ps" => CommandShell.PowerShell,
-            "none" or "exec" or "direct" => CommandShell.None,
+            null or "" or "cmd" => WindowsShellSet.Cmd,
+            "powershell" or "pwsh" or "ps" => WindowsShellSet.PowerShell,
+            "none" or "exec" or "direct" => WindowsShellSet.None,
             _ => throw new ArgumentException(
                 $"'{shell}' is not a shell. Use 'cmd', 'powershell', or 'none'.", nameof(shell))
         };

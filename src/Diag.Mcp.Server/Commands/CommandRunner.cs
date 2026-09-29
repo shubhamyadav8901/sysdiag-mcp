@@ -1,19 +1,15 @@
 using System.Diagnostics;
-using System.Runtime.Versioning;
-using System.Text;
+using Diag.Mcp.Server.Capabilities;
 using Microsoft.Extensions.Logging;
-using WinDiag.Mcp.Configuration;
-using WinDiag.Mcp.Diagnostics;
-using WinDiag.Mcp.Diagnostics.External;
 
-namespace WinDiag.Mcp.Diagnostics.Commands;
+namespace Diag.Mcp.Server.Commands;
 
 /// <summary>
 /// Runs an arbitrary command line on the machine hosting the server.
 /// </summary>
 /// <remarks>
-/// <para>This is the one executor in the server that does <strong>not</strong> go through
-/// <see cref="ExternalToolRunner"/>, and deliberately so. That runner's whole purpose is to refuse a
+/// <para>This is the one executor in the server that does <strong>not</strong> go through the
+/// Windows server's ExternalToolRunner, and deliberately so. That runner's whole purpose is to refuse a
 /// caller value that looks like a flag and to resolve only a fixed set of Sysinternals binaries — the
 /// opposite of what "run any command" means. Routing this through it would either defeat the guard or
 /// defeat the feature.</para>
@@ -22,12 +18,12 @@ namespace WinDiag.Mcp.Diagnostics.Commands;
 /// sequential read), the child is bounded by a timeout and killed with its whole tree, and output is
 /// capped so a command that prints a gigabyte cannot flood the caller.</para>
 /// <para>Everything dangerous about this tool is governed at registration
-/// (<c>WINDIAG_ALLOW_COMMAND_EXECUTION</c>, off by default, refused under read-only) rather than here.
+/// (the server's command-execution grant, off by default, refused under read-only) rather than here.
 /// By the time a request reaches this class the decision to allow arbitrary execution has already been
 /// made; its job is only to run the thing and come back.</para>
+/// <para>Shared: which shells exist is the server's <see cref="IShellSet"/>.</para>
 /// </remarks>
-[SupportedOSPlatform("windows")]
-public sealed class WindowsCommandRunner : ICommandRunner
+public sealed class CommandRunner : ICommandRunner
 {
     /// <summary>Cap on captured output per stream, in characters.</summary>
     /// <remarks>
@@ -37,15 +33,18 @@ public sealed class WindowsCommandRunner : ICommandRunner
     /// </remarks>
     private const int MaxOutputChars = 100_000;
 
-    private readonly WinDiagOptions _options;
+    private readonly IShellSet _shells;
+    private readonly CommandRunnerOptions _options;
     private readonly IPrivilegeProbe _privileges;
-    private readonly ILogger<WindowsCommandRunner> _logger;
+    private readonly ILogger<CommandRunner> _logger;
 
-    public WindowsCommandRunner(
-        WinDiagOptions options,
+    public CommandRunner(
+        IShellSet shells,
+        CommandRunnerOptions options,
         IPrivilegeProbe privileges,
-        ILogger<WindowsCommandRunner> logger)
+        ILogger<CommandRunner> logger)
     {
+        _shells = shells;
         _options = options;
         _privileges = privileges;
         _logger = logger;
@@ -107,8 +106,8 @@ public sealed class WindowsCommandRunner : ICommandRunner
             timedOut = true;
         }
 
-        var stdout = await ExternalToolRunner.DrainAsync(stdoutTask).ConfigureAwait(false);
-        var stderr = await ExternalToolRunner.DrainAsync(stderrTask).ConfigureAwait(false);
+        var stdout = await ProcessStreams.DrainAsync(stdoutTask).ConfigureAwait(false);
+        var stderr = await ProcessStreams.DrainAsync(stderrTask).ConfigureAwait(false);
         stopwatch.Stop();
 
         var exitCode = ExitCodeOf(process, timedOut);
@@ -122,7 +121,7 @@ public sealed class WindowsCommandRunner : ICommandRunner
 
         return new CommandResult(
             CommandLine: request.CommandLine,
-            Shell: request.Shell.ToString(),
+            Shell: request.Shell,
             WorkingDirectory: workingDirectory,
             ExitCode: exitCode,
             StandardOutput: outText,
@@ -144,43 +143,17 @@ public sealed class WindowsCommandRunner : ICommandRunner
             WorkingDirectory = workingDirectory
         };
 
-        switch (request.Shell)
-        {
-            case CommandShell.Cmd:
-                startInfo.FileName = "cmd.exe";
-                startInfo.ArgumentList.Add("/c");
-                startInfo.ArgumentList.Add(request.CommandLine);
-                break;
-
-            case CommandShell.PowerShell:
-                startInfo.FileName = "powershell.exe";
-                startInfo.ArgumentList.Add("-NoProfile");
-                startInfo.ArgumentList.Add("-NonInteractive");
-                startInfo.ArgumentList.Add("-Command");
-                startInfo.ArgumentList.Add(request.CommandLine);
-                break;
-
-            case CommandShell.None:
-                var (exe, args) = SplitFirstToken(request.CommandLine);
-                startInfo.FileName = exe;
-                if (!string.IsNullOrEmpty(args))
-                {
-                    // Passed as a single Arguments string on purpose: in None mode the caller is stating
-                    // "these are the literal arguments", and ArgumentList would re-quote them.
-                    startInfo.Arguments = args;
-                }
-                break;
-
-            default:
-                throw new CommandExecutionException($"Unknown shell '{request.Shell}'.");
-        }
+        _shells.Apply(startInfo, request.Shell, request.CommandLine);
 
         return startInfo;
     }
 
     /// <summary>Splits "prog arg arg" into the executable and the remaining argument string.</summary>
-    /// <remarks>Honours a quoted first token so a path with spaces in quotes is treated as one executable.</remarks>
-    private static (string Exe, string Args) SplitFirstToken(string commandLine)
+    /// <remarks>
+    /// Honours a quoted first token so a path with spaces in quotes is treated as one executable.
+    /// Public for the shell sets whose no-shell mode runs one executable with literal arguments.
+    /// </remarks>
+    public static (string Exe, string Args) SplitFirstToken(string commandLine)
     {
         var trimmed = commandLine.Trim();
 
@@ -219,14 +192,14 @@ public sealed class WindowsCommandRunner : ICommandRunner
     {
         if (requestedSeconds is not { } seconds)
         {
-            return _options.ExternalToolTimeout;
+            return _options.DefaultTimeout;
         }
 
         if (seconds < 1 || seconds > 3600)
         {
             throw new CommandExecutionException(
                 $"timeoutSeconds={seconds} is out of range; use 1..3600, or omit it for the server " +
-                $"default of {_options.ExternalToolTimeout.TotalSeconds:0}s.");
+                $"default of {_options.DefaultTimeout.TotalSeconds:0}s.");
         }
 
         return TimeSpan.FromSeconds(seconds);

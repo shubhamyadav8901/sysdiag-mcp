@@ -1,32 +1,18 @@
-namespace WinDiag.Mcp.Diagnostics.Commands;
+using System.Diagnostics;
 
-/// <summary>How to run a command.</summary>
-/// <remarks>
-/// The shell choice is explicit because it changes what the string means. <c>Cmd</c> and
-/// <c>PowerShell</c> get pipes, redirection, chaining and built-ins; <c>None</c> runs a single
-/// executable with the remaining words as literal arguments, which is the only mode where an argument
-/// containing spaces or metacharacters is safe from re-parsing.
-/// </remarks>
-public enum CommandShell
-{
-    /// <summary><c>cmd.exe /c &lt;command&gt;</c>. The default: it is what a person types.</summary>
-    Cmd,
-
-    /// <summary><c>powershell.exe -NoProfile -Command &lt;command&gt;</c>.</summary>
-    PowerShell,
-
-    /// <summary>Run the first token as an executable, the rest as literal arguments. No shell.</summary>
-    None
-}
+namespace Diag.Mcp.Server.Commands;
 
 /// <summary>A command to run on the machine hosting the server.</summary>
 /// <param name="CommandLine">The command, interpreted per <paramref name="Shell"/>.</param>
-/// <param name="Shell">How to interpret it.</param>
+/// <param name="Shell">
+/// Which of the server's shells to interpret it with, by the name the server reports it under -- see
+/// <see cref="IShellSet"/>.
+/// </param>
 /// <param name="WorkingDirectory">Where to run it. Null means the server's own directory.</param>
 /// <param name="TimeoutSeconds">Override for the per-command budget. Null uses the server default.</param>
 public sealed record CommandRequest(
     string CommandLine,
-    CommandShell Shell = CommandShell.Cmd,
+    string Shell,
     string? WorkingDirectory = null,
     int? TimeoutSeconds = null);
 
@@ -69,3 +55,21 @@ public sealed class CommandExecutionException : Exception, IDiagnosticException
     {
     }
 }
+
+/// <summary>The shells a server offers, and how each one turns a command line into a process.</summary>
+/// <remarks>
+/// The shell choice is explicit because it changes what the string means: a shell gets pipes,
+/// redirection, chaining and built-ins, while running one executable with literal arguments is the only
+/// mode where an argument containing spaces or metacharacters is safe from re-parsing. Which shells
+/// exist is the server's -- cmd and PowerShell on Windows, sh and bash on Linux -- so the runner only
+/// asks. A shell is named by the word the result reports it as.
+/// </remarks>
+public interface IShellSet
+{
+    /// <summary>Fills in the executable and arguments for <paramref name="shell"/>.</summary>
+    /// <exception cref="CommandExecutionException">When this server has no such shell.</exception>
+    void Apply(ProcessStartInfo start, string shell, string commandLine);
+}
+
+/// <summary>The runner's one setting: how long a command may run when the caller does not say.</summary>
+public sealed record CommandRunnerOptions(TimeSpan DefaultTimeout);

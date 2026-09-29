@@ -1,3 +1,4 @@
+using Diag.Mcp.Server.Commands;
 using Microsoft.Extensions.Logging.Abstractions;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics;
@@ -9,14 +10,14 @@ namespace WinDiag.Mcp.Tests;
 public sealed class CommandShellParsingTests
 {
     [Theory]
-    [InlineData("cmd", CommandShell.Cmd)]
-    [InlineData("", CommandShell.Cmd)]
-    [InlineData(null, CommandShell.Cmd)]
-    [InlineData("PowerShell", CommandShell.PowerShell)]
-    [InlineData("pwsh", CommandShell.PowerShell)]
-    [InlineData("none", CommandShell.None)]
-    [InlineData(" NONE ", CommandShell.None)]
-    public void Maps_the_documented_shell_names(string? input, CommandShell expected)
+    [InlineData("cmd", WindowsShellSet.Cmd)]
+    [InlineData("", WindowsShellSet.Cmd)]
+    [InlineData(null, WindowsShellSet.Cmd)]
+    [InlineData("PowerShell", WindowsShellSet.PowerShell)]
+    [InlineData("pwsh", WindowsShellSet.PowerShell)]
+    [InlineData("none", WindowsShellSet.None)]
+    [InlineData(" NONE ", WindowsShellSet.None)]
+    public void Maps_the_documented_shell_names(string? input, string expected)
     {
         Assert.Equal(expected, CommandTools.ParseShell(input));
     }
@@ -88,19 +89,17 @@ public sealed class CommandRenderingTests
 /// </summary>
 public sealed class CommandRunnerTests
 {
-    private static WindowsCommandRunner Runner(int timeoutSeconds = 30) =>
-        new(WinDiagOptions.FromEnvironment(new System.Collections.Hashtable
-            {
-                ["WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS"] = timeoutSeconds.ToString()
-            }),
+    private static CommandRunner Runner(int timeoutSeconds = 30) =>
+        new(new WindowsShellSet(),
+            new CommandRunnerOptions(TimeSpan.FromSeconds(timeoutSeconds)),
             new WindowsPrivilegeProbe(),
-            NullLogger<WindowsCommandRunner>.Instance);
+            NullLogger<CommandRunner>.Instance);
 
     [Fact]
     public async Task Runs_a_cmd_command_and_captures_stdout_and_exit_code()
     {
         var r = await Runner().RunAsync(
-            new CommandRequest("echo windiag-marker"), CancellationToken.None);
+            new CommandRequest("echo windiag-marker", WindowsShellSet.Cmd), CancellationToken.None);
 
         Assert.Equal(0, r.ExitCode);
         Assert.Contains("windiag-marker", r.StandardOutput);
@@ -112,7 +111,7 @@ public sealed class CommandRunnerTests
     {
         // `exit /b 3` under cmd. A failed command is a result, not an exception.
         var r = await Runner().RunAsync(
-            new CommandRequest("exit /b 3"), CancellationToken.None);
+            new CommandRequest("exit /b 3", WindowsShellSet.Cmd), CancellationToken.None);
 
         Assert.Equal(3, r.ExitCode);
     }
@@ -122,7 +121,7 @@ public sealed class CommandRunnerTests
     {
         // The reason 'cmd' is the default shell: && and | must work, which they cannot in None mode.
         var r = await Runner().RunAsync(
-            new CommandRequest("echo one && echo two"), CancellationToken.None);
+            new CommandRequest("echo one && echo two", WindowsShellSet.Cmd), CancellationToken.None);
 
         Assert.Contains("one", r.StandardOutput);
         Assert.Contains("two", r.StandardOutput);
@@ -136,7 +135,7 @@ public sealed class CommandRunnerTests
         try
         {
             var r = await Runner().RunAsync(
-                new CommandRequest("cd", WorkingDirectory: temp), CancellationToken.None);
+                new CommandRequest("cd", WindowsShellSet.Cmd, WorkingDirectory: temp), CancellationToken.None);
 
             // `cd` with no argument prints the current directory.
             Assert.Contains(temp, r.StandardOutput, StringComparison.OrdinalIgnoreCase);
@@ -153,7 +152,7 @@ public sealed class CommandRunnerTests
         var missing = Path.Combine(Path.GetTempPath(), $"windiag-absent-{Guid.NewGuid():N}");
 
         var ex = await Assert.ThrowsAsync<CommandExecutionException>(
-            () => Runner().RunAsync(new CommandRequest("echo x", WorkingDirectory: missing), CancellationToken.None));
+            () => Runner().RunAsync(new CommandRequest("echo x", WindowsShellSet.Cmd, WorkingDirectory: missing), CancellationToken.None));
 
         Assert.Contains("does not exist", ex.Message);
     }
@@ -162,14 +161,14 @@ public sealed class CommandRunnerTests
     public async Task Refuses_an_empty_command()
     {
         await Assert.ThrowsAsync<CommandExecutionException>(
-            () => Runner().RunAsync(new CommandRequest("   "), CancellationToken.None));
+            () => Runner().RunAsync(new CommandRequest("   ", WindowsShellSet.Cmd), CancellationToken.None));
     }
 
     [Fact]
     public async Task Runs_a_powershell_command()
     {
         var r = await Runner().RunAsync(
-            new CommandRequest("Write-Output (2 + 3)", CommandShell.PowerShell), CancellationToken.None);
+            new CommandRequest("Write-Output (2 + 3)", WindowsShellSet.PowerShell), CancellationToken.None);
 
         Assert.Equal(0, r.ExitCode);
         Assert.Contains("5", r.StandardOutput);
@@ -180,7 +179,7 @@ public sealed class CommandRunnerTests
     {
         // hostname.exe takes no args and prints the machine name; proves direct exec with no shell.
         var r = await Runner().RunAsync(
-            new CommandRequest("hostname", CommandShell.None), CancellationToken.None);
+            new CommandRequest("hostname", WindowsShellSet.None), CancellationToken.None);
 
         Assert.Equal(0, r.ExitCode);
         Assert.False(string.IsNullOrWhiteSpace(r.StandardOutput));
@@ -192,7 +191,7 @@ public sealed class CommandRunnerTests
         // A 30s ping under a 2s budget. The result is partial, TimedOut is set, and it comes back
         // near the budget rather than the full 30s.
         var r = await Runner(timeoutSeconds: 2).RunAsync(
-            new CommandRequest("ping -n 30 127.0.0.1"), CancellationToken.None);
+            new CommandRequest("ping -n 30 127.0.0.1", WindowsShellSet.Cmd), CancellationToken.None);
 
         Assert.True(r.TimedOut);
         Assert.True(r.DurationSeconds < 15, $"took {r.DurationSeconds}s, expected to be killed near 2s");
@@ -202,7 +201,7 @@ public sealed class CommandRunnerTests
     public async Task Rejects_a_timeout_outside_the_allowed_range()
     {
         var ex = await Assert.ThrowsAsync<CommandExecutionException>(
-            () => Runner().RunAsync(new CommandRequest("echo x", TimeoutSeconds: 99999), CancellationToken.None));
+            () => Runner().RunAsync(new CommandRequest("echo x", WindowsShellSet.Cmd, TimeoutSeconds: 99999), CancellationToken.None));
 
         Assert.Contains("out of range", ex.Message);
     }
