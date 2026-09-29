@@ -24,9 +24,9 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Added
 
-- **The relay builds for Linux and macOS.** On Linux it builds and passes its full test suite on a
-  real Linux runtime; driving a live target from Linux has not yet been exercised end to end, and macOS
-  is untested until CI has run on it. Off Windows the relay's token file is created owner-only
+- **The relay runs on Linux**, and is built for macOS (untested until CI has run on it). A Linux machine
+  can now drive Windows targets: verified end to end from a native Linux build — pre-connect,
+  forwarded calls, and a byte-identical `push_file`/`pull_file` round trip against a live target. Off Windows the relay's token file is created owner-only
   (`0600`), concurrent relays serialise on a kernel-held file lock, local paths are compared
   case-sensitively — including on macOS, since APFS can be formatted case-sensitive and the check that
   confines `push_file` fails closed — and pulled dumps and traces land owner-only in a per-user

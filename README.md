@@ -60,7 +60,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | Component | Runs on |
 |---|---|
 | `WinDiag.Mcp` — the diagnostics server | **Windows only**, x64 or x86. Its tools are Windows primitives: the registry, the SCM, the event log, Authenticode, Sysinternals. |
-| `DiagRelay.Mcp` — the local relay | **Windows**: verified end to end against live targets. **Linux**: builds, and its full test suite passes on a real Linux runtime (`tools/test-linux.sh`); driving a live target from Linux has not yet been exercised. **macOS**: built for, **untested** until the CI job has run on a pushed branch. |
+| `DiagRelay.Mcp` — the local relay | **Windows** and **Linux**: verified end to end against live Windows targets — pre-connect, forwarded calls, and a byte-identical `push_file`/`pull_file` round trip — and the full test suite passes on a real Linux runtime (`tools/test-linux.sh`). **macOS**: built for, **untested** until the CI job has run on a pushed branch. |
 
 The relay is what lets a Mac or Linux machine drive Windows targets. Build it for the machine you are on:
 
