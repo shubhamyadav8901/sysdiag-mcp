@@ -46,12 +46,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Diag.Mcp.Core\Diag.Mcp.Core.csproj" />
+    <ProjectReference Include="..\Diag.Mcp.Server\Diag.Mcp.Server.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- FileTransferException and PathScope moved to the shared core; one global using keeps the ~20
          call sites unchanged instead of editing each of them. -->
     <Using Include="Diag.Mcp.Core" />
+    <!-- The shared server kit: gate, filters, file transfer and the engines behind the gated tools. -->
+    <Using Include="Diag.Mcp.Server" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net9.0, so the same suite runs on Windows and, through tools/test-linux.sh, on Linux. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Diag.Mcp.Server\Diag.Mcp.Server.csproj" />
+    <!-- For the relay<->kit contract test only: the relay's real transfer code drives the kit. -->
+    <ProjectReference Include="..\..\src\DiagRelay.Mcp\DiagRelay.Mcp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One definition of the platform facts, linked rather than copied. -->
+    <Compile Include="..\DiagRelay.Mcp.Tests\PlatformFacts.cs" Link="PlatformFacts.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Diag.Mcp.Core" />
+    <Using Include="Diag.Mcp.Server" />
+    <Using Include="DiagRelay.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>

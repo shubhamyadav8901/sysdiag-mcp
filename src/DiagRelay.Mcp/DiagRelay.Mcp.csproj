@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="DiagRelay.Mcp.Tests" />
+    <!-- The relay<->kit contract test drives the real, internal, transfer code against the kit. -->
+    <InternalsVisibleTo Include="Diag.Mcp.Server.Tests" />
   </ItemGroup>
 
 </Project>

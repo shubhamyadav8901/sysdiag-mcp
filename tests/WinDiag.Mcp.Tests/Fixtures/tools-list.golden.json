@@ -1,0 +1,2747 @@
+[
+  {
+    "name": "autostart_audit",
+    "title": "What starts on its own",
+    "description": "List what is configured to run without anybody starting it - services, drivers, logon items, scheduled tasks, Explorer and Office add-ins, image hijacks - with the file each one points at and who signed it. Use it when something runs that should not, when an uninstall left a hook behind, or when an add-in loads a build you did not ship. categories takes one or more of: all, boot, codecs, appinit, explorer, gadgets, imagehijacks, internetexplorer, knowndlls, logon, wmi, winsock, office, printmonitors, lsaproviders, services, scheduledtasks, winlogon, storeapps. Signature verification is off by default because it costs an Authenticode check per entry and there are hundreds; unsignedOnly turns it on and returns only what failed, which is usually the fastest route to an answer - measured at 59s for every category on a lab VM. Entries whose target file is missing are marked [FILE NOT FOUND]: usually an uninstall that left its hook behind, but also what a hijack looks like before the replacement is dropped in.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "categories": {
+          "description": "Comma-separated category names, or \u0027all\u0027. Defaults to all.",
+          "type": "string",
+          "default": "all"
+        },
+        "nameFilter": {
+          "description": "Only entries whose name, image path, registry key, description or publisher contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "verifySignatures": {
+          "description": "Verify each entry\u0027s signature and report the publisher. Slower.",
+          "type": "boolean",
+          "default": false
+        },
+        "unsignedOnly": {
+          "description": "Return only entries that are NOT validly signed. Implies verifySignatures.",
+          "type": "boolean",
+          "default": false
+        },
+        "hideMicrosoft": {
+          "description": "Drop entries that are both signed and Microsoft\u0027s. Implies verifySignatures.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "autostarts": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "entry": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "profile": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "company": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "imagePath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "launchString": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "signatureVerdict": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "timestamp": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "imageMissing": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "required": [
+                  "category",
+                  "location",
+                  "entry",
+                  "enabled",
+                  "profile",
+                  "description",
+                  "company",
+                  "imagePath",
+                  "version",
+                  "launchString",
+                  "signatureVerdict",
+                  "timestamp"
+                ]
+              }
+            },
+            "totalMatched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "signaturesVerified": {
+              "type": "boolean"
+            },
+            "unsignedCount": {
+              "type": "integer"
+            },
+            "missingImageCount": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          "required": [
+            "entries",
+            "totalMatched",
+            "truncated",
+            "elevated",
+            "signaturesVerified",
+            "unsignedCount"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "autostarts"
+      ]
+    },
+    "annotations": {
+      "title": "What starts on its own",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "capabilities",
+    "title": "Server capabilities",
+    "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing Sysinternals binary, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "backing": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "Available",
+                  "Degraded",
+                  "Unavailable"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "backing",
+              "status",
+              "detail"
+            ]
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "elevated",
+        "tools"
+      ]
+    },
+    "annotations": {
+      "title": "Server capabilities",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "capture_activity",
+    "title": "Capture file and registry activity",
+    "description": "Record every file and registry operation on this machine for a few seconds, the way Process Monitor does, and return where the trace was written plus a summary of what was in it. Use it for \u0027it works on my machine\u0027, a program that fails silently, a file it cannot find, or a permission problem no ACL explains. Reproduce the problem WHILE this runs - it captures a window of time, not history. It deliberately returns no events, because a trace holds hundreds of thousands of them; call query_activity on the returned csvPath to filter it. Requires administrator rights and loads a kernel driver. The .pml also opens directly in the Process Monitor GUI.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "durationSeconds": {
+          "description": "Seconds to record. Traces grow roughly 5 MB per second, so keep it short and reproduce the problem during the window.",
+          "type": "integer",
+          "default": 20
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "capture": {
+          "type": "object",
+          "properties": {
+            "pmlPath": {
+              "type": "string"
+            },
+            "pmlUncPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "csvPath": {
+              "type": "string"
+            },
+            "csvUncPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pmlSizeBytes": {
+              "type": "integer"
+            },
+            "csvSizeBytes": {
+              "type": "integer"
+            },
+            "durationSeconds": {
+              "type": "integer"
+            },
+            "totalEvents": {
+              "type": "integer"
+            },
+            "problemResults": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name",
+                  "count"
+                ]
+              }
+            },
+            "topProcesses": {
+              "type": "array",
+              "items": {
+                "$ref": "#/properties/capture/properties/problemResults/items"
+              }
+            }
+          },
+          "required": [
+            "pmlPath",
+            "pmlUncPath",
+            "csvPath",
+            "csvUncPath",
+            "pmlSizeBytes",
+            "csvSizeBytes",
+            "durationSeconds",
+            "totalEvents",
+            "problemResults",
+            "topProcesses"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "capture"
+      ]
+    },
+    "annotations": {
+      "title": "Capture file and registry activity",
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "capture_dump",
+    "title": "Capture a process dump",
+    "description": "Capture a crash dump of a running process and return where it was written. Use it for a hung or misbehaving process you want to analyse properly: \u0027mini\u0027 captures stacks, threads, handles and loaded modules and is enough to see where a hang is stuck; \u0027full\u0027 adds all process memory and is much larger. The result includes a UNC path on this machine\u0027s administrative share, which a debugger on another machine can open directly - pass it to mcp-windbg\u0027s open_windbg_dump rather than copying the file. Capturing a process owned by another user or by SYSTEM requires elevation. Dumping a 32-bit process (an Office add-in or a shell extension host, for example) works, and the result says how to make the debugger show its real stacks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id to dump. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "kind": {
+          "description": "\u0027mini\u0027 for stacks, threads, handles and modules; \u0027full\u0027 to include all process memory",
+          "type": "string",
+          "default": "mini"
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "dump": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "uncPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "Mini",
+                "Full"
+              ]
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "targetIsWow64": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "uncPath",
+            "sizeBytes",
+            "processId",
+            "processName",
+            "kind",
+            "elevated",
+            "targetIsWow64"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "dump"
+      ]
+    },
+    "annotations": {
+      "title": "Capture a process dump",
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "effective_access",
+    "title": "Why is this access denied",
+    "description": "Explain the permissions on a file, folder or registry key: the owner, every access control entry with deny rules listed first, and - crucially - the result of actually attempting the access rather than only reasoning about the ACL. Use it for \u0027access denied\u0027 reports, for \u0027the service cannot write its log\u0027, or to check who can modify a key. Registry paths use HKLM\\, HKCU\\, HKCR\\ or HKU\\ prefixes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "File path, folder path, or registry key such as HKLM\\SOFTWARE\\Vendor\\Product",
+          "type": "string"
+        },
+        "account": {
+          "description": "Optional account to highlight, for example \u0027NETWORK SERVICE\u0027 or \u0027CONTOSO\\svc-app\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "probeWrite": {
+          "description": "Also test write access. Acquires a write handle without modifying the file. Files only.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "report": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "File",
+                "Directory",
+                "RegistryKey"
+              ]
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string"
+                  },
+                  "rights": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "inherited": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "identity",
+                  "rights",
+                  "type",
+                  "inherited"
+                ]
+              }
+            },
+            "account": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rulesForAccount": {
+              "type": "array",
+              "items": {
+                "$ref": "#/properties/report/properties/rules/items"
+              }
+            },
+            "probe": {
+              "type": "object",
+              "properties": {
+                "canRead": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "canWrite": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "readError": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "writeError": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "canRead",
+                "canWrite",
+                "readError",
+                "writeError"
+              ]
+            },
+            "probeIdentity": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "owner",
+            "rules",
+            "account",
+            "rulesForAccount",
+            "probe",
+            "probeIdentity"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "report"
+      ]
+    },
+    "annotations": {
+      "title": "Why is this access denied",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "event_log_tail",
+    "title": "Recent event log records",
+    "description": "Read recent records from a Windows event log, newest first, filtered by age, severity, provider and event id. Defaults to the last hour of the System log at Critical, Error and Warning. Use it to find out what the machine complained about around the time of a failure, or to see why a service refused to start. Reading the Security log requires elevation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "log": {
+          "description": "Log name, for example \u0027System\u0027, \u0027Application\u0027, \u0027Security\u0027, or a channel such as \u0027Microsoft-Windows-WindowsUpdateClient/Operational\u0027",
+          "type": "string",
+          "default": "System"
+        },
+        "minutes": {
+          "description": "How far back to look, in minutes",
+          "type": "integer",
+          "default": 60
+        },
+        "levels": {
+          "description": "Severities to include: critical, error, warning, information, verbose, or \u0027all\u0027. Defaults to critical\u002Berror\u002Bwarning. \u0027information\u0027 also covers level-0 records, as Event Viewer does.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default": null
+        },
+        "provider": {
+          "description": "Only records from this provider, for example \u0027Service Control Manager\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "eventIds": {
+          "description": "Only these event ids",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer"
+          },
+          "default": null
+        },
+        "maxEvents": {
+          "description": "Maximum records to return",
+          "type": "integer",
+          "default": 50
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "log": {
+          "type": "string"
+        },
+        "minutes": {
+          "type": "integer"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timeCreated": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "eventId": {
+                "type": "integer"
+              },
+              "level": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "timeCreated",
+              "eventId",
+              "level",
+              "provider",
+              "message",
+              "processId"
+            ]
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "log",
+        "minutes",
+        "events",
+        "truncated",
+        "candidates"
+      ]
+    },
+    "annotations": {
+      "title": "Recent event log records",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "file_signatures",
+    "title": "File signature and version",
+    "description": "Verify Authenticode trust for one or more files and report their version, company, size, modification time and SHA-256. Use it to confirm a deployed binary is the version and build you shipped, to spot a file that was modified after signing, or to identify an unsigned DLL loaded into a process. Correctly handles catalog-signed Windows binaries, which carry no certificate inside the file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "description": "Full paths of the files to inspect",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paths"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "Valid",
+                  "Unsigned",
+                  "Untrusted",
+                  "Unknown"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "catalogSigned": {
+                "type": "boolean"
+              },
+              "signer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issuer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "certificateNotAfter": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "fileVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "productVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "companyName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "originalFilename": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sizeBytes": {
+                "type": "integer"
+              },
+              "lastWriteTime": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sha256": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "verdict",
+              "detail",
+              "catalogSigned",
+              "signer",
+              "issuer",
+              "certificateNotAfter",
+              "fileVersion",
+              "productVersion",
+              "companyName",
+              "originalFilename",
+              "sizeBytes",
+              "lastWriteTime",
+              "sha256"
+            ]
+          }
+        },
+        "notFound": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "files",
+        "notFound"
+      ]
+    },
+    "annotations": {
+      "title": "File signature and version",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_file",
+    "title": "Read a file back off the host",
+    "description": "Read a file off the machine hosting this server, returned as base64, without needing an SMB share. This is the reverse of put_file and the way to retrieve what the server produced - the dump capture_dump wrote, the .pml or .csv capture_activity wrote - without touching the admin share. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with WINDIAG_ALLOW_ARBITRARY_READ. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use tools/fetch-from-target.ps1, which drives this same loop and streams straight to a local file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Path on the host to read, e.g. the path capture_dump or capture_activity returned",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Byte offset to start at. Walk this forward to fetch a whole file. Default 0.",
+          "type": "integer",
+          "default": 0
+        },
+        "length": {
+          "description": "Bytes to return. Default 64 KB, capped at 4 MB (base64 costs a third again, and a 32-bit target encodes it in one piece).",
+          "type": "integer",
+          "default": 0
+        },
+        "includeWholeFileHash": {
+          "description": "Also return the SHA-256 of the WHOLE file, to verify a reassembled copy. Rereads the file, so ask for it only on the last slice.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "totalBytes": {
+              "type": "integer"
+            },
+            "content": {
+              "type": "string"
+            },
+            "chunkSha256": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endOfFile": {
+              "type": "boolean"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "WinDiag",
+                "Arbitrary"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "offset",
+            "length",
+            "totalBytes",
+            "content",
+            "chunkSha256",
+            "sha256",
+            "endOfFile",
+            "scope"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "file"
+      ]
+    },
+    "annotations": {
+      "title": "Read a file back off the host",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "named_pipes",
+    "title": "Named pipes and instance usage",
+    "description": "List named pipes with how many instances are currently in use against how many the server allows. Use it when a client cannot connect to a local service, or hangs connecting, while the service itself looks healthy - a pipe at its instance limit produces exactly that, and is invisible from every other angle. Pipes at their limit are listed first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFilter": {
+          "description": "Match this text anywhere in the pipe name, for example a product or service name",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "pipes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "activeInstances": {
+                "type": "integer"
+              },
+              "maximumInstances": {
+                "type": "integer"
+              },
+              "exhausted": {
+                "type": "boolean"
+              },
+              "unlimited": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "activeInstances",
+              "maximumInstances"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "summary",
+        "pipes",
+        "totalMatched",
+        "truncated"
+      ]
+    },
+    "annotations": {
+      "title": "Named pipes and instance usage",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "network_owners",
+    "title": "Network endpoints and owning processes",
+    "description": "List local TCP and UDP endpoints (IPv4 and IPv6) with the process that owns each one. Use it for \u0027what is already using port 8080\u0027, \u0027which process is talking to that address\u0027, or to confirm a service is actually listening where it should be. Filter by port, by owning PID, or to listening endpoints only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "description": "Only endpoints using this local or remote port",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "Only endpoints owned by this process id",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "listeningOnly": {
+          "description": "Only listening TCP sockets and bound UDP endpoints, excluding established connections",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "Tcp",
+                  "Udp"
+                ]
+              },
+              "localAddress": {
+                "type": "string"
+              },
+              "localPort": {
+                "type": "integer"
+              },
+              "remoteAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "remotePort": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "owningProcessId": {
+                "type": "integer"
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "protocol",
+              "localAddress",
+              "localPort",
+              "remoteAddress",
+              "remotePort",
+              "state",
+              "owningProcessId",
+              "processName"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "summary",
+        "endpoints",
+        "totalMatched",
+        "truncated"
+      ]
+    },
+    "annotations": {
+      "title": "Network endpoints and owning processes",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "path_handle_search",
+    "title": "Exhaustive handle search",
+    "description": "Search open handles across every process for objects whose name contains the given text. Use it as the follow-up when who_locks_path comes back empty, since it finds holders Restart Manager cannot see. Requires administrator rights for complete results, and requires Sysinternals handle.exe to be installed. By default it searches FILE REFERENCES, which is fast: that means open file handles AND the memory-mapped sections backing a file, so a holder that only mapped the file is already covered. Set includeAllObjectTypes to also cover non-file objects - registry keys, mutants, events, tokens - necessary for \u0027who is touching this registry key\u0027, but far slower, so pair it with a narrow search term.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFragment": {
+          "description": "Text to match anywhere in the object name, for example a full path, a file name, or a registry key fragment",
+          "type": "string"
+        },
+        "includeAllObjectTypes": {
+          "description": "Search every named kernel object type, not just file references. Needed for registry keys, mutants, events and tokens - NOT for mapped sections, which the default already returns. Much slower - use a narrow search term and expect to raise the timeout.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "nameFragment"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processName": {
+                "type": "string"
+              },
+              "processId": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "handleValue": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "processName",
+              "processId",
+              "type",
+              "user",
+              "handleValue",
+              "name"
+            ]
+          }
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "totalMatched": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "handles",
+        "elevated",
+        "truncated",
+        "totalMatched"
+      ]
+    },
+    "annotations": {
+      "title": "Exhaustive handle search",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "process_control",
+    "title": "Terminate, suspend or resume a process",
+    "description": "Terminate, suspend or resume a running process. Suspend is the interesting one for diagnosis: it freezes every thread without ending the process, so a hang can be caught in the act and dumped. Terminate is irreversible and loses anything the process had not written out. You must pass the process name you expect alongside the PID, and it is verified first - PIDs are reused, so one read from an earlier process_list may belong to something else entirely by now. Core Windows processes are refused outright.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id to act on. Get a current one from process_list.",
+          "type": "integer"
+        },
+        "expectedName": {
+          "description": "The image name you expect that PID to be, e.g. \u0027notepad\u0027 or \u0027notepad.exe\u0027. Verified before anything happens.",
+          "type": "string"
+        },
+        "action": {
+          "description": "\u0027terminate\u0027, \u0027suspend\u0027 or \u0027resume\u0027",
+          "type": "string",
+          "default": "suspend"
+        }
+      },
+      "required": [
+        "processId",
+        "expectedName"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "startTime": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "Terminate",
+                "Suspend",
+                "Resume"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "processId",
+            "processName",
+            "startTime",
+            "action",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "result"
+      ]
+    },
+    "annotations": {
+      "title": "Terminate, suspend or resume a process",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "process_handles",
+    "title": "Everything one process has open",
+    "description": "List every kernel object one process has open - files, directories, registry keys, sections, mutants, events, tokens. Use it to answer what a process is actually touching: which log it is writing, which key it read at startup, which named object two processes are both holding. It is also the way to find the mutant behind a \u0027already running\u0027 refusal, and the file a process is keeping open after it should have closed it. Scoped to one process, so it is far cheaper than path_handle_search - which has to walk every process on the machine - and returns all object types by default for the same reason.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "includeAllObjectTypes": {
+          "description": "Set false for file references only - file handles plus the mapped sections backing a file, which is what handle.exe returns without -a. Faster on a process holding thousands.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processName": {
+                "type": "string"
+              },
+              "processId": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "handleValue": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "processName",
+              "processId",
+              "type",
+              "user",
+              "handleValue",
+              "name"
+            ]
+          }
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "totalMatched": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "handles",
+        "elevated",
+        "truncated",
+        "totalMatched"
+      ]
+    },
+    "annotations": {
+      "title": "Everything one process has open",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "process_list",
+    "title": "Running processes",
+    "description": "List running processes with their PID, parent PID, start time, memory, thread count and full command line. The command line is the point: it is what distinguishes one svchost.exe or one service host from another, and it shows the arguments a process was actually launched with. Filter by name or command-line substring, or ask for a single PID. Command lines of processes owned by other users are only readable when the server is elevated.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFilter": {
+          "description": "Match this text against the process name or its command line",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "Return only this process id",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "processes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processId": {
+                "type": "integer"
+              },
+              "parentProcessId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "startTime": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "workingSetBytes": {
+                "type": "integer"
+              },
+              "threadCount": {
+                "type": "integer"
+              },
+              "sessionId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "executablePath": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "commandLine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "processId",
+              "parentProcessId",
+              "name",
+              "startTime",
+              "workingSetBytes",
+              "threadCount",
+              "sessionId",
+              "executablePath",
+              "commandLine"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "commandLinesRedacted": {
+          "type": "integer"
+        },
+        "limitation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "processes",
+        "totalMatched",
+        "truncated",
+        "commandLinesRedacted",
+        "limitation"
+      ]
+    },
+    "annotations": {
+      "title": "Running processes",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "process_modules",
+    "title": "DLLs loaded in a process",
+    "description": "List the DLLs a process has actually loaded, with the full path, version and load address of each. Use it when the version on disk and the version in use might differ - a stale copy beside the executable, a shell extension loaded from somewhere unexpected, or an add-in that is not the build you shipped. Set verifySignatures to check each one\u0027s Authenticode signature, which finds unsigned or tampered modules loaded into a signed process. That is slower, so it applies only to the modules actually returned - filter by name first if you know what you are looking for. Each module also reports the base address it asked for against the one it got, and flags a module that was built for a fixed address and got moved anyway - a base collision, which costs it its shared pages.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "nameFilter": {
+          "description": "Only modules whose name or path contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "verifySignatures": {
+          "description": "Verify each returned module\u0027s Authenticode signature. Slower; handles catalog-signed Windows DLLs correctly.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "modules": {
+          "type": "object",
+          "properties": {
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "baseAddress": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": "integer"
+                  },
+                  "fileVersion": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "companyName": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "signatureVerdict": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "signer": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "preferredBase": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "default": null
+                  },
+                  "relocated": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "default": null
+                  },
+                  "baseCollision": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "required": [
+                  "name",
+                  "path",
+                  "baseAddress",
+                  "sizeBytes",
+                  "fileVersion",
+                  "companyName",
+                  "signatureVerdict",
+                  "signer"
+                ]
+              }
+            },
+            "totalMatched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "unsignedCount": {
+              "type": "integer"
+            },
+            "limitation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "collisionCount": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          "required": [
+            "processId",
+            "processName",
+            "modules",
+            "totalMatched",
+            "truncated",
+            "unsignedCount",
+            "limitation"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "modules"
+      ]
+    },
+    "annotations": {
+      "title": "DLLs loaded in a process",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "put_file",
+    "title": "Write a file on the host",
+    "description": "Write a file onto the machine hosting this server, sent as base64, without needing an SMB share. Use it to stage an updated server build for update_self, to place the Sysinternals binaries, or to drop an input file - anything that previously went over \\\\host\\C$. By default it may only write inside the directories this server owns (its own folder and the artifact directory), which is all staging needs; writing anywhere else requires the server to have been started with WINDIAG_ALLOW_ARBITRARY_WRITE. Pass expectedSha256 to have the written file verified and rolled back on mismatch - the same integrity check the share copy did. A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each later call sets append=true, and only the last passes expectedSha256, of the whole assembled file. Any one call is capped at ~128 MB; multi-gigabyte dumps stay on the UNC path capture_dump returns.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Destination path on the host, e.g. C:\\WinDiag\\WinDiag.Mcp.new.exe",
+          "type": "string"
+        },
+        "contentBase64": {
+          "description": "The file\u0027s bytes (or this chunk\u0027s bytes), base64-encoded.",
+          "type": "string"
+        },
+        "expectedSha256": {
+          "description": "SHA-256 the finished file must have; verified after writing, rolled back on mismatch. For a chunked send, pass it only on the last chunk.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "overwrite": {
+          "description": "Set false to refuse rather than replace an existing file at the path.",
+          "type": "boolean",
+          "default": true
+        },
+        "append": {
+          "description": "Append to the file instead of replacing it - used for the second and later chunks of a large file.",
+          "type": "boolean",
+          "default": false
+        },
+        "chunkSha256": {
+          "description": "SHA-256 of THIS call\u0027s bytes, checked before writing so a chunk corrupted in transit is caught at the chunk. Safe to re-send on failure.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path",
+        "contentBase64"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "WinDiag",
+                "Arbitrary"
+              ]
+            },
+            "overwrote": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "sizeBytes",
+            "sha256",
+            "scope",
+            "overwrote"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "file"
+      ]
+    },
+    "annotations": {
+      "title": "Write a file on the host",
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "query_activity",
+    "title": "Filter a captured activity trace",
+    "description": "Filter a trace saved by capture_activity. This is where the answer usually is: set problemsOnly to see only operations that failed - ACCESS DENIED, NAME NOT FOUND, PATH NOT FOUND, SHARING VIOLATION - which is exactly what a human does in the Process Monitor GUI. Also filters by process, path substring, operation and a substring of the Detail column, and always reports the busiest paths and processes among the matches so you can see where activity is concentrated.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "capturePath": {
+          "description": "The csvPath returned by capture_activity",
+          "type": "string"
+        },
+        "problemsOnly": {
+          "description": "Only operations that failed in a way worth investigating. Excludes routine results such as FAST IO DISALLOWED.",
+          "type": "boolean",
+          "default": false
+        },
+        "processName": {
+          "description": "Only this process, matched as a substring of the image name, e.g. \u0027winword\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "Only this process id",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "pathContains": {
+          "description": "Only paths containing this text, e.g. a folder or a registry key fragment",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "operation": {
+          "description": "Only this operation, e.g. \u0027CreateFile\u0027 or \u0027RegQueryValue\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "detailContains": {
+          "description": "Only events whose Detail column contains this text. Detail holds operation-specific fields as literal text, so this is how you filter on them - e.g. \u0027Disposition: OverwriteIf\u0027 to keep only a CreateFile that creates the file rather than opens it, or \u0027Desired Access: Generic Write\u0027.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "maxEvents": {
+          "description": "Maximum events to return; the summary counts cover every match regardless",
+          "type": "integer",
+          "default": 100
+        }
+      },
+      "required": [
+        "capturePath"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "object",
+          "properties": {
+            "capturePath": {
+              "type": "string"
+            },
+            "scanned": {
+              "type": "integer"
+            },
+            "matched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "time": {
+                    "type": "string"
+                  },
+                  "processName": {
+                    "type": "string"
+                  },
+                  "processId": {
+                    "type": "integer"
+                  },
+                  "operation": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "time",
+                  "processName",
+                  "processId",
+                  "operation",
+                  "path",
+                  "result",
+                  "detail"
+                ]
+              }
+            },
+            "topPaths": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name",
+                  "count"
+                ]
+              }
+            },
+            "topProcesses": {
+              "type": "array",
+              "items": {
+                "$ref": "#/properties/query/properties/topPaths/items"
+              }
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "$ref": "#/properties/query/properties/topPaths/items"
+              }
+            }
+          },
+          "required": [
+            "capturePath",
+            "scanned",
+            "matched",
+            "truncated",
+            "events",
+            "topPaths",
+            "topProcesses",
+            "results"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "query"
+      ]
+    },
+    "annotations": {
+      "title": "Filter a captured activity trace",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "registry_read",
+    "title": "Read a registry key",
+    "description": "Read the values under a registry key, with their REG_* types, plus the names of its subkeys. Use it to check what a setting is actually set to on this machine - a feature flag, an install path, a policy value, the configuration a product read at startup - rather than what someone believes it is set to. Pass valueName for a single value, or omit it to see everything the key holds. On 64-bit Windows the same path names two different keys: view defaults to \u0027native\u0027, what regedit shows, and view=\u002732\u0027 reads the WOW6432Node copy a 32-bit product writes to. The view that was read is always stated in the result, because an answer that does not say is ambiguous. This reads only. To find out why a key cannot be read, use effective_access on the same path.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Key path, for example HKLM\\SOFTWARE\\Vendor\\Product. HKLM, HKCU, HKCR, HKU and HKCC are accepted.",
+          "type": "string"
+        },
+        "valueName": {
+          "description": "Return only this value. Use an empty string for the key\u0027s unnamed default value.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "view": {
+          "description": "\u0027native\u0027 (default), \u002764\u0027, or \u002732\u0027 for the WOW6432Node view",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "key": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "view": {
+              "type": "string"
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "sizeBytes": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind",
+                  "value",
+                  "truncated",
+                  "sizeBytes"
+                ]
+              }
+            },
+            "subKeyNames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "totalValues": {
+              "type": "integer"
+            },
+            "totalSubKeys": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "view",
+            "values",
+            "subKeyNames",
+            "totalValues",
+            "totalSubKeys",
+            "truncated"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "key"
+      ]
+    },
+    "annotations": {
+      "title": "Read a registry key",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "run_command",
+    "title": "Run a command on the host",
+    "description": "Run an arbitrary command on the machine hosting this server, as the account the server runs under (often SYSTEM or an administrator), and return its exit code, stdout and stderr. This is a general shell, not a diagnostic query - use it for git, build tools, Klocwork, or anything the other tools do not cover. shell selects how the command is read: \u0027cmd\u0027 (default) runs it through cmd.exe, so pipes, redirection, chaining with \u0026\u0026 and built-ins all work; \u0027powershell\u0027 runs it through powershell.exe -Command; \u0027none\u0027 runs the first token as an executable with the rest as literal arguments, for a path or argument that must not be re-parsed. Set workingDirectory to run somewhere other than the server\u0027s own folder - e.g. a repo root. A non-zero exit code is returned, not treated as an error: a command that ran and failed is a result you can read. Output is capped; the result says when it was truncated.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The command line to run, interpreted according to shell.",
+          "type": "string"
+        },
+        "shell": {
+          "description": "\u0027cmd\u0027 (default), \u0027powershell\u0027, or \u0027none\u0027",
+          "type": "string",
+          "default": "cmd"
+        },
+        "workingDirectory": {
+          "description": "Directory to run in; defaults to the server\u0027s own directory. Must already exist.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeoutSeconds": {
+          "description": "Per-command timeout override in seconds (1..3600); omit for the server default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "command": {
+          "type": "object",
+          "properties": {
+            "commandLine": {
+              "type": "string"
+            },
+            "shell": {
+              "type": "string"
+            },
+            "workingDirectory": {
+              "type": "string"
+            },
+            "exitCode": {
+              "type": "integer"
+            },
+            "standardOutput": {
+              "type": "string"
+            },
+            "standardError": {
+              "type": "string"
+            },
+            "outputTruncated": {
+              "type": "boolean"
+            },
+            "timedOut": {
+              "type": "boolean"
+            },
+            "durationSeconds": {
+              "type": "number"
+            },
+            "elevated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "commandLine",
+            "shell",
+            "workingDirectory",
+            "exitCode",
+            "standardOutput",
+            "standardError",
+            "outputTruncated",
+            "timedOut",
+            "durationSeconds",
+            "elevated"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "command"
+      ]
+    },
+    "annotations": {
+      "title": "Run a command on the host",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "service_config",
+    "title": "Service configuration and state",
+    "description": "Show a Windows service\u0027s configured start type and its actual running state, plus the account it runs as, its binary path, its description, and its dependencies in both directions. Accepts either the short service name or the display name. Use it for \u0027the service did not start\u0027, \u0027it starts too late\u0027, \u0027it runs as the wrong account\u0027, or to work out what else breaks if this one is stopped. If the name does not match exactly, near matches are suggested.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Service short name (for example \u0027Spooler\u0027) or display name (for example \u0027Print Spooler\u0027)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "service": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "serviceName": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "startType": {
+              "type": "string"
+            },
+            "delayedAutoStart": {
+              "type": "boolean"
+            },
+            "serviceType": {
+              "type": "string"
+            },
+            "imagePath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "account": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dependsOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dependedOnBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "serviceName",
+            "displayName",
+            "description",
+            "status",
+            "startType",
+            "delayedAutoStart",
+            "serviceType",
+            "imagePath",
+            "account",
+            "dependsOn",
+            "dependedOnBy"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "service",
+        "candidates"
+      ]
+    },
+    "annotations": {
+      "title": "Service configuration and state",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "service_control",
+    "title": "Start, stop or restart a service",
+    "description": "Start, stop or restart a Windows service. Use it for the driver and agent restart loops that make up most of the work when debugging a service that misbehaves. Stopping a service also stops whatever depends on it, and those dependents are reported because restarting the named service does NOT bring them back. Core Windows services are refused - several of them would take these diagnostics down along with the machine.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceName": {
+          "description": "Service short name, e.g. \u0027Spooler\u0027. Check it with service_config first.",
+          "type": "string"
+        },
+        "action": {
+          "description": "\u0027start\u0027, \u0027stop\u0027 or \u0027restart\u0027",
+          "type": "string"
+        }
+      },
+      "required": [
+        "serviceName",
+        "action"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "serviceName": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "Start",
+                "Stop",
+                "Restart"
+              ]
+            },
+            "statusBefore": {
+              "type": "string"
+            },
+            "statusAfter": {
+              "type": "string"
+            },
+            "dependentServicesStopped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "serviceName",
+            "displayName",
+            "action",
+            "statusBefore",
+            "statusAfter",
+            "dependentServicesStopped",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "result"
+      ]
+    },
+    "annotations": {
+      "title": "Start, stop or restart a service",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "system_overview",
+    "title": "System overview",
+    "description": "Describe the machine: OS build, architecture, uptime and boot time, processor count, physical memory, logical disks with free space, the account the server runs as, and whether it is elevated. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full disk, a very recent reboot, exhausted memory) before you go looking for something subtler.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "system": {
+          "type": "object",
+          "properties": {
+            "machineName": {
+              "type": "string"
+            },
+            "userName": {
+              "type": "string"
+            },
+            "operatingSystem": {
+              "type": "string"
+            },
+            "architecture": {
+              "type": "string"
+            },
+            "is64BitOperatingSystem": {
+              "type": "boolean"
+            },
+            "is64BitProcess": {
+              "type": "boolean"
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "bootTime": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "uptime": {
+              "$comment": "Represents a System.TimeSpan value.",
+              "type": "string",
+              "pattern": "^-?(\\d\u002B\\.)?\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?$"
+            },
+            "processorCount": {
+              "type": "integer"
+            },
+            "totalPhysicalMemoryBytes": {
+              "type": "integer"
+            },
+            "availablePhysicalMemoryBytes": {
+              "type": "integer"
+            },
+            "disks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "fileSystem": {
+                    "type": "string"
+                  },
+                  "totalBytes": {
+                    "type": "integer"
+                  },
+                  "freeBytes": {
+                    "type": "integer"
+                  },
+                  "driveType": {
+                    "type": "string"
+                  },
+                  "percentFree": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "canRunOutOfSpace": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "label",
+                  "fileSystem",
+                  "totalBytes",
+                  "freeBytes",
+                  "driveType"
+                ]
+              }
+            }
+          },
+          "required": [
+            "machineName",
+            "userName",
+            "operatingSystem",
+            "architecture",
+            "is64BitOperatingSystem",
+            "is64BitProcess",
+            "elevated",
+            "bootTime",
+            "uptime",
+            "processorCount",
+            "totalPhysicalMemoryBytes",
+            "availablePhysicalMemoryBytes",
+            "disks"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "system"
+      ]
+    },
+    "annotations": {
+      "title": "System overview",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "update_self",
+    "title": "Install a staged server build",
+    "description": "Replace this server\u0027s own executable with a build already copied next to it, then restart. Use it to update a target reachable by file copy but not by remote execution, where the running process would otherwise have to be stopped by hand at the console. You must pass the SHA-256 you expect; anything else is refused and nothing is changed. By default the server FINISHES whatever tool calls are already running before it restarts, refusing new calls meanwhile - so on a busy target this can take minutes, and the refusals are how you know the old process is still draining. Pass force to skip that and cut running calls off instead - and you can still change your mind, because update_self is the one tool a draining server keeps accepting: call it again with force to stop waiting and restart now. Either way THIS CONNECTION WILL DROP - that is success, not failure. Reconnect and check the version; if it does not come back, read the helper log named in the result.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "expectedSha256": {
+          "description": "SHA-256 of the staged build, as reported by file_signatures on the staged file",
+          "type": "string"
+        },
+        "stagedFileName": {
+          "description": "Name of the staged file beside the server. Must be a file name, not a path.",
+          "type": "string",
+          "default": "WinDiag.Mcp.new.exe"
+        },
+        "force": {
+          "description": "Set true to restart without waiting for running tool calls. Their work is cut off mid-answer and anything they were writing - a capture, a dump - is left partial and orphaned. Default false, which waits.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "expectedSha256"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "stagedPath": {
+              "type": "string"
+            },
+            "livePath": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "signatureVerdict": {
+              "type": "string"
+            },
+            "helperLogPath": {
+              "type": "string"
+            },
+            "restartScheduled": {
+              "type": "boolean"
+            },
+            "forced": {
+              "type": "boolean"
+            },
+            "otherCallsInFlight": {
+              "type": "integer"
+            },
+            "drainTimeoutSeconds": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "stagedPath",
+            "livePath",
+            "sizeBytes",
+            "sha256",
+            "signatureVerdict",
+            "helperLogPath",
+            "restartScheduled",
+            "forced",
+            "otherCallsInFlight",
+            "drainTimeoutSeconds"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "update"
+      ]
+    },
+    "annotations": {
+      "title": "Install a staged server build",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "who_locks_path",
+    "title": "Who locks this path",
+    "description": "Find which processes are holding a file or folder open, using the Windows Restart Manager. Fast, needs no administrator rights, and is the right first call for \u0027the file is in use\u0027 / \u0027access denied on save\u0027 / \u0027setup cannot replace this DLL\u0027 problems. IMPORTANT: coverage is not exhaustive. Restart Manager only reports processes it could restart, so it can miss services, kernel-held references and memory-mapped sections. If it returns no holders and you still believe the file is locked, call path_handle_search, which searches every handle on the machine.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path to the file or folder, for example C:\\ProgramData\\Vendor\\agent.log",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "holders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processId": {
+                "type": "integer"
+              },
+              "processName": {
+                "type": "string"
+              },
+              "friendlyName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "serviceShortName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "Unknown",
+                  "MainWindow",
+                  "OtherWindow",
+                  "Service",
+                  "Explorer",
+                  "Console",
+                  "Critical"
+                ]
+              },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "stillRunning": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "processId",
+              "processName",
+              "friendlyName",
+              "serviceShortName",
+              "kind",
+              "startedAt",
+              "stillRunning"
+            ]
+          }
+        },
+        "exhaustive": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "summary",
+        "path",
+        "holders",
+        "exhaustive"
+      ]
+    },
+    "annotations": {
+      "title": "Who locks this path",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  }
+]
