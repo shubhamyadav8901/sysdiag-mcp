@@ -95,6 +95,21 @@ public sealed class RelayFileScopePortableTests
     }
 
     [Fact]
+    public void The_variable_replaces_the_defaults_rather_than_adding_to_them()
+    {
+        // Setting the variable is how an operator narrows the boundary; if it only added roots, the two
+        // defaults would stay reachable however carefully it was written.
+        var builds = Path.Combine(_root, "builds");
+        var dumps = Path.Combine(_root, "dumps");
+
+        var roots = RelayFileScope.Roots(new Hashtable { [RelayFileScope.RootsVariable] = $"{builds};{dumps}" });
+
+        Assert.Equal([builds, dumps], roots);
+        Assert.DoesNotContain(RelayFileScope.DefaultBuildRoot, roots);
+        Assert.DoesNotContain(RelayFileScope.DefaultArtifactRoot, roots);
+    }
+
+    [Fact]
     public void A_path_inside_a_root_is_allowed()
     {
         var inside = Path.Combine(_root, "win-x64", "WinDiag.Mcp.exe");
