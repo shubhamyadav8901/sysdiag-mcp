@@ -26,6 +26,7 @@ parser is a fact the next person greps for; that has already cost one session an
 ```
 dotnet build -warnaserror                 # 0 warnings is the gate, not just 0 errors
 dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green before any commit
+dotnet test tests/DiagRelay.Mcp.Tests     # the relay's suite; Unix-only tests report Skipped here
 ```
 
 - **Gate on the exit code, never on grepping the output.** `dotnet build | grep "Error(s)"` *succeeds*
@@ -35,7 +36,11 @@ dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green bef
 - Publishing is `-r win-x64` or `win-x86`, `--self-contained -p:PublishSingleFile=true`, into
   `artifacts/win-<arch>/`. The relay is its own net9.0 project, `src/DiagRelay.Mcp`, published to
   `artifacts/diagrelay/`. Test it on real Linux with `tools/test-linux.sh` through WSL — mode, lock and
-  case-sensitivity tests only run there.
+  case-sensitivity tests only run there. **Invoke it from PowerShell or cmd, never Git Bash**: MSYS
+  rewrites the `/mnt/d/...` argument into `C:/Program Files/Git/mnt/d/...` and the script is not found.
+- **`dotnet test --filter Name~X` matches nothing under xUnit and still exits 0.** Filter by
+  `FullyQualifiedName~X`, and read the summary for a non-zero `Total` before trusting a green run —
+  otherwise a mutation check's "restored" run can pass without having run anything.
 - **A dependency reached only by reflection must be an explicit `PackageReference`.** It will not
   otherwise survive to the published set, while the test host — which is not published — always has
   it, so the suite stays green and only the shipped build breaks. CI asserts the known cases.

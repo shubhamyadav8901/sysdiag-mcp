@@ -115,6 +115,8 @@ Register it once:
 
 Keep the entry named `windiag`: forwarded tools are named after the registration — `windiag__runner1__capabilities` — not after the executable, so the name is what keeps them stable.
 
+On Linux or macOS the command is the `DiagRelay.Mcp` binary — no `.exe` — from a `-r linux-x64` or `-r osx-arm64` publish. A binary downloaded from a release artifact arrives without its execute bit, so `chmod +x DiagRelay.Mcp` before registering it.
+
 It exposes five control tools — `connect`, `disconnect`, `status`, and the two transfer tools
 [`push_file` / `pull_file`](#moving-files-without-spending-context) below. Call `connect` with the target's
 current address and token, and that target's full tool set appears here (via a `tools/list_changed`
