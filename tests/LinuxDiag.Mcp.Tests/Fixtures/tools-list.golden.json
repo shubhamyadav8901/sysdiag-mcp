@@ -1,0 +1,264 @@
+[
+  {
+    "name": "capabilities",
+    "title": "Server capabilities",
+    "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing helper program, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "backing": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "Available",
+                  "Degraded",
+                  "Unavailable"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "backing",
+              "status",
+              "detail"
+            ]
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "elevated",
+        "tools"
+      ]
+    },
+    "annotations": {
+      "title": "Server capabilities",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_file",
+    "title": "Read a file back off the host",
+    "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Path on the host to read, e.g. the path a capture or dump tool returned",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Byte offset to start at. Walk this forward to fetch a whole file. Default 0.",
+          "type": "integer",
+          "default": 0
+        },
+        "length": {
+          "description": "Bytes to return. Default 64 KB, capped at 4 MB (base64 costs a third again, and a 32-bit target encodes it in one piece).",
+          "type": "integer",
+          "default": 0
+        },
+        "includeWholeFileHash": {
+          "description": "Also return the SHA-256 of the WHOLE file, to verify a reassembled copy. Rereads the file, so ask for it only on the last slice.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "totalBytes": {
+              "type": "integer"
+            },
+            "content": {
+              "type": "string"
+            },
+            "chunkSha256": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endOfFile": {
+              "type": "boolean"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "WinDiag",
+                "Arbitrary"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "offset",
+            "length",
+            "totalBytes",
+            "content",
+            "chunkSha256",
+            "sha256",
+            "endOfFile",
+            "scope"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "file"
+      ]
+    },
+    "annotations": {
+      "title": "Read a file back off the host",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "put_file",
+    "title": "Write a file on the host",
+    "description": "Write a file onto the machine hosting this server, sent as base64 over the same authenticated channel as every other tool. Use it to stage an updated server build for update_self, to place the helper binaries a tool needs, or to drop an input file. By default it may only write inside the directories this server owns (its own folder and the artifact directory), which is all staging needs; writing anywhere else requires the server to have been started with its arbitrary-write grant. Pass expectedSha256 to have the written file verified and rolled back on mismatch. A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each later call sets append=true, and only the last passes expectedSha256, of the whole assembled file. Any one call is capped at ~128 MB.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Destination path on the host, as the host spells it.",
+          "type": "string"
+        },
+        "contentBase64": {
+          "description": "The file\u0027s bytes (or this chunk\u0027s bytes), base64-encoded.",
+          "type": "string"
+        },
+        "expectedSha256": {
+          "description": "SHA-256 the finished file must have; verified after writing, rolled back on mismatch. For a chunked send, pass it only on the last chunk.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "overwrite": {
+          "description": "Set false to refuse rather than replace an existing file at the path.",
+          "type": "boolean",
+          "default": true
+        },
+        "append": {
+          "description": "Append to the file instead of replacing it - used for the second and later chunks of a large file.",
+          "type": "boolean",
+          "default": false
+        },
+        "chunkSha256": {
+          "description": "SHA-256 of THIS call\u0027s bytes, checked before writing so a chunk corrupted in transit is caught at the chunk. Safe to re-send on failure.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path",
+        "contentBase64"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "WinDiag",
+                "Arbitrary"
+              ]
+            },
+            "overwrote": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "sizeBytes",
+            "sha256",
+            "scope",
+            "overwrote"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "file"
+      ]
+    },
+    "annotations": {
+      "title": "Write a file on the host",
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  }
+]

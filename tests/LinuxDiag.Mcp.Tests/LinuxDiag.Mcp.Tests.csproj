@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net9.0: parser and registration tests run on any OS; [LinuxFact] tests run through
+         tools/test-linux.sh. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LinuxDiag.Mcp\LinuxDiag.Mcp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\DiagRelay.Mcp.Tests\PlatformFacts.cs" Link="PlatformFacts.cs" />
+    <Compile Include="..\Diag.Mcp.Server.Tests\Guards\*.cs" LinkBase="Guards" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Diag.Mcp.Core" />
+    <Using Include="Diag.Mcp.Server" />
+    <Using Include="Diag.Mcp.Server.Capabilities" />
+    <Using Include="Diag.Mcp.Server.Tests" />
+    <Using Include="DiagRelay.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>

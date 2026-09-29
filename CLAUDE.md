@@ -28,6 +28,7 @@ dotnet build -warnaserror                 # 0 warnings is the gate, not just 0 e
 dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green before any commit
 dotnet test tests/DiagRelay.Mcp.Tests     # the relay's suite; Unix-only tests report Skipped here
 dotnet test tests/Diag.Mcp.Server.Tests   # the shared server kit; runs on Linux too
+dotnet test tests/LinuxDiag.Mcp.Tests    # the Linux server; its [LinuxFact] tests run only through tools/test-linux.sh
 ```
 
 - **Gate on the exit code, never on grepping the output.** `dotnet build | grep "Error(s)"` *succeeds*
@@ -39,6 +40,8 @@ dotnet test tests/Diag.Mcp.Server.Tests   # the shared server kit; runs on Linux
   `artifacts/diagrelay/`. Test it on real Linux with `tools/test-linux.sh` through WSL — mode, lock and
   case-sensitivity tests only run there. **Invoke it from PowerShell or cmd, never Git Bash**: MSYS
   rewrites the `/mnt/d/...` argument into `C:/Program Files/Git/mnt/d/...` and the script is not found.
+- The Linux server publishes with `-r linux-x64 --self-contained -p:PublishSingleFile=true` into
+  `artifacts/linux-x64/`. It is **x86-64 only**, because its P/Invoke flag values are.
 - **`dotnet test --filter Name~X` matches nothing under xUnit and still exits 0.** Filter by
   `FullyQualifiedName~X`, and read the summary for a non-zero `Total` before trusting a green run —
   otherwise a mutation check's "restored" run can pass without having run anything.
