@@ -85,8 +85,15 @@ public sealed class FileTools
     /// <summary>Decodes the payload, turning malformed base64 into a message the caller can act on.</summary>
     private static byte[] Decode(string contentBase64)
     {
+        // Missing is not empty: a null is a call that forgot the content, and with overwrite on by default
+        // accepting it would truncate whatever is at the path.
+        if (contentBase64 is null)
+        {
+            throw new FileTransferException("contentBase64 is missing. Send the file's bytes base64-encoded.");
+        }
+
         // An empty payload is a valid, empty file -- and it is how the relay sends a zero-byte one.
-        if (string.IsNullOrEmpty(contentBase64))
+        if (contentBase64.Length == 0)
         {
             return [];
         }

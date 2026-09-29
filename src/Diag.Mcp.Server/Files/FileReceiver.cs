@@ -153,7 +153,17 @@ public sealed class FileReceiver : IFileReceiver
         try
         {
             EnsureDirectory(fullPath);
-            using var stream = new FileStream(fullPath, FileMode.Append, FileAccess.Write, FileShare.None);
+
+            // An append creates a missing file, so off Windows it is born 0600 like any other write --
+            // left to the umask, a root service's appends would be world-readable. The mode applies only
+            // when the file is created; an existing file keeps its own.
+            var options = new FileStreamOptions { Mode = FileMode.Append, Access = FileAccess.Write, Share = FileShare.None };
+            if (!OperatingSystem.IsWindows())
+            {
+                options.UnixCreateMode = OwnerOnly;
+            }
+
+            using var stream = new FileStream(fullPath, options);
             stream.Write(content, 0, content.Length);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

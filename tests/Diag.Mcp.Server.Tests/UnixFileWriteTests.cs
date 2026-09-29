@@ -52,6 +52,20 @@ public sealed class UnixFileWriteTests : IDisposable
     }
 
     [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void An_append_that_creates_the_file_creates_it_owner_only()
+    {
+        // An append to a missing path creates it -- a resumed transfer whose partial file was removed,
+        // or a caller that starts with append. Created with the process umask, that is 0644 on a root
+        // service: every chunk readable by every local account.
+        var path = Path.Combine(_root, "appended.bin");
+
+        Receiver().Receive(new FileWriteRequest(path, [1], Append: true), CancellationToken.None);
+
+        Assert.Equal(OwnerReadWrite, File.GetUnixFileMode(path));
+    }
+
+    [UnixFact]
     public void A_symlink_at_the_destination_is_replaced_not_followed()
     {
         var victim = Path.Combine(_root, "victim.txt");

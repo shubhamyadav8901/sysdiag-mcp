@@ -37,11 +37,14 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 - **`push_file` of an empty file now works.** The relay sends a zero-byte file as one call with no
   content, which the server refused as "contentBase64 is empty", so an empty file could not be pushed
-  at all.
+  at all. Empty content is now an empty file; *missing* content (`null`) is still refused, since with
+  `overwrite` on by default accepting it would empty whatever was at the path.
 - **`put_file` no longer follows a symbolic link off Windows, and writes owner-only there.** The write
   path is now shared with the coming Linux server, which runs as root: a file is replaced rather than
-  written through a link at its path, an append to a path that has become a link is refused, and new
-  files and directories are created `0600` and `0700`. Windows behaviour is unchanged.
+  written through a link at its path, and new files and directories — including a file an append
+  creates — are created `0600` and `0700`. An append is refused when the path is already a link as the
+  chunk arrives; a link swapped in during the instant between that check and the open is not caught
+  yet, and closing it needs `O_NOFOLLOW`. Windows behaviour is unchanged.
 
 ### Changed
 

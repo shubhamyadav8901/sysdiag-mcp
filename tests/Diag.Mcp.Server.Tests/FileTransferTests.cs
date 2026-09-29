@@ -304,6 +304,21 @@ public sealed class PutFileToolTests
     }
 
     [Fact]
+    public void Missing_content_is_refused_so_a_malformed_call_cannot_empty_a_file()
+    {
+        // Only "" means an empty file. A null is a call that forgot the content, and with overwrite on by
+        // default, accepting it would truncate whatever is at the path to zero bytes.
+        var stub = new StubReceiver();
+        var tool = new FileTools(stub);
+
+        var ex = Assert.Throws<FileTransferException>(
+            () => tool.PutFile(Path.Combine(Path.GetTempPath(), "kept.bin"), null!));
+
+        Assert.Contains("contentBase64", ex.Message, StringComparison.Ordinal);
+        Assert.Null(stub.Last);
+    }
+
+    [Fact]
     public void Render_states_the_hash_and_flags_an_arbitrary_write()
     {
         var scoped = FileTools.Render(new FileWriteResult(@"C:\WinDiag\a", 10, "HASH", WriteScope.WinDiag, false));
