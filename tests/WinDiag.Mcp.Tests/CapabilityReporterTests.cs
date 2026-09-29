@@ -1,5 +1,3 @@
-using System.Reflection;
-using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Capabilities;
 using WinDiag.Mcp.Diagnostics.External;
@@ -17,30 +15,15 @@ public sealed class CapabilityReporterTests
     private static CapabilityReporter Reporter(IToolLocator locator, IPrivilegeProbe privileges) =>
         new(new WindowsCapabilityRequirements(), new SysinternalsExecutableResolver(locator), privileges);
 
-    /// <summary>Every tool name this server's assembly and the shared kit declare to the MCP SDK.</summary>
-    /// <remarks>
-    /// Both assemblies, because put_file, get_file and capabilities are declared in the kit: a guard
-    /// over this assembly alone would stop covering them the moment they moved.
-    /// </remarks>
-    private static IEnumerable<string> RegisteredToolNames() =>
-        new[] { typeof(FileLockTools).Assembly, typeof(DiagServerKit).Assembly }
-            .SelectMany(assembly => assembly.GetTypes())
-            .Where(type => type.GetCustomAttribute<McpServerToolTypeAttribute>() is not null)
-            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
-            .Select(method => method.GetCustomAttribute<McpServerToolAttribute>())
-            .Where(attribute => attribute?.Name is not null)
-            .Select(attribute => attribute!.Name!);
-
     [Fact]
     public void Covers_every_registered_tool_and_invents_none()
     {
         // The requirements table is hand-maintained, so without this it would quietly fall behind as
         // tools are added -- and `capabilities` would then confidently report on a subset while the
         // caller believed it was seeing everything. Adding a tool must mean declaring what it needs.
-        var registered = RegisteredToolNames().OrderBy(name => name, StringComparer.Ordinal).ToArray();
-        var declared = new WindowsCapabilityRequirements().Requirements.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
-
-        Assert.Equal(registered, declared);
+        // Both assemblies, because put_file, get_file and capabilities are declared in the kit.
+        Diag.Mcp.Server.Tests.CapabilityTableGuard.AssertTableMatchesDeclaredTools(
+            new WindowsCapabilityRequirements().Requirements, typeof(FileLockTools).Assembly, typeof(DiagServerKit).Assembly);
     }
 
     [Fact]

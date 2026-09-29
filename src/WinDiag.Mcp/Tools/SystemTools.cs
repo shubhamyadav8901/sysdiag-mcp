@@ -63,13 +63,13 @@ public sealed class SystemTools
                 "activity on this OS.");
         }
 
-        builder.Append("Up ").Append(FormatUptime(overview.Uptime))
+        builder.Append("Up ").Append(TextFormat.Uptime(overview.Uptime))
             .Append(", booted ").Append(overview.BootTime.ToString("u", CultureInfo.InvariantCulture))
             .AppendLine();
 
         builder.Append(overview.ProcessorCount).Append(" logical processors, ")
-            .Append(FormatBytes(overview.AvailablePhysicalMemoryBytes)).Append(" free of ")
-            .Append(FormatBytes(overview.TotalPhysicalMemoryBytes)).AppendLine(" RAM");
+            .Append(TextFormat.Bytes(overview.AvailablePhysicalMemoryBytes)).Append(" free of ")
+            .Append(TextFormat.Bytes(overview.TotalPhysicalMemoryBytes)).AppendLine(" RAM");
 
         foreach (var disk in overview.Disks)
         {
@@ -80,8 +80,8 @@ public sealed class SystemTools
             }
 
             builder.Append(' ').Append(disk.FileSystem).Append(": ")
-                .Append(FormatBytes(disk.FreeBytes)).Append(" free of ")
-                .Append(FormatBytes(disk.TotalBytes));
+                .Append(TextFormat.Bytes(disk.FreeBytes)).Append(" free of ")
+                .Append(TextFormat.Bytes(disk.TotalBytes));
 
             if (disk.PercentFree is { } percent)
             {
@@ -100,25 +100,5 @@ public sealed class SystemTools
         }
 
         return builder.ToString().TrimEnd();
-    }
-
-    private static string FormatUptime(TimeSpan uptime) =>
-        uptime.TotalDays >= 1
-            ? $"{(int)uptime.TotalDays}d {uptime.Hours}h {uptime.Minutes}m"
-            : $"{(int)uptime.TotalHours}h {uptime.Minutes}m";
-
-    private static string FormatBytes(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
-        double value = bytes;
-        var unit = 0;
-
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-
-        return $"{value.ToString(unit == 0 ? "0" : "0.#", CultureInfo.InvariantCulture)} {units[unit]}";
     }
 }

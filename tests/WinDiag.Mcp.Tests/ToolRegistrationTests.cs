@@ -42,6 +42,13 @@ public sealed class ToolRegistrationTests
         });
 
     [Fact]
+    public void The_gated_tools_follow_their_grants()
+    {
+        Diag.Mcp.Server.Tests.GatedToolGuard.AssertGatedToolsFollowTheirGrants(
+            (readOnly, selfUpdate, commands) => ToolNames(Options(readOnly, selfUpdate, commands)));
+    }
+
+    [Fact]
     public void Shares_one_activity_tracker_between_the_gate_and_the_updater()
     {
         // update_self waits on the count the call-tool filter maintains, so both must be talking about
