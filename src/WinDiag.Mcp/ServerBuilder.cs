@@ -120,8 +120,6 @@ public static class ServerBuilder
                                                   touch target
           WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
                                                   executable and restarts (default: false)
-          WINDIAG_RELAY_FILE_ROOT                 Relay mode only: the directory push_file and pull_file
-                                                  are confined to (default: the parent of the relay exe)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
           WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS    How long update_self waits for running calls before
                                                   restarting anyway, 1..86400 (default: 1800)
@@ -156,7 +154,7 @@ public static class ServerBuilder
         // Lets the same executable run under the Service Control Manager as well as from a terminal.
         //
         // Deliberately additive: this is inert unless the process was actually started as a service, so
-        // `WinDiag.Mcp.exe --http ...` in a console and the stdio relay behave exactly as before. What
+        // `WinDiag.Mcp.exe --http ...` in a console and stdio mode behave exactly as before. What
         // it changes when the SCM IS the parent is the three things that would otherwise break -- the
         // lifetime waits on the service stop signal instead of Ctrl-C, the content root becomes the
         // executable's directory instead of System32, and logging goes to the event log, without which a

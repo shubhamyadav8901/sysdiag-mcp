@@ -177,6 +177,23 @@ public sealed class CommandLineTests
 
         Assert.Contains("full URL", ex.Message);
     }
+
+    [Fact]
+    public void Asking_for_the_removed_relay_is_recognised_so_it_is_refused_rather_than_misread()
+    {
+        Assert.True(CommandLine.AsksForRemovedRelay(["--relay"]));
+        Assert.True(CommandLine.AsksForRemovedRelay(["--http", "http://x:1", "--relay"]));
+        Assert.False(CommandLine.AsksForRemovedRelay(["--http", "http://x:1"]));
+        Assert.False(CommandLine.AsksForRemovedRelay([]));
+    }
+
+    [Fact]
+    public void The_refusal_names_where_the_relay_went()
+    {
+        // Whoever sees this is holding a stale MCP registration; the message is their only instruction.
+        Assert.Contains("DiagRelay.Mcp", CommandLine.RemovedRelayMessage, StringComparison.Ordinal);
+        Assert.Contains("artifacts/diagrelay", CommandLine.RemovedRelayMessage, StringComparison.Ordinal);
+    }
 }
 
 public sealed class OptionsRedactionTests

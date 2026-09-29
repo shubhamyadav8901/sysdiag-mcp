@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
-namespace WinDiag.Mcp.Relay;
+namespace DiagRelay.Mcp;
 
 /// <summary>
 /// A local stdio MCP server that forwards to whichever target windiag it is pointed at.

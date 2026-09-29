@@ -100,4 +100,17 @@ public static class CommandLine
                 "port, for example 'http://10.0.0.5:7777'.");
         }
     }
+
+    /// <summary>True when the caller asked for relay mode, which no longer lives in this executable.</summary>
+    /// <remarks>
+    /// Refused explicitly rather than ignored. Ignored, <c>--relay</c> falls through to stdio mode and
+    /// starts a diagnostics server in the relay's place -- a stale MCP registration would then connect
+    /// to this machine's own tools instead of the fleet, and nothing would say anything was wrong.
+    /// </remarks>
+    public static bool AsksForRemovedRelay(IReadOnlyList<string> args) => args.Any(a => a is "--relay");
+
+    public const string RemovedRelayMessage =
+        "[windiag] --relay was removed: the relay is now its own executable, DiagRelay.Mcp, published to " +
+        "artifacts/diagrelay/. Point your MCP registration at it -- keep the entry name 'windiag' and " +
+        "every forwarded tool name stays the same. See the README, under the relay.";
 }

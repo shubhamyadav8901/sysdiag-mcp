@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
-namespace WinDiag.Mcp.Relay;
+namespace DiagRelay.Mcp;
 
 /// <summary>
 /// The relay's live connections: one per target VM, each under a short alias.

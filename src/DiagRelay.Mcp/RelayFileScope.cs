@@ -1,8 +1,7 @@
 using System.Collections;
-using System.Runtime.Versioning;
-using WinDiag.Mcp.Diagnostics.Files;
+using Diag.Mcp.Core;
 
-namespace WinDiag.Mcp.Relay;
+namespace DiagRelay.Mcp;
 
 /// <summary>
 /// Decides which directories on THIS machine the relay may read from and write to.
@@ -19,7 +18,6 @@ namespace WinDiag.Mcp.Relay;
 /// is only WHICH roots apply -- the relay's are local build and artifact directories, not the server's
 /// own install directory.</para>
 /// </remarks>
-[SupportedOSPlatform("windows")]
 internal static class RelayFileScope
 {
     /// <summary>Semicolon-separated roots, overriding the defaults entirely when set.</summary>
@@ -67,7 +65,7 @@ internal static class RelayFileScope
 
     /// <summary>The build tree the relay was published into -- what a deploy pushes from.</summary>
     /// <remarks>
-    /// <para>The relay ships at <c>artifacts/relay/WinDiag.Mcp.exe</c> while the builds it exists to
+    /// <para>The relay ships at <c>artifacts/diagrelay/DiagRelay.Mcp.exe</c> while the builds it exists to
     /// send sit beside it at <c>artifacts/win-x64</c>, so the useful root is the directory ABOVE the
     /// one the executable is in. An earlier version combined the executable's own directory with
     /// "artifacts" and produced <c>artifacts/relay/artifacts</c>, which does not exist -- the default
@@ -86,7 +84,7 @@ internal static class RelayFileScope
     {
         get
         {
-            var directory = FileScope.ServerDirectory;
+            var directory = PathScope.ProcessDirectory;
             var parent = Directory.GetParent(directory);
 
             // GetParent returns null only at a root; Parent being null in turn means the parent IS a
@@ -107,14 +105,14 @@ internal static class RelayFileScope
         string full;
         try
         {
-            full = FileScope.Resolve(path, what);
+            full = PathScope.Resolve(path, what);
         }
         catch (FileTransferException ex)
         {
             throw new RelayException(ex.Message);
         }
 
-        if (roots.Any(root => FileScope.IsUnder(full, root)))
+        if (roots.Any(root => PathScope.IsUnder(full, root)))
         {
             return full;
         }

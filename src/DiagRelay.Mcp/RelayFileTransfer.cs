@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
-namespace WinDiag.Mcp.Relay;
+namespace DiagRelay.Mcp;
 
 /// <summary>Calls one tool on an already-connected target.</summary>
 /// <remarks>

@@ -1,8 +1,7 @@
 using System.Security.AccessControl;
 using System.Security.Principal;
-using WinDiag.Mcp.Relay;
 
-namespace WinDiag.Mcp.Tests;
+namespace DiagRelay.Mcp.Tests;
 
 /// <summary>
 /// The targets-file parser the relay pre-connects from at launch. One shape only -- an object with a
@@ -317,7 +316,8 @@ public sealed class RelayTargetsFileTests
         Assert.Equal(expected, RelayTargetsFile.EffectiveAlias(new RelayTargetEntry(declared, target, "t", port)));
     }
 
-    [Fact]
+    [WindowsFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void The_file_is_restricted_to_the_current_user_because_it_stores_tokens_in_clear()
     {
         // Left inherited, a file under the profile is readable by SYSTEM and every local administrator --

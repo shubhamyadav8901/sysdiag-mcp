@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace WinDiag.Mcp.Relay;
+namespace DiagRelay.Mcp;
 
 /// <summary>One target to pre-connect at launch: its alias, address, token and optional port.</summary>
 internal sealed record RelayTargetEntry(string? As, string Target, string Token, int? Port);
@@ -29,7 +29,6 @@ internal sealed record RelayTargetEntry(string? As, string Target, string Token,
 /// sessions connecting at once silently lose one another's target -- and the file holds every target's
 /// bearer token, so a write torn by process death would destroy all of them.</para>
 /// </remarks>
-[SupportedOSPlatform("windows")]
 internal static class RelayTargetsFile
 {
     public const string FileName = ".windiag-targets.json";
@@ -276,19 +275,16 @@ internal static class RelayTargetsFile
     {
         try
         {
-            using var identity = WindowsIdentity.GetCurrent();
-            if (identity.User is not { } user)
+            if (OperatingSystem.IsWindows())
             {
-                return;
+                RestrictWithAcl(path);
             }
-
-            var security = new FileSecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.SetOwner(user);
-            security.AddAccessRule(new FileSystemAccessRule(
-                user, FileSystemRights.FullControl, AccessControlType.Allow));
-
-            new FileInfo(path).SetAccessControl(security);
+            else
+            {
+                Console.Error.WriteLine(
+                    $"[windiag-relay] WARNING: {path} is not restricted to your account on this platform. " +
+                    "It holds bearer tokens in plain text -- tighten its permissions by hand.");
+            }
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException
                                        or NotSupportedException or IOException or InvalidOperationException)
@@ -297,6 +293,25 @@ internal static class RelayTargetsFile
                 $"[windiag-relay] WARNING: could not restrict {path} to your account ({ex.Message}). " +
                 "It holds bearer tokens in plain text -- tighten its permissions by hand.");
         }
+    }
+
+    /// <summary>The Windows half of <see cref="Restrict"/>: inheritance off, owner set, one ACE.</summary>
+    [SupportedOSPlatform("windows")]
+    private static void RestrictWithAcl(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (identity.User is not { } user)
+        {
+            return;
+        }
+
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(user);
+        security.AddAccessRule(new FileSystemAccessRule(
+            user, FileSystemRights.FullControl, AccessControlType.Allow));
+
+        new FileInfo(path).SetAccessControl(security);
     }
 
     /// <summary>Serialises entries back to the file's single shape.</summary>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net9.0: the relay is the one part of this family that has to run on macOS and Linux, so it may
+         not depend on anything Windows-only. CA1416 under -warnaserror is what enforces that; every
+         Windows call sits behind an OperatingSystem.IsWindows() guard. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>DiagRelay.Mcp</AssemblyName>
+    <RootNamespace>DiagRelay.Mcp</RootNamespace>
+    <Company>Shubham Yadav</Company>
+    <Product>DiagRelay</Product>
+    <AssemblyTitle>diag relay</AssemblyTitle>
+    <Description>Local stdio MCP relay that forwards to remote diagnostics servers.</Description>
+    <Version>1.3.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Diag.Mcp.Core\Diag.Mcp.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DiagRelay.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -2,9 +2,8 @@ using System.Collections;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
-using WinDiag.Mcp.Relay;
 
-namespace WinDiag.Mcp.Tests;
+namespace DiagRelay.Mcp.Tests;
 
 /// <summary>
 /// The relay's own file transfer: chunk boundaries, the per-chunk retry, and every hash check.
@@ -331,7 +330,7 @@ public sealed class RelayFileScopeTests
             root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
             StringComparison.OrdinalIgnoreCase);
 
-    [Fact]
+    [WindowsFact]
     public void The_variable_replaces_the_defaults_rather_than_adding_to_them()
     {
         var roots = RelayFileScope.Roots(Environment(@"C:\builds;C:\dumps"));
@@ -340,7 +339,7 @@ public sealed class RelayFileScopeTests
         Assert.DoesNotContain(RelayFileScope.DefaultBuildRoot, roots);
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_path_inside_a_root_is_allowed()
     {
         var full = RelayFileScope.Require(@"C:\builds\win-x64\WinDiag.Mcp.exe", "localPath", [@"C:\builds"]);
@@ -348,7 +347,7 @@ public sealed class RelayFileScopeTests
         Assert.Equal(@"C:\builds\win-x64\WinDiag.Mcp.exe", full);
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_path_outside_every_root_is_refused_and_the_roots_are_named()
     {
         var ex = Assert.Throws<RelayException>(
@@ -358,7 +357,7 @@ public sealed class RelayFileScopeTests
         Assert.Contains(RelayFileScope.RootsVariable, ex.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_traversal_out_of_a_root_is_judged_by_where_it_lands()
     {
         // The classic escape: spelled as if it were inside, resolving to somewhere else entirely.
@@ -366,7 +365,7 @@ public sealed class RelayFileScopeTests
             () => RelayFileScope.Require(@"C:\builds\..\Windows\System32\config\SAM", "localPath", [@"C:\builds"]));
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_sibling_directory_sharing_a_prefix_is_not_inside_the_root()
     {
         // C:\buildsX must not count as being under C:\builds -- a prefix match without the separator

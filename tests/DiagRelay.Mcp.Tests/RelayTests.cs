@@ -1,8 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
-using WinDiag.Mcp.Relay;
 
-namespace WinDiag.Mcp.Tests;
+namespace DiagRelay.Mcp.Tests;
 
 /// <summary>
 /// The relay's guards that hold without a live target. The forwarding itself is an integration
