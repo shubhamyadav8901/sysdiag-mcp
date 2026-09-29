@@ -28,7 +28,16 @@ if ! command -v dotnet >/dev/null 2>&1; then
 fi
 
 mkdir -p "$work"
-rsync -a --delete --exclude 'bin/' --exclude 'obj/' --exclude 'artifacts/' --exclude '.git/' \
+
+# --delete-excluded wipes the copy's bin/ and obj/ on every run, so each run is a clean build. Keeping
+# them looked like free speed and gave false results: rsync -a preserves source timestamps, so a file
+# restored to its older content AND its older mtime -- Copy-Item, cp -p, unzip all do this -- reaches
+# the copy looking older than the binary already built from the mutated version. MSBuild then skips
+# the compile and the tests run against code that no longer exists. That happened here, during a
+# mutation check, and a harness whose job is to catch regressions cannot be allowed to report on
+# stale code.
+rsync -a --delete --delete-excluded \
+  --exclude 'bin/' --exclude 'obj/' --exclude 'artifacts/' --exclude '.git/' \
   "$repo/" "$work/"
 
 cd "$work"
