@@ -36,17 +36,24 @@ internal static class FileScope
     /// directory -- from one resolution, so the two answers are about the same real path.
     /// </summary>
     /// <remarks>
-    /// The server directory is resolved the same way as the path, so a link cannot get around the
-    /// comparison from either side. An artifact directory nested inside the server directory is still
-    /// the artifact directory: it is owned in its own right, and an input dropped there stages nothing.
+    /// <para>The server directory is resolved the same way as the path, so a link cannot get around the
+    /// comparison from either side.</para>
+    /// <para>An artifact directory strictly inside the server directory is still the artifact directory:
+    /// it is owned in its own right, and an input dropped there stages nothing. One that is the server
+    /// directory, or above it (<c>/opt</c>, <c>/</c>), exempts nothing: counting "under the artifacts" as
+    /// the exemption there made the server's own binary writable with no grant at all.</para>
     /// </remarks>
-    internal static (WriteScope Scope, bool InServerDirectoryOnly) Classify(
+    internal static (WriteScope Scope, bool InServerDirectory) Classify(
         string fullPath, FileTransferOptions options, string serverDirectory)
     {
         var real = RealPath(fullPath);
-        var inServer = IsUnder(real, RealPath(serverDirectory));
-        var inArtifacts = IsUnder(real, RealPath(options.ArtifactDirectory));
-        return (inServer || inArtifacts ? WriteScope.WinDiag : WriteScope.Arbitrary, inServer && !inArtifacts);
+        var server = RealPath(serverDirectory);
+        var artifacts = RealPath(options.ArtifactDirectory);
+        var inServer = IsUnder(real, server);
+        var inArtifacts = IsUnder(real, artifacts);
+        var artifactsNestedInServer = IsUnder(artifacts, server) && !IsUnder(server, artifacts);
+        return (inServer || inArtifacts ? WriteScope.WinDiag : WriteScope.Arbitrary,
+            inServer && !(inArtifacts && artifactsNestedInServer));
     }
 
     /// <summary>How many links one resolution may follow before it is called a loop: the kernel's own limit.</summary>
@@ -171,8 +178,10 @@ internal static class FileScope
     }
 
     /// <summary>Names the owned directories, for an error message that says where a path *would* be allowed.</summary>
-    public static string Describe(FileTransferOptions options) =>
-        $"{ServerDirectory} and {options.ArtifactDirectory}";
+    public static string Describe(FileTransferOptions options) => Describe(options, ServerDirectory);
+
+    internal static string Describe(FileTransferOptions options, string serverDirectory) =>
+        $"{serverDirectory} and {options.ArtifactDirectory}";
 
     /// <summary>True when <paramref name="candidate"/> is the directory itself or something inside it.</summary>
     /// <remarks>Delegates, so the server and the relay can never disagree about containment.</remarks>

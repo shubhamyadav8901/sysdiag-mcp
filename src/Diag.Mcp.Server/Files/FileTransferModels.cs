@@ -4,7 +4,11 @@ namespace Diag.Mcp.Server.Files;
 /// <remarks>Reported for reads as well as writes; the same boundary governs both directions.</remarks>
 public enum WriteScope
 {
-    /// <summary>Inside a directory windiag owns (its own folder or the artifact directory). Always allowed.</summary>
+    /// <summary>
+    /// Inside a directory windiag owns (its own folder or the artifact directory). Needs no arbitrary
+    /// grant; a write into the server's own folder may still need its self-update grant, on a server that
+    /// reserves that folder for staging (<see cref="FileTransferOptions.ServerDirectoryWritable"/>).
+    /// </summary>
     WinDiag,
 
     /// <summary>Anywhere else. Allowed only when the matching arbitrary read/write grant is enabled.</summary>

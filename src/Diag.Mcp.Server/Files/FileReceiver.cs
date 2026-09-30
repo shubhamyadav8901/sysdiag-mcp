@@ -51,11 +51,17 @@ public sealed class FileReceiver : IFileReceiver
 
         if (scope == WriteScope.Arbitrary && !_options.AllowArbitraryWrite)
         {
+            // Where the server reserves its own folder, "one of those directories" would send the caller
+            // straight into the next refusal, so it names the one that is open and what the other needs.
+            var alternative = _options.ServerDirectoryWritable
+                ? "one of those directories"
+                : $"{_options.ArtifactDirectory} (writing under {_serverDirectory} also needs " +
+                  $"{_options.ServerDirectorySetting})";
             throw new FileTransferException(
-                $"'{full}' is outside the directories this server owns ({FileScope.Describe(_options)}), " +
+                $"'{full}' is outside the directories this server owns ({FileScope.Describe(_options, _serverDirectory)}), " +
                 "so writing it needs arbitrary write, which is off. " +
                 $"Set {_options.ArbitraryWriteSetting} to allow writing anywhere, or choose a path under " +
-                "one of those directories. (run_command can also place a file anywhere if it is enabled.)");
+                $"{alternative}. (run_command can also place a file anywhere if it is enabled.)");
         }
 
         // Staging a build for update_self is the only reason to write beside the server's binary, and on

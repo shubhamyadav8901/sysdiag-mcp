@@ -44,8 +44,9 @@ public sealed class FileTools
         "channel as every other tool. Use it to stage an updated server build for update_self, to place " +
         "the helper binaries a tool needs, or to drop an input file. " +
         "By default it may only write inside the directories this server owns (its own folder and the " +
-        "artifact directory), which is all staging needs; writing anywhere else requires the server to " +
-        "have been started with its arbitrary-write grant. " +
+        "artifact directory), which is all staging needs. A server may reserve its own folder for " +
+        "staging an update, and then writing there also needs its self-update grant; the refusal names " +
+        "it. Writing anywhere else requires the server to have been started with its arbitrary-write grant. " +
         "Pass expectedSha256 to have the written file verified and rolled back on mismatch. " +
         "A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server " +
         "cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each " +

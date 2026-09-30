@@ -114,6 +114,68 @@ public sealed class ServerDirectoryWriteTests : IDisposable
         Assert.True(File.Exists(target));
     }
 
+    [Fact]
+    public void An_artifact_directory_above_the_server_directory_does_not_open_it()
+    {
+        // ARTIFACT_DIR=/opt, or /, contains /opt/linuxdiag. Counted as "in the artifacts", the server's
+        // own binary would be writable with no grant -- exactly the plant this gate exists to stop.
+        var target = Path.Combine(_serverDir, "LinuxDiag.Mcp");
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: false, artifactDirectory: _root)
+            .Receive(Put(target), CancellationToken.None));
+
+        Assert.Contains(SelfUpdateSetting, ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(target));
+    }
+
+    [Fact]
+    public void An_artifact_directory_that_is_the_server_directory_does_not_open_it()
+    {
+        var target = Path.Combine(_serverDir, "LinuxDiag.Mcp");
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: false, artifactDirectory: _serverDir)
+            .Receive(Put(target), CancellationToken.None));
+
+        Assert.Contains(SelfUpdateSetting, ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(target));
+    }
+
+    [Fact]
+    public void An_artifact_directory_above_the_server_directory_still_owns_its_other_paths()
+    {
+        var target = Path.Combine(_root, "elsewhere", "input.bin");
+
+        Receiver(serverDirectoryWritable: false, artifactDirectory: _root).Receive(Put(target), CancellationToken.None);
+
+        Assert.True(File.Exists(target));
+    }
+
+    [Fact]
+    public void A_refusal_outside_the_owned_directories_does_not_send_the_caller_into_the_server_directory()
+    {
+        // "Choose a path under one of those directories" would steer the caller straight into the
+        // second refusal on a server that reserves its folder. It must point at the artifact directory,
+        // and say what the server's folder needs.
+        var ex = Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: false)
+            .Receive(Put(Path.Combine(_root, "foreign", "x.bin")), CancellationToken.None));
+
+        Assert.DoesNotContain("one of those directories", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"choose a path under {_artifactDir}", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(SelfUpdateSetting, ex.Message, StringComparison.Ordinal);
+        Assert.Contains(ArbitraryWriteSetting, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_refusal_outside_the_owned_directories_keeps_its_wording_where_the_server_directory_is_open()
+    {
+        var ex = Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: true)
+            .Receive(Put(Path.Combine(_root, "foreign", "x.bin")), CancellationToken.None));
+
+        Assert.Contains($"({_serverDir} and {_artifactDir})", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("choose a path under one of those directories", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(SelfUpdateSetting, ex.Message, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public void A_link_in_the_artifact_directory_into_the_server_directory_is_refused_without_the_grant()
     {
