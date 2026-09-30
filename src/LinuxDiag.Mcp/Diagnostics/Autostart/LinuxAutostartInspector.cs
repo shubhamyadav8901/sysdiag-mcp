@@ -1,5 +1,6 @@
 using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Linux.External;
+using LinuxDiag.Mcp.Linux.Native;
 using LinuxDiag.Mcp.Linux.Packages;
 using LinuxDiag.Mcp.Linux.Parsers;
 using LinuxDiag.Mcp.Linux.Proc;
@@ -55,7 +56,7 @@ public sealed class LinuxAutostartInspector(
             }
             else
             {
-                matched = matched.Select(e => Verify(e, database.Owner, Md5)).ToList();
+                matched = matched.Select(e => Verify(e, path => PackageOwner(database, path), Md5)).ToList();
             }
         }
 
@@ -123,6 +124,27 @@ public sealed class LinuxAutostartInspector(
 
         var program = entry.ImagePath is null ? null : owner(entry.ImagePath);
         return entry with { Package = program?.Package, Packaged = findings.Count == 0, PackageFindings = findings };
+    }
+
+    /// <summary>The package owning the file a path leads to, links resolved; the path's own entry when that has none.</summary>
+    /// <remarks>
+    /// dpkg records a symlink without a checksum, so a packaged program reached through a link (python3 to
+    /// python3.12, awk through /etc/alternatives) would otherwise read as unchecked -- noise that buries the
+    /// entries unpackagedOnly exists to find. The hash is of the file the link leads to, so that is what is judged.
+    /// </remarks>
+    internal static PackageFile? PackageOwner(IPackageDatabase database, string path)
+    {
+        string? real;
+        try
+        {
+            real = LibC.RealPath(path);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            real = null;
+        }
+
+        return (real is not null && real != path ? database.Owner(real) : null) ?? database.Owner(path);
     }
 
     /// <summary>Hidden only when asked to, and only when every checked file matched its package.</summary>

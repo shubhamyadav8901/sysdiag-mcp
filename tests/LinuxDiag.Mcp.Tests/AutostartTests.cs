@@ -134,6 +134,31 @@ public sealed class AutostartTests
     }
 
     [LinuxFact]
+    public void A_packaged_program_reached_through_a_symlink_is_judged_by_the_file_it_leads_to()
+    {
+        // dpkg records a symlink without a checksum, so judging the link itself called /usr/bin/python3 (a link
+        // to python3.12) "not from a package". Found live, auditing WSL Ubuntu.
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-autostart-{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var link = Path.Combine(directory, "sleep-link");
+            File.CreateSymbolicLink(link, "/usr/bin/sleep");
+            var database = new DpkgDatabaseSource().Open();
+            var entry = new AutostartEntry("services", "/usr/bin/sleep", "x.service", true, null, null, link, link, null, [], null, null, [], false);
+
+            var verified = LinuxAutostartInspector.Verify(
+                entry, path => LinuxAutostartInspector.PackageOwner(database, path), path => FileHashes.Compute(path).Md5);
+
+            Assert.True(verified.Packaged, string.Join("; ", verified.PackageFindings));
+            Assert.Equal("coreutils", verified.Package);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [LinuxFact]
     public async Task The_live_audit_finds_the_cron_service_and_a_cron_d_entry_and_verifies_their_packages()
     {
         var result = await new LinuxAutostartInspector(new LinuxExternalCommand(), new DpkgDatabaseSource(), new LinuxPrivilegeProbe(), Options)
