@@ -279,6 +279,114 @@
     }
   },
   {
+    "name": "named_pipes",
+    "title": "Named sockets and FIFOs",
+    "description": "List named unix sockets - filesystem paths and abstract \u0027@\u0027 names - and named FIFOs, with whether each socket is listening, how many connections it holds, and which processes hold it. Use it when a client cannot connect to a local service over its socket: a name nobody is listening on, or a listener owned by an unexpected process, shows up here. Listening sockets come first. Unnamed socket pairs are left out; a container\u0027s sockets are included, their paths as the container sees them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFilter": {
+          "description": "Match this text anywhere in the socket or FIFO name, for example a product or service name",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "pipes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "listening": {
+                "type": "boolean"
+              },
+              "connectedCount": {
+                "type": "integer"
+              },
+              "owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "processId": {
+                      "type": "integer"
+                    },
+                    "processName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "processId",
+                    "processName"
+                  ]
+                }
+              },
+              "otherMountNamespace": {
+                "type": "boolean"
+              },
+              "networkNamespace": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "listening",
+              "connectedCount",
+              "owners",
+              "otherMountNamespace",
+              "networkNamespace"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "pipes",
+        "totalMatched",
+        "truncated",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Named sockets and FIFOs",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "network_owners",
     "title": "Network endpoints and owning processes",
     "description": "List TCP and UDP endpoints (IPv4 and IPv6) with every process that owns each socket - a prefork server\u0027s workers all share one listening socket - and, for a container\u0027s process, its container. Every network namespace with a running process is covered, so a container\u0027s sockets appear too, tagged with their namespace. Use it for \u0027what is already using port 8080\u0027, \u0027which process is talking to that address\u0027, or to confirm a service is listening where it should be. Filter by port, owning PID, or listening endpoints only. A namespace with no process in it (one kept only by /run/netns) is not visible.",

@@ -54,6 +54,10 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "/proc/<pid>/net/{tcp,tcp6,udp,udp6} per network namespace; owners by socket inode across /proc/<pid>/fd",
                 null,
                 "cannot name the owners of sockets held by processes owned by other users"),
+            ["named_pipes"] = new(
+                "/proc/<pid>/net/unix per network namespace, and FIFOs among /proc/<pid>/fd",
+                null,
+                "cannot name the holders of sockets and FIFOs owned by other users"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

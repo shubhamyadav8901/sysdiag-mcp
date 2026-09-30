@@ -91,7 +91,8 @@ public static class ServerBuilder
             .WithTools<ModuleTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<HandleTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<LockTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<NetworkTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<NetworkTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<PipeTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -129,6 +130,8 @@ public static class ServerBuilder
         services.TryAddSingleton<LockTools>();
         services.TryAddSingleton<INetworkInspector, LinuxNetworkInspector>();
         services.TryAddSingleton<NetworkTools>();
+        services.TryAddSingleton<IPipeInspector, LinuxPipeInspector>();
+        services.TryAddSingleton<PipeTools>();
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
