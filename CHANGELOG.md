@@ -39,13 +39,36 @@ release fixed something that had been silently wrong, it says what the wrong ans
   confines `push_file` fails closed — and pulled dumps and traces land owner-only in a per-user
   directory rather than the shared `/tmp`, where another local user could read them or plant a file
   for the next `push_file` to send to a target.
+- **`--install-service --token-stdin`** reads the bearer token to pin from standard input, keeping it
+  out of `sudo`'s log and `ps`. `tools/bootstrap-linux.sh` and `bootstrap-linux.ps1` now send a token
+  given with `-k`/`-Token` that way: over the SSH connection's standard input into an owner-only file
+  that the install reads, and that a trap removes -- with the copied binary -- however the install
+  session ends, including a failed hash check or a dropped connection.
+- **LinuxDiag's `put_file` refuses its own directory without the self-update grant.** That directory
+  holds a root service's binary and the `netcoredeps` folder it loads libraries from, and staging a
+  build is the only reason to write there, so a write under it needs `LINUXDIAG_ALLOW_SELF_UPDATE=1`
+  (`--allow-self-update`) or arbitrary write, and the refusal names both. An artifact directory placed
+  inside the server's folder gets no exemption. windiag's own folder stays writable as before.
 
 ### Fixed
 
+- **A link loop is refused instead of crashing the process** (windiag too). A symlink or junction whose
+  target ran back through one of its own parent components sent path resolution into unbounded
+  recursion, and the stack overflow took the whole server down with every call in flight; `put_file`
+  and `get_file` now answer that the path could not be resolved.
+- **LinuxDiag loads the C library by its soname, `libc.so.6`.** A plain `libc` import is probed in the
+  application directory before the system loader is asked, so a `libc.so` dropped beside the server
+  could have been mapped into a root process.
 - **`put_file` and `get_file` judge a path by where it really resolves.** A symlink (Linux) or junction
   (Windows) inside a server-owned directory no longer carries a write or a read outside it without
   the arbitrary grant: containment was checked on the path as spelled, so a link planted in an owned
   folder looked owned wherever it pointed.
+  Links are followed one component at a time, the way the kernel walks them, so a target like
+  `hop/..` climbs from where `hop` points rather than from its spelling. And a write off Windows, which
+  replaces a link at the destination rather than writing through it, is judged at the link itself:
+  `put_file /tmp/x` with `/tmp/x` linking into the artifact directory used to pass as owned while it
+  created `/tmp/x`, and now needs the arbitrary grant. Reads, appends and Windows writes follow the
+  link and are judged at its target.
 - **`push_file` of an empty file now works.** The relay sends a zero-byte file as one call with no
   content, which the server refused as "contentBase64 is empty", so an empty file could not be pushed
   at all. Empty content is now an empty file; *missing* content (`null`) is still refused, since with
@@ -67,6 +90,9 @@ release fixed something that had been silently wrong, it says what the wrong ans
   SMB or UNC examples — because every server in the family now serves the same two tools. Their
   parameters and answers are unchanged. The refusal for a file over the single-call limit now says to
   send it in chunks, rather than pointing at a UNC path.
+- **`put_file`'s description gains one sentence**, shared by every server: a server may reserve its
+  own folder for staging an update, in which case writing there also needs its self-update grant and
+  the refusal names it. windiag does not reserve its folder, so nothing it does has changed.
 
 ### Documentation
 
