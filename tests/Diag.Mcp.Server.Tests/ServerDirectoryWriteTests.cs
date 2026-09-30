@@ -45,6 +45,19 @@ public sealed class ServerDirectoryWriteTests : IDisposable
     private static FileWriteRequest Put(string path) => new(path, [1, 2, 3]);
 
     [Fact]
+    public void A_gated_server_directory_must_name_the_setting_its_refusal_will_tell_the_caller_to_set()
+    {
+        // Without it the refusal reads "Set  to allow it": the one sentence meant to unblock the caller.
+        Assert.Throws<ArgumentException>(() => new FileTransferOptions(
+            _artifactDir, false, false, ArbitraryWriteSetting, "R=1", ServerDirectoryWritable: false));
+        Assert.Throws<ArgumentException>(() => new FileTransferOptions(
+            _artifactDir, false, false, ArbitraryWriteSetting, "R=1", ServerDirectoryWritable: false, ServerDirectorySetting: " "));
+
+        // An ungated directory is never refused, so it needs no setting to name.
+        _ = new FileTransferOptions(_artifactDir, false, false, ArbitraryWriteSetting, "R=1");
+    }
+
+    [Fact]
     public void Refuses_a_write_into_the_server_directory_without_the_self_update_grant_and_names_it()
     {
         var target = Path.Combine(_serverDir, "LinuxDiag.Mcp.new");

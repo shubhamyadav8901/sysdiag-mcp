@@ -27,4 +27,14 @@ public sealed record FileTransferOptions(
     string ArbitraryWriteSetting,
     string ArbitraryReadSetting,
     bool ServerDirectoryWritable = true,
-    string? ServerDirectorySetting = null);
+    string? ServerDirectorySetting = null)
+{
+    // Checked here rather than when the refusal is built: by then the caller is holding a message that
+    // reads "Set  to allow it", which is the one sentence meant to unblock them.
+    public string? ServerDirectorySetting { get; init; } =
+        ServerDirectoryWritable || !string.IsNullOrWhiteSpace(ServerDirectorySetting)
+            ? ServerDirectorySetting
+            : throw new ArgumentException(
+                "A server directory that is not writable needs the setting its refusal names.",
+                nameof(ServerDirectorySetting));
+}
