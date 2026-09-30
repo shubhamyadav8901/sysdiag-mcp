@@ -13,7 +13,9 @@ public sealed record ProcessControlResult(int ProcessId, string ProcessName, Dat
 
 public interface IProcessController
 {
-    ProcessControlResult Control(int processId, string expectedName, ProcessAction action, CancellationToken cancellationToken);
+    ProcessControlResult Control(
+        int processId, string expectedName, ProcessAction action, CancellationToken cancellationToken,
+        DateTimeOffset? expectedStartTime = null);
 }
 
 public sealed class ProcessControlException : Exception, IDiagnosticException

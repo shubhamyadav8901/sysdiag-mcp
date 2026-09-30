@@ -12,7 +12,13 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
     /// <summary>How long terminate and kill wait to see the process exit. A test shortens it.</summary>
     internal TimeSpan ExitWait { get; init; } = TimeSpan.FromSeconds(10);
 
-    public ProcessControlResult Control(int processId, string expectedName, ProcessAction action, CancellationToken cancellationToken)
+    /// <summary>How far a start time may differ from the expected one and still be the same process.</summary>
+    /// <remarks>Both come from the same boot time and clock ticks, so they agree exactly; a second covers rounding.</remarks>
+    private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(1);
+
+    public ProcessControlResult Control(
+        int processId, string expectedName, ProcessAction action, CancellationToken cancellationToken,
+        DateTimeOffset? expectedStartTime = null)
     {
         if (processId <= 0)
         {
@@ -20,6 +26,11 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedName);
+        if (Path.GetFileName(expectedName.Trim()).Length == 0)
+        {
+            throw new ArgumentException("Give the process's name, for example 'nginx', not a directory.", nameof(expectedName));
+        }
+
         if (processId == 1)
         {
             throw new ProcessControlException(
@@ -67,6 +78,17 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
 
         var started = KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat)) +
                       TimeSpan.FromSeconds(stat.StartTimeTicks / (double)LinuxProcessTable.ClockTicksPerSecond);
+
+        // The pidfd pins the process only from this call on. A PID reused before the call by a process with
+        // the same name -- another prefork worker, another sh -- passes the name check; its start time does not.
+        if (expectedStartTime is { } expected && (started - expected).Duration() > StartTimeTolerance)
+        {
+            throw new ProcessControlException(
+                $"PID {processId} ('{stat.Name}') started at {started:u}, not {expected:u}. Nothing has been done. " +
+                "PIDs are reused, so this is a different process - call process_list to get a current one.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             LibC.SendSignal(pidfd, Signal(action));
@@ -89,12 +111,26 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                 "Signalling another user's process needs root.");
         }
 
-        var detail = action switch
+        // Logged the moment it is sent: a root signal must leave an audit line even if the wait below fails.
+        LogSent(logger, SignalName(action), stat.Name, processId);
+
+        string detail;
+        try
         {
-            ProcessAction.Suspend => "Stopped with SIGSTOP. Every thread is frozen until it is resumed, so it can be inspected in the meantime.",
-            ProcessAction.Resume => "Continued with SIGCONT.",
-            _ => AfterStop(pidfd, processId, action, cancellationToken),
-        };
+            detail = action switch
+            {
+                ProcessAction.Suspend => "Stopped with SIGSTOP. Every thread is frozen until it is resumed, so it can be inspected in the meantime.",
+                ProcessAction.Resume => "Continued with SIGCONT.",
+                _ => AfterStop(pidfd, processId, action, cancellationToken),
+            };
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ErrnoException or IOException or FormatException)
+        {
+            throw new ProcessControlException(
+                $"{SignalName(action)} was sent to '{stat.Name}' (PID {processId}), but waiting to see it exit " +
+                $"{(ex is OperationCanceledException ? "was cancelled" : "failed: " + ex.Message)}. Call process_list " +
+                "to see whether it is still running.", ex);
+        }
 
         LogControlled(logger, action, stat.Name, processId, detail);
         return new ProcessControlResult(processId, stat.Name, started, action, detail);
@@ -162,6 +198,14 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
         }
     }
 
+    private static string SignalName(ProcessAction action) => action switch
+    {
+        ProcessAction.Terminate => "SIGTERM",
+        ProcessAction.Kill => "SIGKILL",
+        ProcessAction.Suspend => "SIGSTOP",
+        _ => "SIGCONT",
+    };
+
     private static int Signal(ProcessAction action) => action switch
     {
         ProcessAction.Terminate => LibC.SIGTERM,
@@ -187,6 +231,9 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
             : "Sent SIGKILL, but it has not exited yet: it is probably in uninterruptible sleep (state D) inside the " +
               "kernel, and will die when that call returns.";
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "process_control: sent {Signal} to {Name} (PID {ProcessId})")]
+    private static partial void LogSent(ILogger logger, string signal, string name, int processId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "process_control: {Action} {Name} (PID {ProcessId}): {Detail}")]
     private static partial void LogControlled(ILogger logger, ProcessAction action, string name, int processId, string detail);

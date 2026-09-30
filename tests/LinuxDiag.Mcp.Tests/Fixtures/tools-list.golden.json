@@ -680,7 +680,7 @@
   {
     "name": "process_control",
     "title": "Terminate, kill, suspend or resume a process",
-    "description": "Terminate, kill, suspend or resume a running process by signal. \u0027terminate\u0027 sends SIGTERM and waits up to 10 seconds to see it exit - unlike windiag, where terminate is a hard kill; \u0027kill\u0027 sends SIGKILL, which cannot be caught, and matches windiag\u0027s terminate. \u0027suspend\u0027 (SIGSTOP) freezes every thread without ending the process, so a hang can be caught in the act; \u0027resume\u0027 (SIGCONT) undoes it. You must pass the name you expect alongside the PID. It is checked through a pidfd, so a PID reused since your process_list can never be signalled by mistake. PID 1, kernel threads and this server itself are refused.",
+    "description": "Terminate, kill, suspend or resume a running process by signal. \u0027terminate\u0027 sends SIGTERM and waits up to 10 seconds to see it exit - unlike windiag, where terminate is a hard kill; \u0027kill\u0027 sends SIGKILL, which cannot be caught, and matches windiag\u0027s terminate. \u0027suspend\u0027 (SIGSTOP) freezes every thread without ending the process, so a hang can be caught in the act; \u0027resume\u0027 (SIGCONT) undoes it. You must pass the name you expect alongside the PID. It is checked through a pidfd, so the PID cannot change hands between the check and the signal; pass expectedStartTime from process_list as well to also catch a PID reused, before this call, by a process with the same name. PID 1, kernel threads, zombies and this server itself are refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -696,6 +696,15 @@
           "description": "\u0027terminate\u0027, \u0027kill\u0027, \u0027suspend\u0027 or \u0027resume\u0027",
           "type": "string",
           "default": "suspend"
+        },
+        "expectedStartTime": {
+          "description": "The start time process_list reported for this PID. When given, a process started at any other time is refused.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "default": null
         }
       },
       "required": [

@@ -24,15 +24,18 @@ public sealed class ControlTools(IProcessController controller)
         "10 seconds to see it exit - unlike windiag, where terminate is a hard kill; 'kill' sends SIGKILL, which " +
         "cannot be caught, and matches windiag's terminate. 'suspend' (SIGSTOP) freezes every thread without " +
         "ending the process, so a hang can be caught in the act; 'resume' (SIGCONT) undoes it. You must pass the " +
-        "name you expect alongside the PID. It is checked through a pidfd, so a PID reused since your process_list " +
-        "can never be signalled by mistake. PID 1, kernel threads and this server itself are refused.")]
+        "name you expect alongside the PID. It is checked through a pidfd, so the PID cannot change hands between " +
+        "the check and the signal; pass expectedStartTime from process_list as well to also catch a PID reused, " +
+        "before this call, by a process with the same name. PID 1, kernel threads, zombies and this server itself " +
+        "are refused.")]
     public ProcessControlToolResult ProcessControl(
         [Description("Process id to act on. Get a current one from process_list.")] int processId,
         [Description("The name you expect that PID to be, e.g. 'nginx' or '/usr/sbin/nginx'. Verified before anything happens.")] string expectedName,
         [Description("'terminate', 'kill', 'suspend' or 'resume'")] string action = "suspend",
+        [Description("The start time process_list reported for this PID. When given, a process started at any other time is refused.")] DateTimeOffset? expectedStartTime = null,
         CancellationToken cancellationToken = default)
     {
-        var result = controller.Control(processId, expectedName, ParseAction(action), cancellationToken);
+        var result = controller.Control(processId, expectedName, ParseAction(action), cancellationToken, expectedStartTime);
         return new ProcessControlToolResult(Render(result), result);
     }
 

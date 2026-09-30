@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Control;
+using LinuxDiag.Mcp.Diagnostics.Processes;
+using LinuxDiag.Mcp.Linux.Native;
 using LinuxDiag.Mcp.Linux.Parsers;
 using LinuxDiag.Mcp.Linux.Proc;
 using LinuxDiag.Mcp.Tools;
@@ -50,12 +52,91 @@ public sealed class ControlTests
     [Fact]
     public void Pid_1_this_server_and_a_non_positive_pid_are_refused_before_anything_is_opened()
     {
-        Assert.Contains("init", Assert.Throws<ProcessControlException>(() =>
+        Assert.Contains("Refusing to signal PID 1", Assert.Throws<ProcessControlException>(() =>
             Controller().Control(1, "systemd", ProcessAction.Terminate, CancellationToken.None)).Message, StringComparison.Ordinal);
         Assert.Contains("own process", Assert.Throws<ProcessControlException>(() =>
             Controller().Control(Environment.ProcessId, "dotnet", ProcessAction.Kill, CancellationToken.None)).Message, StringComparison.Ordinal);
         Assert.Throws<ArgumentOutOfRangeException>(() => Controller().Control(0, "x", ProcessAction.Suspend, CancellationToken.None));
         Assert.Throws<ArgumentException>(() => Controller().Control(99, " ", ProcessAction.Suspend, CancellationToken.None));
+        Assert.Throws<ArgumentException>(() => Controller().Control(99, "/", ProcessAction.Suspend, CancellationToken.None));
+    }
+
+    [LinuxFact]
+    public void A_signal_through_a_pidfd_to_a_reaped_process_fails_instead_of_reaching_a_newcomer()
+    {
+        // The invariant the whole tool rests on: once the pidfd is open, the PID can be reused and the
+        // signal still cannot land on the newcomer.
+        using var child = Process.Start("sleep", "60");
+        using var pidfd = LibC.OpenPidFd(child.Id);
+        child.Kill();
+        child.WaitForExit();
+
+        var ex = Assert.Throws<ErrnoException>(() => LibC.SendSignal(pidfd, 0));
+
+        Assert.Equal(ErrnoException.ESRCH, ex.Errno);
+    }
+
+    [LinuxFact]
+    public void A_start_time_that_does_not_match_is_refused_before_any_signal_and_a_matching_one_proceeds()
+    {
+        // The pidfd covers only the call; a PID reused before it, by a process with the same name, is caught
+        // by the start time process_list reported.
+        using var child = Process.Start("sleep", "60");
+        try
+        {
+            var ex = Assert.Throws<ProcessControlException>(() => Controller().Control(
+                child.Id, "sleep", ProcessAction.Kill, CancellationToken.None, DateTimeOffset.UnixEpoch));
+            Assert.Contains("started at", ex.Message, StringComparison.Ordinal);
+            Assert.False(child.WaitForExit(500));
+
+            var started = new LinuxProcessTable().Read(CancellationToken.None).Processes.Single(p => p.ProcessId == child.Id).StartTime;
+            var suspended = Controller().Control(child.Id, "sleep", ProcessAction.Suspend, CancellationToken.None, started);
+            Assert.Equal(ProcessAction.Suspend, suspended.Action);
+            Controller().Control(child.Id, "sleep", ProcessAction.Resume, CancellationToken.None);
+        }
+        finally
+        {
+            child.Kill();
+        }
+    }
+
+    [LinuxFact]
+    public void A_call_cancelled_before_it_signals_signals_nothing()
+    {
+        using var child = Process.Start("sleep", "60");
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        try
+        {
+            Assert.ThrowsAny<OperationCanceledException>(() =>
+                Controller().Control(child.Id, "sleep", ProcessAction.Kill, cancelled.Token));
+            Assert.False(child.WaitForExit(500));
+        }
+        finally
+        {
+            child.Kill();
+        }
+    }
+
+    [LinuxFact]
+    public void A_wait_cancelled_after_the_signal_says_the_signal_was_sent()
+    {
+        // Reporting only "cancelled" would hide that a root SIGTERM has already been delivered.
+        using var child = Process.Start("sh", ["-c", "trap '' TERM; while :; do sleep 1; done"]);
+        try
+        {
+            WaitUntilIgnoring(child.Id, signal: 15);
+            using var soon = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+
+            var ex = Assert.Throws<ProcessControlException>(() =>
+                Controller().Control(child.Id, "sh", ProcessAction.Terminate, soon.Token));
+
+            Assert.Contains("SIGTERM was sent", ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            child.Kill();
+        }
     }
 
     [LinuxFact]
