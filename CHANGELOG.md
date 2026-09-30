@@ -28,9 +28,20 @@ release fixed something that had been silently wrong, it says what the wrong ans
   relay. It serves `capabilities`, `put_file`, `get_file`, `system_overview`, `run_command`
   (`sh`/`bash`/`none`) and `update_self`, installs as a systemd service with `--install-service`, and is
   brought up over SSH by `tools/bootstrap-linux.sh` (verified live) or `tools/bootstrap-linux.ps1` (not
-  yet run against a live host). The process, container and systemd tools follow. **Not yet for
+  yet run against a live host). The systemd and host-configuration tools follow. **Not yet for
   production hosts:** findings from its security review are still open; keep it to test machines until
   they are resolved.
+- **LinuxDiag's process, open-file and container tools:** `process_list`, `process_modules`,
+  `process_handles`, `path_handle_search`, `who_locks_path`, `network_owners`, `named_pipes`,
+  `process_control` and the new `container_list`. Every process is tagged with its container - Docker's
+  or containerd's, Kubernetes pods included - and its PID inside it. Open files are matched by device
+  and inode, so a hard link, a rename or a container's own path still finds the holder. Lock holders
+  come from each open file's own lock list, so a lock inherited by a forked child names the child, not
+  the process that took it and exited. `network_owners` names every process sharing a socket.
+  `process_control` signals through a pidfd, so a PID reused since `process_list` cannot be hit; its
+  `terminate` is SIGTERM with a 10-second wait, and `kill` is SIGKILL.
+- **`RenderLimits` is shared by both servers**, and the kit's capability table can say a tool is
+  Degraded when none of the sockets or directories it reads exists.
 - **The relay runs on Linux**, and is built for macOS (untested until CI has run on it). A Linux machine
   can now drive Windows targets: verified end to end from a native Linux build — pre-connect,
   forwarded calls, and a byte-identical `push_file`/`pull_file` round trip against a live target. Off Windows the relay's token file is created owner-only

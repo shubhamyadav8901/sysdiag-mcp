@@ -296,8 +296,30 @@ path — the same caveat `put_file` carries in the other direction.
 
 `LinuxDiag.Mcp` is the Linux server: Ubuntu and Debian, **x86-64 only**. It is reached through the same
 relay, with the same bearer token model and the same plaintext-HTTP caveat as windiag. It serves
-`capabilities`, `put_file`, `get_file`, `system_overview`, `run_command` (`sh`, `bash`, `none`) and
-`update_self`; the process, container, systemd and host-configuration tools follow.
+`capabilities`, `put_file`, `get_file`, `system_overview`, `run_command` (`sh`, `bash`, `none`),
+`update_self`, and the process, open-file and container tools below; the systemd and host-configuration
+tools follow.
+
+#### Processes, open files and containers
+
+| Tool | Answers from | Notes |
+|---|---|---|
+| `process_list` | `/proc/<pid>/{stat,status,cmdline,cgroup}` | Each process's container (runtime, id, name, image) and its PID inside it |
+| `container_list` | Docker Engine API on `/var/run/docker.sock`; containerd task state in `/run/containerd` | Main PID as the host numbers it; Kubernetes pod and namespace from CRI annotations |
+| `process_modules` | `/proc/<pid>/maps` | Flags a library deleted or replaced on disk since it was mapped - a stale library after an upgrade |
+| `process_handles` | `/proc/<pid>/fd`, `fdinfo`, `maps` | Files, sockets, pipes and anonymous inodes, each with its access mode |
+| `path_handle_search` | every `/proc/<pid>/fd` and `maps` | A full path also matches the same file by device and inode: a hard link, a rename, a container's own path |
+| `who_locks_path` | `statx` identity, `fdinfo` `lock:` lines, `/proc/locks` | flock, POSIX, OFD locks and leases, waiters included; `Exhaustive` only as root |
+| `network_owners` | `/proc/<pid>/net/{tcp,tcp6,udp,udp6}` per network namespace | Every owner of a shared socket; container sockets included |
+| `named_pipes` | `/proc/<pid>/net/unix` per network namespace, FIFOs among open files | Named and abstract (`@`) unix sockets, listening state, holders |
+| `process_control` | `pidfd_open` + `pidfd_send_signal` | Writable servers only. `terminate` is SIGTERM plus a 10 s wait; `kill` is SIGKILL |
+
+Every tool here reads another user's processes only as root; run unprivileged, each says its answer is
+partial instead of presenting it as complete. The Docker socket is asked one fixed read-only question,
+`GET /containers/json`, within 5 seconds - a hung daemon never hangs a tool. `process_control` needs Linux
+5.3 or later for its pidfd; on an older kernel (RHEL 8 ships 4.18) it refuses with that explanation rather
+than risk signalling a reused PID. `path_handle_search`, `who_locks_path` and `named_pipes` need glibc 2.28
+or later, which every distribution .NET 9 supports has.
 
 Publish it, then install it over SSH:
 
