@@ -21,7 +21,9 @@ public sealed class SystemdRestartHelper(LinuxDiagOptions options, ILogger<Syste
     public void Launch(string livePath, string stagedPath, string sha256, string logPath)
     {
         var pid = Environment.ProcessId;
-        var restart = RestartCommand(options.ServiceName, livePath, Environment.GetCommandLineArgs().Skip(1).ToList());
+        // One answer to "under systemd", used for both how the helper starts and how it restarts us.
+        var underSystemd = UnderSystemd(options.ServiceName, Environment.GetEnvironmentVariable("INVOCATION_ID"));
+        var restart = RestartCommand(underSystemd, options.ServiceName, livePath, Environment.GetCommandLineArgs().Skip(1).ToList());
         var script = Path.Combine(options.ArtifactDirectory, "self-update.sh");
         var body = Script(pid, livePath, stagedPath, sha256, logPath, restart);
 
@@ -37,7 +39,6 @@ public sealed class SystemdRestartHelper(LinuxDiagOptions options, ILogger<Syste
             writer.Write(body);
         }
 
-        var underSystemd = options.ServiceName is not null && Environment.GetEnvironmentVariable("INVOCATION_ID") is not null;
         var start = underSystemd
             ? new ProcessStartInfo("systemd-run") { ArgumentList = { "--collect", "--quiet", $"--unit={options.ServiceName}-update-{pid}", "/bin/sh", script } }
             : new ProcessStartInfo("setsid") { ArgumentList = { "/bin/sh", script } };
@@ -60,8 +61,17 @@ public sealed class SystemdRestartHelper(LinuxDiagOptions options, ILogger<Syste
         logger.LogInformation("self-update helper started ({How}), logging to {Log}", underSystemd ? "systemd-run" : "setsid", logPath);
     }
 
-    internal static string RestartCommand(string? serviceName, string live, IReadOnlyList<string> args) =>
-        !string.IsNullOrWhiteSpace(serviceName)
+    /// <summary>True only when systemd started this process as the named service.</summary>
+    /// <remarks>
+    /// Both halves: the service name comes from the env file, but a by-hand run can inherit it too, and
+    /// only systemd sets INVOCATION_ID. Restarting through systemctl from a by-hand run would restart the
+    /// installed service instead of bringing this process back.
+    /// </remarks>
+    internal static bool UnderSystemd(string? serviceName, string? invocationId) =>
+        !string.IsNullOrWhiteSpace(serviceName) && invocationId is not null;
+
+    internal static string RestartCommand(bool underSystemd, string? serviceName, string live, IReadOnlyList<string> args) =>
+        underSystemd && !string.IsNullOrWhiteSpace(serviceName)
             ? $"systemctl restart {ShellQuote(serviceName)}"
             : $"setsid {ShellQuote(live)} {string.Join(' ', args.Select(ShellQuote))} >/dev/null 2>&1 &";
 

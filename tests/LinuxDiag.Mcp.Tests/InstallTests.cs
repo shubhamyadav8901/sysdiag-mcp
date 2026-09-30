@@ -91,6 +91,32 @@ public sealed class InstallTests
         Assert.DoesNotContain(commands, c => c.Contains("--now", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Uninstall_says_so_when_there_was_nothing_to_remove_or_disable_failed()
+    {
+        var (missingCode, missing) = LinuxServiceInstaller.UninstallOutcome("linuxdiag", unitExisted: false, disableExit: 1);
+        Assert.Equal(1, missingCode);
+        Assert.Contains("no service named 'linuxdiag'", missing, StringComparison.Ordinal);
+
+        var (failedCode, failed) = LinuxServiceInstaller.UninstallOutcome("linuxdiag", unitExisted: true, disableExit: 1);
+        Assert.Equal(4, failedCode);
+        Assert.Contains("disable", failed, StringComparison.Ordinal);
+
+        var (okCode, ok) = LinuxServiceInstaller.UninstallOutcome("linuxdiag", unitExisted: true, disableExit: 0);
+        Assert.Equal(0, okCode);
+        Assert.Contains("removed 'linuxdiag'", ok, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Update_self_is_not_reported_unavailable_just_because_systemd_run_is_missing()
+    {
+        // The helper falls back to setsid when the server is not a systemd service, so a missing
+        // systemd-run must not make capabilities call update_self unusable.
+        var requirement = new LinuxDiag.Mcp.Diagnostics.Capabilities.LinuxCapabilityRequirements().Requirements["update_self"];
+
+        Assert.Null(requirement.RequiredExecutable);
+    }
+
     [LinuxFact]
     public void The_unit_file_replaces_a_link_at_its_path_rather_than_writing_through_it()
     {

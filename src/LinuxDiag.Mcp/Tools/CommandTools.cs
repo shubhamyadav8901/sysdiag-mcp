@@ -26,7 +26,8 @@ public sealed class CommandTools(ICommandRunner commands)
         "a diagnostic query - use it for package tools, build tools, or anything the other tools do not " +
         "cover. shell selects how the command is read: 'sh' (default) runs it through /bin/sh -c, so " +
         "pipes, redirection and && all work; 'bash' uses /bin/bash -c for bash syntax; 'none' runs the " +
-        "first token as a program with the rest as literal arguments. Set workingDirectory to run " +
+        "first token as a program with no shell, splitting the rest into arguments on spaces (double " +
+        "quotes group a single argument; no variables, globs or pipes). Set workingDirectory to run " +
         "somewhere other than the server's own folder. A non-zero exit code is returned, not treated as " +
         "an error. Output is capped; the result says when it was truncated.")]
     public async Task<RunCommandResult> RunCommand(

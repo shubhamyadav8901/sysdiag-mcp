@@ -303,10 +303,12 @@ Publish it, then install it over SSH:
 
 ```
 dotnet publish src/LinuxDiag.Mcp -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o artifacts/linux-x64
-.\tools\bootstrap-linux.ps1 -Target build-01 -User ops -Token <64 hex> -Grants Standard
+.\tools\bootstrap-linux.ps1 -Target build-01 -User ops -Grants Standard
 ```
 
-(`tools/bootstrap-linux.sh` is the same for a Linux or macOS operator.) The script copies the binary into
+(`tools/bootstrap-linux.sh` is the same for a Linux or macOS operator; it is the one verified against a
+live host so far -- the `.ps1` has not yet been run end to end.) Prefer letting the installer generate
+the token, as above: a token passed with `-Token` reaches the remote command line, where sudo logs it. The script copies the binary into
 the SSH user's home directory -- not the shared `/tmp`, where another account could swap it -- checks its
 hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the same presets as
 `bootstrap-target.ps1`. That installs:

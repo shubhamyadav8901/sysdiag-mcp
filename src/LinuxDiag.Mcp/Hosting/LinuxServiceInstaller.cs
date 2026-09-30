@@ -60,16 +60,35 @@ public static class LinuxServiceInstaller
 
     public static int Uninstall(string name)
     {
-        Systemctl("disable", "--now", name);
-        File.Delete($"/etc/systemd/system/{name}.service");
-        File.Delete($"/etc/linuxdiag/{name}.env");
-        Systemctl("daemon-reload");
+        var unit = $"/etc/systemd/system/{name}.service";
+        var unitExisted = File.Exists(unit) || new FileInfo(unit).LinkTarget is not null;
+        var disableExit = unitExisted ? Systemctl("disable", "--now", name) : 0;
 
-        // The binary and the artifact directory stay: another instance may share the binary, and the
-        // artifacts may be the dumps someone came to collect.
-        Console.Error.WriteLine($"[linuxdiag] removed '{name}'. {InstallDirectory} and the artifact directory were kept.");
-        return 0;
+        if (unitExisted && disableExit == 0)
+        {
+            File.Delete(unit);
+            File.Delete($"/etc/linuxdiag/{name}.env");
+            Systemctl("daemon-reload");
+        }
+
+        var (code, message) = UninstallOutcome(name, unitExisted, disableExit);
+        Console.Error.WriteLine($"[linuxdiag] {message}");
+        return code;
     }
+
+    /// <summary>What uninstall reports, decided from what it found and what systemctl said.</summary>
+    /// <remarks>
+    /// "removed" only when there was a unit and disabling it worked. Printing it unconditionally told an
+    /// operator a service was gone when it had never been there, or was still running.
+    /// </remarks>
+    internal static (int Code, string Message) UninstallOutcome(string name, bool unitExisted, int disableExit) =>
+        !unitExisted
+            ? (1, $"no service named '{name}' is installed; nothing was removed.")
+            : disableExit != 0
+                ? (4, $"'systemctl disable --now {name}' failed (exit {disableExit}); nothing was removed. See: systemctl status {name}")
+                // The binary and the artifact directory stay: another instance may share the binary, and
+                // the artifacts may be the dumps someone came to collect.
+                : (0, $"removed '{name}'. {InstallDirectory} and the artifact directory were kept.");
 
     public static int Status(string name) => Systemctl("status", "--no-pager", name);
 

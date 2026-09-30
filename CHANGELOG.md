@@ -25,9 +25,12 @@ release fixed something that had been silently wrong, it says what the wrong ans
 ### Added
 
 - **LinuxDiag.Mcp, a Linux diagnostics server** for Ubuntu and Debian (x86-64), reached through the same
-  relay. It serves `capabilities`, `put_file`, `get_file`, `system_overview`, `run_command` (`sh`/`bash`)
-  and `update_self`, installs as a systemd service with `--install-service`, and is brought up over SSH
-  by `tools/bootstrap-linux.ps1`. The process, container and systemd tools follow.
+  relay. It serves `capabilities`, `put_file`, `get_file`, `system_overview`, `run_command`
+  (`sh`/`bash`/`none`) and `update_self`, installs as a systemd service with `--install-service`, and is
+  brought up over SSH by `tools/bootstrap-linux.sh` (verified live) or `tools/bootstrap-linux.ps1` (not
+  yet run against a live host). The process, container and systemd tools follow. **Not yet for
+  production hosts:** findings from its security review are still open; keep it to test machines until
+  they are resolved.
 - **The relay runs on Linux**, and is built for macOS (untested until CI has run on it). A Linux machine
   can now drive Windows targets: verified end to end from a native Linux build — pre-connect,
   forwarded calls, and a byte-identical `push_file`/`pull_file` round trip against a live target. Off Windows the relay's token file is created owner-only
@@ -51,13 +54,15 @@ release fixed something that had been silently wrong, it says what the wrong ans
   path is now shared with the coming Linux server, which runs as root: a file is replaced rather than
   written through a link at its path, and new files and directories — including a file an append
   creates — are created `0600` and `0700`. An append to a path that has become a link is refused; on
-  x86-64 Linux the refusal comes from `open(2)` with `O_NOFOLLOW` itself, so no link can be swapped in
-  between the check and the open. Windows behaviour is unchanged.
+  x86-64 Linux the refusal comes from `open(2)` with `O_NOFOLLOW` itself, so a link swapped in at the
+  file's own name between the check and the open is still refused (this covers the last path component
+  only). Windows behaviour is unchanged.
 
 ### Changed
 
 - **The `capabilities` description, the `get_file` path hint and three put_file/get_file messages no
-  longer name Windows-only tools**, because the Linux server serves them too.
+  longer name Windows-only tools**, because the Linux server serves them too. `update_self`'s forced-
+  restart message now says it allows time "to stop the tools it started" rather than naming Procmon.
 - **`put_file` and `get_file` describe themselves without Windows-only wording** — no `C:\WinDiag`,
   SMB or UNC examples — because every server in the family now serves the same two tools. Their
   parameters and answers are unchanged. The refusal for a file over the single-call limit now says to

@@ -75,9 +75,20 @@ public sealed class RestartScriptTests
     public void A_service_restarts_through_systemctl_and_a_by_hand_run_relaunches_itself()
     {
         Assert.Equal("systemctl restart 'linuxdiag'",
-            SystemdRestartHelper.RestartCommand("linuxdiag", "/opt/x", ["--http", "http://0.0.0.0:4024"]));
+            SystemdRestartHelper.RestartCommand(underSystemd: true, "linuxdiag", "/opt/x", ["--http", "http://0.0.0.0:4024"]));
         Assert.StartsWith("setsid '/opt/x' '--http' 'http://0.0.0.0:4024'",
-            SystemdRestartHelper.RestartCommand(null, "/opt/x", ["--http", "http://0.0.0.0:4024"]), StringComparison.Ordinal);
+            SystemdRestartHelper.RestartCommand(underSystemd: false, null, "/opt/x", ["--http", "http://0.0.0.0:4024"]), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_by_hand_run_with_the_service_name_set_relaunches_itself_rather_than_restarting_the_service()
+    {
+        // The launch and the restart must agree on "under systemd". Deciding the restart from the service
+        // name alone made a by-hand run, started with LINUXDIAG_SERVICE_NAME in its environment,
+        // restart the installed service instead of bringing itself back.
+        Assert.False(SystemdRestartHelper.UnderSystemd("linuxdiag", invocationId: null));
+        Assert.False(SystemdRestartHelper.UnderSystemd(null, invocationId: "abc"));
+        Assert.True(SystemdRestartHelper.UnderSystemd("linuxdiag", invocationId: "abc"));
     }
 
     [Fact]

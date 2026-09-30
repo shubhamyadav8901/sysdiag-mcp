@@ -53,7 +53,10 @@ public sealed class LinuxSystemInspector(IPrivilegeProbe privileges) : ISystemIn
         IEnumerable<MountEntry> mounts, Func<string, (long Total, long Free)> size, TimeSpan perMount)
     {
         var result = new List<MountedFilesystem>();
-        foreach (var mount in mounts.DistinctBy(m => m.MountPoint, StringComparer.Ordinal))
+        // The last entry per mount point: a later mount on the same path hides the earlier one, so it is
+        // what a process actually sees there. Kept in first-seen order for a stable listing.
+        var visible = mounts.GroupBy(m => m.MountPoint, StringComparer.Ordinal).Select(g => g.Last());
+        foreach (var mount in visible)
         {
             long totalBytes = 0, freeBytes = 0;
             var probe = Task.Run(() => size(mount.MountPoint));

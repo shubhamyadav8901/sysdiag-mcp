@@ -60,6 +60,22 @@ public sealed class SystemOverviewTests
         }
     }
 
+    [Fact]
+    public void Of_two_mounts_stacked_on_one_path_the_visible_later_one_is_reported()
+    {
+        // /proc/self/mounts lists mounts in the order they were made; a later mount on the same path hides
+        // the earlier one, so the last entry is what a process actually sees there.
+        var filesystems = LinuxSystemInspector.Filesystems(
+            [
+                new LinuxDiag.Mcp.Linux.Parsers.MountEntry("/dev/sda2", "/data", "ext4", false),
+                new LinuxDiag.Mcp.Linux.Parsers.MountEntry("/dev/sdb1", "/data", "xfs", false),
+            ],
+            _ => (100, 50),
+            TimeSpan.FromSeconds(1));
+
+        Assert.Equal("/dev/sdb1", Assert.Single(filesystems).Device);
+    }
+
     [LinuxFact]
     public void The_live_overview_describes_this_machine()
     {

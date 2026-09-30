@@ -54,6 +54,8 @@ case "$grants" in
   *)        echo "-g must be None, Standard or All" >&2; exit 2 ;;
 esac
 
+# Expanded as ${ssh_opts[@]+...} below: an empty array under `set -u` is an error on bash before 4.4,
+# which is what macOS still ships.
 ssh_opts=()
 [ -n "$identity" ] && ssh_opts+=(-i "$identity")
 
@@ -61,11 +63,11 @@ sudo_prefix='sudo '
 [ "$user" = root ] && sudo_prefix=''
 
 echo "==> copying $binary to $user@$target"
-scp "${ssh_opts[@]}" -P "$port" "$binary" "$user@$target:LinuxDiag.Mcp"
+scp ${ssh_opts[@]+"${ssh_opts[@]}"} -P "$port" "$binary" "$user@$target:LinuxDiag.Mcp"
 
 # One remote command: verify, install, then remove the copy whatever the install returned.
 remote="echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo_prefix}~/LinuxDiag.Mcp ${install_args[*]} ; rc=\$?; rm -f ~/LinuxDiag.Mcp; exit \$rc"
 echo "==> installing on $target ($grants grants)"
-ssh "${ssh_opts[@]}" -t -p "$port" "$user@$target" "$remote"
+ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -t -p "$port" "$user@$target" "$remote"
 
 echo "==> done. If a token was generated it was printed above, once: put it in ~/.windiag-targets.json."
