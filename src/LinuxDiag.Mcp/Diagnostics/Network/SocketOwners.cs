@@ -34,7 +34,8 @@ public static class NetworkNamespaces
     /// <remarks>Sockets in a namespace only those processes are in are then missing from the answer.</remarks>
     internal static string? HiddenLimitation(ProcessTable table)
     {
-        var hidden = table.Processes.Count(p => !p.KernelThread && p.NetworkNamespace is null);
+        // A zombie's namespace links are gone even for root; it holds no sockets to miss.
+        var hidden = table.Processes.Count(p => !p.KernelThread && p.State != "Z" && p.NetworkNamespace is null);
         return hidden == 0
             ? null
             : $"The network namespace of {hidden} processes could not be read, so sockets in a namespace only they are " +

@@ -1,4 +1,5 @@
 using LinuxDiag.Mcp.Diagnostics.Processes;
+using LinuxDiag.Mcp.Diagnostics.Services;
 using LinuxDiag.Mcp.Linux.Native;
 using LinuxDiag.Mcp.Linux.Parsers;
 using LinuxDiag.Mcp.Linux.Proc;
@@ -63,12 +64,15 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
         }
 
         var executable = Optional(() => ProcFiles.ReadProcessLink(processId, "exe"));
-        var argv0 = Optional(() => ProcFiles.ReadProcess(processId, "cmdline"))?.Split('\0')[0];
-        if (!NamesMatch(stat.Name, executable, argv0, expectedName))
+        var argv = Optional(() => ProcFiles.ReadProcess(processId, "cmdline"))?.Split('\0');
+        var argv0 = argv?[0];
+        var argv1 = argv is { Length: > 1 } ? argv[1] : null;
+        if (!NamesMatch(stat.Name, executable, argv0, expectedName, argv1, Resolve(expectedName)))
         {
             throw new ProcessControlException(
-                $"PID {processId} is '{stat.Name}', not '{expectedName}'. Nothing has been done. PIDs are reused, so " +
-                "this one probably belongs to a different process now - call process_list to get a current one.");
+                $"PID {processId} is '{stat.Name}' (executable {executable ?? "unreadable"}, argv[0] {argv0 ?? "unreadable"}), " +
+                $"not '{expectedName}'. Nothing has been done. Pass one of those names, or - if the PID was reused - " +
+                "call process_list to get a current one.");
         }
 
         if (stat.State == "Z")
@@ -78,7 +82,8 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                 $"{stat.ParentProcessId}) to reap it; signals do nothing to it. Nothing has been done.");
         }
 
-        if (action != ProcessAction.Resume && IsProtected(stat.Name, executable, stat.ParentProcessId))
+        var cgroup = Optional(() => ProcFiles.ReadProcess(processId, "cgroup")) is { } cgroupText ? CgroupPath.Parse(cgroupText) : "/";
+        if (action != ProcessAction.Resume && IsProtected(cgroup, stat.Name, executable, stat.ParentProcessId))
         {
             throw new ProcessControlException(
                 $"Refusing to {action.ToString().ToLowerInvariant()} '{stat.Name}' (PID {processId}): it is a daemon this machine " +
@@ -170,13 +175,28 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
     /// Exactly, as Linux names are: case-sensitive, and a path compared whole, never by its last part -- a
     /// /tmp/nginx is not /usr/sbin/nginx. Only comm has a prefix rule, because only comm is cut to 15 bytes.
     /// </remarks>
-    internal static bool NamesMatch(string comm, string? executable, string? argv0, string expected)
+    /// <param name="argv1">A script's own path, when an interpreter runs it: its exe and argv[0] are the interpreter's.</param>
+    /// <param name="expectedResolved">The expected path with its links resolved, when it exists: /sbin/x on merged-usr, an alternative.</param>
+    internal static bool NamesMatch(
+        string comm, string? executable, string? argv0, string expected, string? argv1 = null, string? expectedResolved = null)
     {
         var wanted = expected.Trim();
+
+        // The kernel appends " (deleted)" to the exe link of a binary replaced on disk -- after every upgrade.
+        var binary = executable is not null && executable.EndsWith(" (deleted)", StringComparison.Ordinal)
+            ? executable[..^" (deleted)".Length]
+            : executable;
         if (wanted.Contains('/', StringComparison.Ordinal))
         {
-            return string.Equals(executable, wanted, StringComparison.Ordinal) || string.Equals(argv0, wanted, StringComparison.Ordinal);
+            var script = argv1 is not null && (Path.GetFileName(argv1) == comm ||
+                                               (comm.Length == 15 && Path.GetFileName(argv1).StartsWith(comm, StringComparison.Ordinal)));
+            return string.Equals(binary, wanted, StringComparison.Ordinal) ||
+                   (expectedResolved is not null && string.Equals(binary, expectedResolved, StringComparison.Ordinal)) ||
+                   string.Equals(argv0, wanted, StringComparison.Ordinal) ||
+                   (script && string.Equals(argv1, wanted, StringComparison.Ordinal));
         }
+
+        executable = binary;
 
         return comm == wanted ||
                (comm.Length == 15 && wanted.Length > 15 && wanted.StartsWith(comm, StringComparison.Ordinal)) ||
@@ -184,19 +204,52 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                (argv0 is { Length: > 0 } && Path.GetFileName(argv0) == wanted);
     }
 
-    /// <summary>Daemons whose stop or freeze cuts the machine off: the processes service_control also protects.</summary>
+    /// <summary>Daemons protected by name where no systemd unit says what a process is.</summary>
     private static readonly HashSet<string> ProtectedDaemons = new(StringComparer.Ordinal)
     {
         "systemd-journald", "systemd-logind", "systemd-udevd", "systemd-networkd", "systemd-resolved", "dbus-daemon",
-        "dbus-broker", "NetworkManager", "polkitd", "sshd", "tailscaled", "openvpn",
+        "dbus-broker", "dbus-broker-launch", "NetworkManager", "polkitd", "sshd", "tailscaled", "openvpn",
     };
 
-    /// <summary>One of those daemons itself -- a child of PID 1 -- not a login session's sshd or a udev worker.</summary>
-    internal static bool IsProtected(string comm, string? executable, int parentProcessId) =>
-        parentProcessId == 1 &&
-        ((executable is not null && ProtectedDaemons.Contains(Path.GetFileName(executable))) ||
-         ProtectedDaemons.Contains(comm) ||
-         (comm.Length == 15 && ProtectedDaemons.Any(d => d.StartsWith(comm, StringComparison.Ordinal))));
+    /// <summary>Whether stopping or freezing this process would cut the machine off.</summary>
+    /// <remarks>
+    /// Decided by the unit the process runs in, with service_control's own list: everything in dbus-broker.service
+    /// (the launcher and the broker it starts) is the bus, while a process that merely calls itself sshd -- an
+    /// orphan in a user's session, a per-connection sshd@ instance -- is not the listener. Only where there is no
+    /// systemd unit to ask does the name decide, and then only for a daemon PID 1 started.
+    /// </remarks>
+    internal static bool IsProtected(string cgroup, string comm, string? executable, int parentProcessId)
+    {
+        var unit = cgroup.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        if (unit is not null && (unit.EndsWith(".service", StringComparison.Ordinal) || unit.EndsWith(".scope", StringComparison.Ordinal)))
+        {
+            return LinuxServiceController.IsCritical(unit);
+        }
+
+        return parentProcessId == 1 &&
+               ((executable is not null && ProtectedDaemons.Contains(Path.GetFileName(executable))) ||
+                ProtectedDaemons.Contains(comm) ||
+                (comm.Length == 15 && ProtectedDaemons.Any(d => d.StartsWith(comm, StringComparison.Ordinal))));
+    }
+
+    /// <summary>The expected name as a path with its links resolved, or null when it is not a path that exists.</summary>
+    private static string? Resolve(string expected)
+    {
+        var wanted = expected.Trim();
+        if (!wanted.Contains('/', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        try
+        {
+            return LibC.RealPath(wanted);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>What a stopped process's state means for the signal just sent, or null when it changes nothing.</summary>
     internal static string? StateNote(string state, ProcessAction action) => (state, action) switch

@@ -25,7 +25,7 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
         "paths (with the unit a timer or socket actually runs), users' systemd units, cron (system and users' " +
         "crontabs, /etc/cron.d, cron.hourly/daily/weekly/monthly), /etc/rc.local, /etc/profile.d and /etc/ld.so.preload " +
         "- with the program each one runs. categories takes one or more of: all, services, timers, sockets, paths, " +
-        "userunits, cron, rclocal, profiled, preload. verifyPackages checks every file that decides what runs - unit " +
+        "userunits, cron, generators, rclocal, profiled, preload. verifyPackages checks every file that decides what runs - unit " +
         "file, drop-ins, program, and the script an interpreter runs - against the dpkg database; unpackagedOnly " +
         "returns only entries with a file that is not from a package or was changed, which is usually the fastest " +
         "route to an answer. Not covered: XDG autostart, udev RUN+=, anacrontab, at jobs, update-motd.d, " +

@@ -12,7 +12,14 @@ public sealed class LinuxAutostartInspector(
     : IAutostartInspector
 {
     internal static readonly string[] AllCategories =
-        ["cron", "paths", "preload", "profiled", "rclocal", "services", "sockets", "timers", "userunits"];
+        ["cron", "generators", "paths", "preload", "profiled", "rclocal", "services", "sockets", "timers", "userunits"];
+
+    /// <summary>Where systemd looks for generators, which it runs as root at every boot and daemon-reload.</summary>
+    internal static readonly string[] GeneratorDirectories =
+    [
+        "/etc/systemd/system-generators", "/run/systemd/system-generators", "/usr/local/lib/systemd/system-generators",
+        "/usr/lib/systemd/system-generators", "/lib/systemd/system-generators",
+    ];
 
     private static readonly Dictionary<string, string> UnitCategory = new(StringComparer.Ordinal)
     {
@@ -39,6 +46,7 @@ public sealed class LinuxAutostartInspector(
         if (categories.Contains("rclocal")) entries.AddRange(RcLocal());
         if (categories.Contains("profiled")) entries.AddRange(Files("profiled", "/etc/profile.d", "sourced by every login shell", SourcedByProfile));
         if (categories.Contains("preload")) entries.AddRange(Preload());
+        if (categories.Contains("generators")) entries.AddRange(Generators(GeneratorDirectories));
 
         var matched = entries
             .Where(e => string.IsNullOrWhiteSpace(query.NameFilter) ||
@@ -148,6 +156,20 @@ public sealed class LinuxAutostartInspector(
 
         return (real is not null && real != path ? database.Owner(real) : null) ?? database.Owner(path);
     }
+
+    /// <summary>Every generator, each an entry whose file is checked against its package.</summary>
+    /// <remarks>
+    /// A generated unit is not a package finding only because the generator that wrote it is checked here: an
+    /// unpackaged generator can write a unit whose program is a packaged /bin/sh, and it is this entry that shows it.
+    /// </remarks>
+    internal static IEnumerable<AutostartEntry> Generators(IEnumerable<string> directories) =>
+        directories
+            .Where(d => !d.StartsWith("/lib/", StringComparison.Ordinal) || !Directory.Exists("/usr" + d))
+            .SelectMany(d => Listing(d))
+            .Select(file => new AutostartEntry(
+                "generators", file, Path.GetFileName(file), true, null,
+                "run by systemd as root at every boot and daemon-reload, writing units before any load",
+                file, file, null, [], null, null, [], false));
 
     /// <summary>A unit or drop-in a systemd generator wrote at boot: no package owns those files, ever.</summary>
     /// <remarks>/run/systemd/generator* is root-only tmpfs rewritten on every boot; the generator itself is the packaged file.</remarks>

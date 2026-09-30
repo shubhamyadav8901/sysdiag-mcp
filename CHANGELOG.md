@@ -75,7 +75,7 @@ release fixed something that had been silently wrong, it says what the wrong ans
   value is now shown escaped (`\n`, `\u001b`), while the structured content keeps the original.
 - **LinuxDiag says more of what it could not see.** `process_list` names a `/proc` mounted with
   `hidepid`, `named_pipes` names network namespaces it could not read, `service_config` shows why a unit
-  file failed to load, units written by systemd generators are no longer reported as unpackaged, and the
+  file failed to load, units written by systemd generators are no longer reported as unpackaged - each generator is audited instead - and the
   systemd tools report Degraded where systemd is not running. One unreadable process, odd lock line,
   socket name or unit no longer loses the whole answer, and `container_list` and `file_signatures` are capped.
 - **LinuxDiag's control tools refuse more of what would cut a machine off.** `process_control` refuses to

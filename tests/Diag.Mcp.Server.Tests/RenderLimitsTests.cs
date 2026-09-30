@@ -8,5 +8,8 @@ public sealed class RenderLimitsTests
         Assert.Equal("a\\nFORGED\\r\\t\\u001b[31m\\u202eé b", RenderLimits.Printable("a\nFORGED\r\t\u001b[31m‮é b"));
         Assert.Equal("/usr/bin/sleep 30", RenderLimits.Printable("/usr/bin/sleep 30"));
         Assert.Null(RenderLimits.Printable(null));
+
+        // Final review: the Unicode line and paragraph separators are line breaks to many renderers.
+        Assert.Equal("a\\u2028b\\u2029c", RenderLimits.Printable("a\u2028b\u2029c"));
     }
 }

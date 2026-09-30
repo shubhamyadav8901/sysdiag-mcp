@@ -13,6 +13,29 @@ public sealed class AutostartTests
     private static readonly LinuxDiagOptions Options = LinuxDiagOptions.FromEnvironment(new System.Collections.Hashtable());
 
     [Fact]
+    public void Every_generator_is_an_entry_whose_file_is_checked_against_its_package()
+    {
+        // Final review: a generated unit is trusted only because its generator is audited. An unpackaged
+        // generator is a known persistence technique, so each one is an entry of its own.
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-gen-{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "evil-generator"), "#!/bin/sh\n");
+
+            var entry = Assert.Single(LinuxAutostartInspector.Generators([directory, Path.Combine(directory, "missing")]));
+
+            Assert.Equal("generators", entry.Category);
+            Assert.Equal(Path.Combine(directory, "evil-generator"), entry.ImagePath);
+            Assert.Contains("generators", LinuxAutostartInspector.AllCategories);
+            Assert.Contains("/etc/systemd/system-generators", LinuxAutostartInspector.GeneratorDirectories);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void A_unit_a_systemd_generator_wrote_at_boot_is_not_a_package_finding()
     {
         // Generators write units under /run/systemd/generator* on every boot; no package ever owns those files,

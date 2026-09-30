@@ -86,7 +86,7 @@ public static class RenderLimits
     }
 
     private static bool NeedsEscape(char c) =>
-        char.IsControl(c) || c is (>= '\u202a' and <= '\u202e') or (>= '\u2066' and <= '\u2069') or '\u200e' or '\u200f' or '\u061c';
+        char.IsControl(c) || c is (>= '\u202a' and <= '\u202e') or (>= '\u2066' and <= '\u2069') or '\u200e' or '\u200f' or '\u061c' or '\u2028' or '\u2029';
 
     private static string Format(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
 }

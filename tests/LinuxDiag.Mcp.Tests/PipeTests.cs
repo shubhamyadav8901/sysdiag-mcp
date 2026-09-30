@@ -23,11 +23,15 @@ public sealed class PipeTests : IDisposable
     public void Processes_whose_network_namespace_could_not_be_read_are_named_as_a_limitation()
     {
         // named_pipes said nothing when it could not read some processes' network namespaces; network_owners did.
-        ProcessRecord Record(int pid, bool kernel, string? netns) => new(
-            pid, 1, "p", "S", kernel, 0, DateTimeOffset.UnixEpoch, 0, 1, 1000, null, null, false, "/", null, null, netns, null);
+        ProcessRecord Record(int pid, bool kernel, string? netns, string state = "S") => new(
+            pid, 1, "p", state, kernel, 0, DateTimeOffset.UnixEpoch, 0, 1, 1000, null, null, false, "/", null, null, netns, null);
 
         var hidden = NetworkNamespaces.HiddenLimitation(new ProcessTable([Record(10, false, null), Record(11, true, null), Record(12, false, "net:[1]")], 0));
         var none = NetworkNamespaces.HiddenLimitation(new ProcessTable([Record(12, false, "net:[1]")], 0));
+
+        // A zombie's ns links are gone even for root: telling a root server to "run as root" for it is false.
+        var zombie = NetworkNamespaces.HiddenLimitation(new ProcessTable([Record(13, false, null, state: "Z")], 0));
+        Assert.Null(zombie);
 
         Assert.StartsWith("The network namespace of 1 processes", hidden, StringComparison.Ordinal);
         Assert.Null(none);

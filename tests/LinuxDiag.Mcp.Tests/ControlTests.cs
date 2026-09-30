@@ -51,6 +51,21 @@ public sealed class ControlTests
     }
 
     [Fact]
+    public void A_path_matches_a_replaced_binary_a_symlink_and_a_script()
+    {
+        // Final review: after an upgrade the exe link ends " (deleted)" and nginx rewrites argv0; merged-usr and
+        // alternatives reach the binary through a link; a script's exe is its interpreter and its path is argv[1].
+        Assert.True(LinuxProcessController.NamesMatch(
+            "nginx", "/usr/sbin/nginx (deleted)", "nginx: master process /usr/sbin/nginx", "/usr/sbin/nginx"));
+        Assert.True(LinuxProcessController.NamesMatch(
+            "python3", "/usr/bin/python3.12", "python3", "/usr/bin/python3", expectedResolved: "/usr/bin/python3.12"));
+        Assert.True(LinuxProcessController.NamesMatch(
+            "job.sh", "/usr/bin/bash", "/bin/bash", "/usr/local/bin/job.sh", argv1: "/usr/local/bin/job.sh"));
+        Assert.False(LinuxProcessController.NamesMatch(
+            "bash", "/usr/bin/bash", "/bin/bash", "/usr/local/bin/job.sh", argv1: "/usr/local/bin/job.sh"));
+    }
+
+    [Fact]
     public void Only_comm_is_matched_on_its_truncated_prefix()
     {
         // The kernel cuts comm to 15 bytes; an executable name or argv[0] is never cut, so no prefix rule applies.
@@ -59,15 +74,21 @@ public sealed class ControlTests
     }
 
     [Theory]
-    [InlineData("systemd-journal", "/usr/lib/systemd/systemd-journald", 1, true)]
-    [InlineData("sshd", "/usr/sbin/sshd", 1, true)]
-    [InlineData("sshd", "/usr/sbin/sshd", 4242, false)]   // a login session's sshd, not the listener
-    [InlineData("dbus-daemon", "/usr/bin/dbus-daemon", 1, true)]
-    [InlineData("nginx", "/usr/sbin/nginx", 1, false)]
-    public void A_daemon_that_holds_the_machine_together_is_protected_but_its_children_are_not(
-        string comm, string exe, int parent, bool isProtected)
+    [InlineData("/system.slice/dbus-broker.service", "dbus-broker", "/usr/bin/dbus-broker", 4242, true)]  // the launcher's child
+    [InlineData("/system.slice/ssh.service", "sshd", "/usr/sbin/sshd", 1, true)]                         // the listener
+    [InlineData("/system.slice/systemd-journald.service", "systemd-journal", "/usr/lib/systemd/systemd-journald", 1, true)]
+    [InlineData("/system.slice/tailscaled.service", "tailscaled", "/usr/sbin/tailscaled", 1, true)]
+    [InlineData("/user.slice/user-1000.slice/session-3.scope", "sshd", "/usr/sbin/sshd", 1, false)]     // an orphan named sshd
+    [InlineData("/system.slice/system-sshd.slice/sshd@1-10.0.0.1:22-10.0.0.2:5000.service", "sshd", "/usr/sbin/sshd", 1, false)]
+    [InlineData("/system.slice/nginx.service", "nginx", "/usr/sbin/nginx", 1, false)]
+    [InlineData("/", "sshd", "/usr/sbin/sshd", 1, true)]                                                  // no systemd: by name
+    [InlineData("/", "sshd", "/usr/sbin/sshd", 4242, false)]
+    public void A_process_in_a_unit_the_machine_needs_is_protected_and_nothing_else_is(
+        string cgroup, string comm, string exe, int parent, bool isProtected)
     {
-        Assert.Equal(isProtected, LinuxProcessController.IsProtected(comm, exe, parent));
+        // Final review: dbus-broker runs as the child of dbus-broker-launch, so "parent is PID 1" left the
+        // system bus killable; and any orphan named sshd was unkillable. The unit decides, as service_control's does.
+        Assert.Equal(isProtected, LinuxProcessController.IsProtected(cgroup, comm, exe, parent));
     }
 
     [Theory]
@@ -268,7 +289,8 @@ public sealed class ControlTests
             var ex = Assert.Throws<ProcessControlException>(() =>
                 Controller().Control(child.Id, "nginx", ProcessAction.Kill, CancellationToken.None));
 
-            Assert.Contains("is 'sleep', not 'nginx'", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("is 'sleep' (executable /", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("not 'nginx'", ex.Message, StringComparison.Ordinal);
             Assert.False(child.WaitForExit(1000)); // HasExited alone passes before a SIGKILL is reaped
         }
         finally
