@@ -76,6 +76,19 @@ public sealed class InstallTests
         Assert.True(LinuxServiceInstaller.NeedsCopy("/home/op/LinuxDiag.Mcp", "/opt/linuxdiag/LinuxDiag.Mcp"));
     }
 
+    [Fact]
+    public void A_failed_start_is_detected_rather_than_trusting_enable_now()
+    {
+        // Measured on Ubuntu 24.04: `systemctl enable --now` exits 0 even when the start fails or the
+        // unit never becomes ready, so an installer that trusted it announced "installed and started" over
+        // a service that was not. A plain start does report a Type=notify failure, and is-active catches
+        // a process that exits after forking.
+        var commands = LinuxServiceInstaller.StartCommands("linuxdiag").Select(c => string.Join(' ', c)).ToList();
+
+        Assert.Equal(["daemon-reload", "enable linuxdiag", "start linuxdiag", "is-active --quiet linuxdiag"], commands);
+        Assert.DoesNotContain(commands, c => c.Contains("--now", StringComparison.Ordinal));
+    }
+
     [LinuxFact]
     public void The_env_file_replacing_a_loose_one_ends_up_owner_only()
     {

@@ -28,7 +28,11 @@ public static class DiagServerHost
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(configure);
 
-        var builder = WebApplication.CreateBuilder();
+        // The server's own directory, never the working directory. systemd starts a service in /, and a
+        // content root of / stalled host startup before a single line was logged -- the unit sat in
+        // 'activating' until systemd killed it. Nothing here reads files from the content root, so
+        // pinning it costs nothing wherever the process is started from.
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.WebHost.UseUrls(settings.Address);
 
         // Kestrel caps request bodies at 30 MB by default, which would reject a put_file carrying a

@@ -76,7 +76,9 @@ return bind is null
 
 async Task<int> RunStdio(LinuxDiagOptions opts)
 {
-    var builder = Host.CreateApplicationBuilder();
+    // The server's own directory as content root, as DiagServerHost does for HTTP: a working directory
+    // of / -- how systemd starts things -- stalls host startup.
+    var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { ContentRootPath = AppContext.BaseDirectory });
     ConfigureLogging(builder.Logging);
     ServerBuilder.ConfigureServices(builder.Services, opts).WithStdioServerTransport();
 

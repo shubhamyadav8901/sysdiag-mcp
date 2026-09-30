@@ -16,6 +16,9 @@
 .PARAMETER User
     The SSH user. Must be able to sudo, or be root.
 
+.PARAMETER IdentityFile
+    SSH private key to use instead of ssh's default identity.
+
 .PARAMETER Token
     Bearer token to pin. Must match what the relay's ~/.windiag-targets.json holds for this host. Generated
     if omitted, and printed once -- at which point you must put it in that file yourself.
@@ -33,6 +36,7 @@ param(
     [Parameter(Mandatory)] [string] $Target,
     [string] $User = $env:USERNAME,
     [int] $SshPort = 22,
+    [string] $IdentityFile,
     [string] $Token,
     [ValidateSet('None', 'Standard', 'All')] [string] $Grants = 'Standard',
     [string] $Bind = 'http://0.0.0.0:4024',
@@ -51,6 +55,7 @@ function Invoke-Native([scriptblock] $Command) {
 $local = (Resolve-Path $Binary).Path
 $sha = (Get-FileHash -Algorithm SHA256 $local).Hash.ToLowerInvariant()
 $remote = "$User@$Target"
+$identity = if ($IdentityFile) { @('-i', (Resolve-Path $IdentityFile).Path) } else { @() }
 
 $installArgs = @('--install-service', '--http', $Bind)
 if ($Token) { $installArgs += @('--token', $Token) }
@@ -61,13 +66,13 @@ switch ($Grants) {
 }
 
 Write-Host "==> copying $local to $remote"
-Invoke-Native { scp -P $SshPort $local "${remote}:LinuxDiag.Mcp" }
+Invoke-Native { scp @identity -P $SshPort $local "${remote}:LinuxDiag.Mcp" }
 
 # One remote command: verify, then install, then remove the copy -- which runs whatever the install
 # returned, so a failed install still leaves nothing behind. sudo is skipped when already root.
 $sudo = if ($User -eq 'root') { '' } else { 'sudo ' }
 $command = "echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo}~/LinuxDiag.Mcp $($installArgs -join ' ') ; rc=`$?; rm -f ~/LinuxDiag.Mcp; exit `$rc"
 Write-Host "==> installing on $Target ($Grants grants)"
-Invoke-Native { ssh -t -p $SshPort $remote $command }
+Invoke-Native { ssh @identity -t -p $SshPort $remote $command }
 
 Write-Host "==> done. If a token was generated it was printed above, once: put it in ~/.windiag-targets.json."

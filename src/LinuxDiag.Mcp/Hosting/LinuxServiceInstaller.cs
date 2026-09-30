@@ -38,10 +38,15 @@ public static class LinuxServiceInstaller
         File.WriteAllText(options.UnitFilePath, options.UnitFile(InstalledExecutable));
         File.SetUnixFileMode(options.UnitFilePath, OwnerOnlyFile | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
 
-        if (Systemctl("daemon-reload") != 0 || Systemctl("enable", "--now", options.Name) != 0)
+        foreach (var command in StartCommands(options.Name))
         {
-            Console.Error.WriteLine($"[linuxdiag] systemctl failed; see: systemctl status {options.Name}");
-            return 4;
+            if (Systemctl(command) != 0)
+            {
+                Console.Error.WriteLine(
+                    $"[linuxdiag] 'systemctl {string.Join(' ', command)}' failed; the service is not running. " +
+                    $"See: systemctl status {options.Name}; journalctl -u {options.Name}");
+                return 4;
+            }
         }
 
         Console.Error.WriteLine($"[linuxdiag] installed and started '{options.Name}' on {options.Bind}");
@@ -68,6 +73,21 @@ public static class LinuxServiceInstaller
     }
 
     public static int Status(string name) => Systemctl("status", "--no-pager", name);
+
+    /// <summary>How the service is brought up, each step's exit code checked.</summary>
+    /// <remarks>
+    /// Not `enable --now`: measured on Ubuntu 24.04, it exits 0 even when the start fails or the unit
+    /// never becomes ready, so the installer announced a running service that was not. A plain start
+    /// waits for Type=notify readiness and reports its failure; is-active then catches a process that
+    /// exited after starting.
+    /// </remarks>
+    internal static IReadOnlyList<string[]> StartCommands(string name) =>
+    [
+        ["daemon-reload"],
+        ["enable", name],
+        ["start", name],
+        ["is-active", "--quiet", name]
+    ];
 
     internal static bool NeedsCopy(string source, string destination) =>
         !string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.Ordinal);
