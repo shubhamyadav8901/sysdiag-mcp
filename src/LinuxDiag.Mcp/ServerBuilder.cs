@@ -6,6 +6,7 @@ using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
 using LinuxDiag.Mcp.Diagnostics.Commands;
 using LinuxDiag.Mcp.Diagnostics.Containers;
+using LinuxDiag.Mcp.Diagnostics.Handles;
 using LinuxDiag.Mcp.Diagnostics.Processes;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
 using LinuxDiag.Mcp.Diagnostics.SystemInfo;
@@ -85,7 +86,9 @@ public static class ServerBuilder
         var mcp = services.AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _)
             .WithTools<SystemTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<ContainerTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<ProcessTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<ProcessTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<ModuleTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<HandleTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -115,6 +118,10 @@ public static class ServerBuilder
         services.TryAddSingleton<IContainerInspector, LinuxContainerInspector>();
         services.TryAddSingleton<ContainerTools>();
         services.TryAddSingleton<ProcessTools>();
+        services.TryAddSingleton<IHandleInspector, LinuxHandleInspector>();
+        services.TryAddSingleton<IModuleInspector, LinuxModuleInspector>();
+        services.TryAddSingleton<ModuleTools>();
+        services.TryAddSingleton<HandleTools>();
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();

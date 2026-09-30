@@ -66,4 +66,45 @@ public static class ProcFiles
             return null;
         }
     }
+
+    public const string Passwd = "/etc/passwd";
+
+    /// <summary>One process's open descriptors and their raw link targets, or null when it has exited.</summary>
+    /// <remarks>Permission denied propagates: another user's fd directory needs root, and a caller counts that.</remarks>
+    public static IReadOnlyList<(int Descriptor, string Target)>? Descriptors(int pid)
+    {
+        try
+        {
+            var descriptors = new List<(int, string)>();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(Of(pid, "fd")))
+            {
+                if (!int.TryParse(Path.GetFileName(entry), NumberStyles.None, CultureInfo.InvariantCulture, out var fd))
+                {
+                    continue;
+                }
+
+                string? target;
+                try
+                {
+                    target = new FileInfo(entry).LinkTarget;
+                }
+                catch (IOException)
+                {
+                    // Closed between the listing and the readlink: it is no longer open, so it is not held.
+                    continue;
+                }
+
+                if (target is not null)
+                {
+                    descriptors.Add((fd, target));
+                }
+            }
+
+            return descriptors;
+        }
+        catch (IOException) when (!IsAlive(pid))
+        {
+            return null;
+        }
+    }
 }

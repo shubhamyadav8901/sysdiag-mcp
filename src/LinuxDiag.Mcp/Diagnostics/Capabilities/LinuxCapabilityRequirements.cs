@@ -34,6 +34,14 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "/proc/<pid>/{stat,status,cmdline,cgroup}, joined with container_list's runtimes",
                 null,
                 "cannot read the executable path or namespaces of processes owned by other users, which are reported as null"),
+            ["process_handles"] = new(
+                "/proc/<pid>/fd, fdinfo and maps, scoped to one process",
+                null,
+                "cannot read the open files of processes owned by other users"),
+            ["process_modules"] = new(
+                "/proc/<pid>/maps",
+                null,
+                "cannot read the memory map of processes owned by other users"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

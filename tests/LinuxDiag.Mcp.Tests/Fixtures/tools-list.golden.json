@@ -279,6 +279,122 @@
     }
   },
   {
+    "name": "process_handles",
+    "title": "Everything one process has open",
+    "description": "List everything one process has open - files, directories, devices, sockets, pipes and anonymous inodes (eventfd, epoll, inotify) - plus the files it has memory-mapped, each with how it was opened: read, write or read-write. Use it to answer what a process is actually touching: which log it is writing, which deleted file it is keeping alive, how many sockets it holds. Scoped to one process, so it is far cheaper than path_handle_search, which walks every process.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "includeAllObjectTypes": {
+          "description": "Set false for file references only - open files and directories plus memory-mapped files.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processName": {
+                "type": "string"
+              },
+              "processId": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "userId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "handleValue": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "access": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "otherMountNamespace": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "processName",
+              "processId",
+              "type",
+              "user",
+              "userId",
+              "handleValue",
+              "name",
+              "access",
+              "otherMountNamespace"
+            ]
+          }
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "unreadableProcesses": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "handles",
+        "elevated",
+        "truncated",
+        "totalMatched",
+        "unreadableProcesses"
+      ]
+    },
+    "annotations": {
+      "title": "Everything one process has open",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "process_list",
     "title": "Running processes",
     "description": "List running processes with their PID, parent PID, start time, resident memory, thread count, user, state and full command line - and, for a process in a container, the container\u0027s runtime, id, name and image and the process\u0027s PID inside it. The command line is the point: it is what tells one java or python process from another. Filter by name, command line or container name, or ask for a single PID. Kernel threads are listed without a command line.",
@@ -453,6 +569,112 @@
     },
     "annotations": {
       "title": "Running processes",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "process_modules",
+    "title": "Files mapped into a process",
+    "description": "List the files a process has memory-mapped - its executable, shared libraries and any mapped data files - with each one\u0027s path, load address and mapped size. Use it when the library on disk and the one in use might differ: after a package upgrade a running process keeps the old version mapped, and it is flagged as deleted here - the reason a patched library can still be the one running until a restart. Filter by name or path.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "nameFilter": {
+          "description": "Only files whose path contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "modules": {
+          "type": "object",
+          "properties": {
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "baseAddress": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": "integer"
+                  },
+                  "executable": {
+                    "type": "boolean"
+                  },
+                  "deleted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "path",
+                  "baseAddress",
+                  "sizeBytes",
+                  "executable",
+                  "deleted"
+                ]
+              }
+            },
+            "totalMatched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "deletedCount": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "processId",
+            "processName",
+            "modules",
+            "totalMatched",
+            "truncated",
+            "deletedCount"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "modules"
+      ]
+    },
+    "annotations": {
+      "title": "Files mapped into a process",
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true,
