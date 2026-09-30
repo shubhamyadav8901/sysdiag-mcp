@@ -1,0 +1,103 @@
+using System.ComponentModel;
+using System.Text;
+using LinuxDiag.Mcp.Diagnostics.Handles;
+using ModelContextProtocol.Server;
+
+namespace LinuxDiag.Mcp.Tools;
+
+/// <summary>Structured result of <c>who_locks_path</c>.</summary>
+public sealed record WhoLocksPathResult(
+    string Summary, string Path, IReadOnlyList<LockHolder> Holders, bool Exhaustive, IReadOnlyList<string> Limitations);
+
+[McpServerToolType]
+public sealed class LockTools(ILockInspector locks)
+{
+    [McpServerTool(
+        Name = "who_locks_path",
+        Title = "Who holds or locks this path",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Find which processes hold a file or directory open or locked. Every process's open files are compared by " +
+        "device and inode, so a hard link, a rename or a container's own path still matches, and each holder is " +
+        "shown with how it opened the file and any flock, POSIX lock, open-file-description lock or lease it holds " +
+        "on it - plus processes blocked waiting for such a lock, and processes running the file, mapping it, or " +
+        "using it as their working or root directory. Use it for 'text file busy', a lock file an agent will not " +
+        "release, or a package manager waiting on a lock. It reports Exhaustive only when the server runs as root " +
+        "and could read every process.")]
+    public WhoLocksPathResult WhoLocksPath(
+        [Description("Full path to the file or directory, for example /var/lib/dpkg/lock-frontend")] string path,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (!Path.IsPathRooted(path))
+        {
+            throw new ArgumentException("Give a full path, for example /var/lib/dpkg/lock-frontend.", nameof(path));
+        }
+
+        var query = locks.Query(Path.GetFullPath(path), cancellationToken);
+        return new WhoLocksPathResult(RenderLockSummary(query), query.Path, query.Holders, query.Exhaustive, query.Limitations);
+    }
+
+    internal static string RenderLockSummary(LockQuery query)
+    {
+        var builder = new StringBuilder();
+        foreach (var limitation in query.Limitations)
+        {
+            builder.Append("WARNING: ").AppendLine(limitation);
+        }
+
+        if (!query.PathExists)
+        {
+            return builder.Append(query.Path).Append(" does not exist, so nothing can hold it. Check the path.").ToString();
+        }
+
+        if (query.Holders.Count == 0)
+        {
+            builder.Append("No process holds ").Append(query.Path).Append(" open or locked.");
+            builder.Append(query.Exhaustive
+                ? " This is exhaustive: every process was checked."
+                : " This is not exhaustive; see the warnings above.");
+            return builder.ToString();
+        }
+
+        builder.Append(query.Holders.Count).Append(query.Holders.Count == 1 ? " holder of " : " holders of ")
+            .Append(query.Path).AppendLine(":");
+        foreach (var holder in query.Holders)
+        {
+            builder.Append("- ").Append(holder.ProcessName).Append(" (PID ").Append(holder.ProcessId).Append("): ")
+                .Append(holder.Kind);
+            if (holder.Access is not null)
+            {
+                builder.Append(' ').Append(holder.Access);
+            }
+
+            if (holder.Waiting)
+            {
+                builder.Append(" - WAITING for the lock, not holding it");
+            }
+
+            if (!holder.Confirmed)
+            {
+                builder.Append(" - named by /proc/locks only, not confirmed through its open files");
+            }
+
+            if (!holder.StillRunning)
+            {
+                builder.Append(" (no longer running; do not act on this PID)");
+            }
+
+            builder.AppendLine();
+        }
+
+        if (!query.Exhaustive)
+        {
+            builder.Append("Coverage is partial, so there may be holders this could not see.");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+}

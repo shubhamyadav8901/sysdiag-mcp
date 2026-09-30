@@ -33,6 +33,27 @@ public sealed class HandleTools(IHandleInspector handles)
         CancellationToken cancellationToken = default) =>
         ToResult(handles.ForProcess(processId, includeAllObjectTypes, cancellationToken));
 
+    [McpServerTool(
+        Name = "path_handle_search",
+        Title = "Exhaustive handle search",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Search every process's open files and memory-mapped files for names containing the given text. Give a " +
+        "full path and it also matches the same file under any other name - a hard link, a rename after opening, " +
+        "or the path a container's process knows it by. Use it as the follow-up when who_locks_path does not " +
+        "explain a problem, or to find everything touching a directory. Complete only when the server runs as " +
+        "root. By default it searches file references; set includeAllObjectTypes to also search sockets, pipes and " +
+        "anonymous inodes by their descriptor text.")]
+    public PathHandleSearchResult PathHandleSearch(
+        [Description("Text to match anywhere in the open file's name, for example a full path, a file name or a directory")] string nameFragment,
+        [Description("Also search sockets, pipes and anonymous inodes, not just files. Slower on a busy host.")] bool includeAllObjectTypes = false,
+        CancellationToken cancellationToken = default) =>
+        ToResult(handles.Search(nameFragment, includeAllObjectTypes, cancellationToken));
+
     internal static PathHandleSearchResult ToResult(HandleSearch search) =>
         new(RenderHandleSummary(search), search.Query, search.Entries, search.Elevated, search.Truncated,
             search.TotalMatched, search.UnreadableProcesses);

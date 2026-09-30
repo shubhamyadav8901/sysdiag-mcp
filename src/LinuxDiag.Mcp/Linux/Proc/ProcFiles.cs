@@ -18,6 +18,7 @@ public static class ProcFiles
     public const string KernelRelease = "/proc/sys/kernel/osrelease";
     public const string KernelStat = "/proc/stat";
     public const string ProcRoot = "/proc";
+    public const string Locks = "/proc/locks";
 
     public static string Read(string path) => File.ReadAllText(path);
 

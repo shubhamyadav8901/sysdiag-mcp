@@ -42,6 +42,14 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "/proc/<pid>/maps",
                 null,
                 "cannot read the memory map of processes owned by other users"),
+            ["path_handle_search"] = new(
+                "/proc/<pid>/fd and maps across every process, and statx identity for a full path",
+                null,
+                "returns a partial list, silently omitting files held by processes owned by other users"),
+            ["who_locks_path"] = new(
+                "statx identity against every /proc/<pid>/fd, fdinfo lock lines and /proc/locks",
+                null,
+                "cannot see files held by processes owned by other users, so it never reports Exhaustive"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

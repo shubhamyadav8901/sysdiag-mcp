@@ -279,6 +279,122 @@
     }
   },
   {
+    "name": "path_handle_search",
+    "title": "Exhaustive handle search",
+    "description": "Search every process\u0027s open files and memory-mapped files for names containing the given text. Give a full path and it also matches the same file under any other name - a hard link, a rename after opening, or the path a container\u0027s process knows it by. Use it as the follow-up when who_locks_path does not explain a problem, or to find everything touching a directory. Complete only when the server runs as root. By default it searches file references; set includeAllObjectTypes to also search sockets, pipes and anonymous inodes by their descriptor text.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFragment": {
+          "description": "Text to match anywhere in the open file\u0027s name, for example a full path, a file name or a directory",
+          "type": "string"
+        },
+        "includeAllObjectTypes": {
+          "description": "Also search sockets, pipes and anonymous inodes, not just files. Slower on a busy host.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "nameFragment"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processName": {
+                "type": "string"
+              },
+              "processId": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "userId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "handleValue": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "access": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "otherMountNamespace": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "processName",
+              "processId",
+              "type",
+              "user",
+              "userId",
+              "handleValue",
+              "name",
+              "access",
+              "otherMountNamespace"
+            ]
+          }
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "unreadableProcesses": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "handles",
+        "elevated",
+        "truncated",
+        "totalMatched",
+        "unreadableProcesses"
+      ]
+    },
+    "annotations": {
+      "title": "Exhaustive handle search",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "process_handles",
     "title": "Everything one process has open",
     "description": "List everything one process has open - files, directories, devices, sockets, pipes and anonymous inodes (eventfd, epoll, inotify) - plus the files it has memory-mapped, each with how it was opened: read, write or read-write. Use it to answer what a process is actually touching: which log it is writing, which deleted file it is keeping alive, how many sockets it holds. Scoped to one process, so it is far cheaper than path_handle_search, which walks every process.",
@@ -1100,6 +1216,119 @@
       "idempotentHint": false,
       "openWorldHint": true,
       "readOnlyHint": false
+    }
+  },
+  {
+    "name": "who_locks_path",
+    "title": "Who holds or locks this path",
+    "description": "Find which processes hold a file or directory open or locked. Every process\u0027s open files are compared by device and inode, so a hard link, a rename or a container\u0027s own path still matches, and each holder is shown with how it opened the file and any flock, POSIX lock, open-file-description lock or lease it holds on it - plus processes blocked waiting for such a lock, and processes running the file, mapping it, or using it as their working or root directory. Use it for \u0027text file busy\u0027, a lock file an agent will not release, or a package manager waiting on a lock. It reports Exhaustive only when the server runs as root and could read every process.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path to the file or directory, for example /var/lib/dpkg/lock-frontend",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "holders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processId": {
+                "type": "integer"
+              },
+              "processName": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "Open",
+                  "Flock",
+                  "Posix",
+                  "OpenFileDescription",
+                  "Lease",
+                  "Delegation",
+                  "Executing",
+                  "Mapped",
+                  "WorkingDirectory",
+                  "RootDirectory",
+                  "Other"
+                ]
+              },
+              "access": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "waiting": {
+                "type": "boolean"
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "stillRunning": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "processId",
+              "processName",
+              "kind",
+              "access",
+              "waiting",
+              "confirmed",
+              "startedAt",
+              "stillRunning"
+            ]
+          }
+        },
+        "exhaustive": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "path",
+        "holders",
+        "exhaustive",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Who holds or locks this path",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
     }
   }
 ]

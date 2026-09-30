@@ -1,6 +1,7 @@
 using System.Globalization;
 using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics.Processes;
+using LinuxDiag.Mcp.Linux.Native;
 using LinuxDiag.Mcp.Linux.Parsers;
 using LinuxDiag.Mcp.Linux.Proc;
 
@@ -61,12 +62,12 @@ public sealed class LinuxHandleInspector(IProcessTable processes, IPrivilegeProb
 
     internal static bool IsFileReference(string type) => type is "File" or "Directory" or "Mapped";
 
-    /// <summary>The descriptor's kind, telling a directory from a file by following the link.</summary>
+    /// <summary>The descriptor's kind, telling a directory from a file by the open file's own mode.</summary>
     internal static string Classify(int pid, int fd, string target)
     {
         var kind = DescriptorTarget.Kind(target);
-        return kind == "File" && !DescriptorTarget.IsDeleted(target) &&
-               Directory.Exists(ProcFiles.Of(pid, "fd/" + fd.ToString(CultureInfo.InvariantCulture)))
+        return kind == "File" && !DescriptorTarget.IsDeleted(target) && LibC.Supported &&
+               TryIdentify(ProcFiles.Of(pid, "fd/" + fd.ToString(CultureInfo.InvariantCulture))) is { IsDirectory: true }
             ? "Directory"
             : kind;
     }
@@ -131,5 +132,62 @@ public sealed class LinuxHandleInspector(IProcessTable processes, IPrivilegeProb
             : ProcMaps.Files(ProcMaps.Parse(maps)).Select(file => Entry(
                 process, "Mapped", "mmap", file.Deleted ? file.Path + DescriptorTarget.DeletedSuffix : file.Path,
                 file.Writable ? "read-write" : "read", context));
+    }
+
+    public HandleSearch Search(string nameFragment, bool includeAllObjectTypes, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(nameFragment);
+
+        var table = processes.Read(cancellationToken);
+        var walk = DescriptorWalk.All(table, cancellationToken);
+        var context = ContextFor(table);
+
+        // An existing path is also matched by what it is, not only by how it is spelled: a container's
+        // process names the same file by its own mount namespace's path, and a hard link or a rename gives
+        // it another name entirely.
+        var identity = Path.IsPathRooted(nameFragment) && LibC.Supported ? TryIdentify(nameFragment) : null;
+
+        var entries = new List<HandleEntry>();
+        foreach (var descriptor in walk.Descriptors)
+        {
+            var isFile = DescriptorTarget.Kind(descriptor.Target) == "File";
+            if (!includeAllObjectTypes && !isFile)
+            {
+                continue;
+            }
+
+            var matches = descriptor.Target.Contains(nameFragment, StringComparison.OrdinalIgnoreCase) ||
+                          (identity is not null && isFile && TryIdentify(descriptor.LinkPath) == identity);
+            if (matches)
+            {
+                var pid = descriptor.Process.ProcessId;
+                entries.Add(Entry(
+                    descriptor.Process, Classify(pid, descriptor.Descriptor, descriptor.Target),
+                    descriptor.Descriptor.ToString(CultureInfo.InvariantCulture), descriptor.Target,
+                    AccessOf(pid, descriptor.Descriptor), context));
+            }
+        }
+
+        foreach (var process in table.Processes.Where(p => !p.KernelThread))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            entries.AddRange(Mapped(process, context)
+                .Where(e => e.Name.Contains(nameFragment, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        var ordered = entries.OrderBy(e => e.ProcessName, StringComparer.Ordinal).ThenBy(e => e.ProcessId).ToList();
+        return Capped(nameFragment, ordered, walk.UnreadableProcesses, includeAllObjectTypes, processScoped: false);
+    }
+
+    internal static FileIdentity? TryIdentify(string path)
+    {
+        try
+        {
+            return LibC.Identify(path);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
     }
 }

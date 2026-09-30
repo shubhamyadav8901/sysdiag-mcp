@@ -15,6 +15,8 @@ public sealed record HandleSearch(
 public interface IHandleInspector
 {
     HandleSearch ForProcess(int processId, bool includeAllObjectTypes, CancellationToken cancellationToken);
+
+    HandleSearch Search(string nameFragment, bool includeAllObjectTypes, CancellationToken cancellationToken);
 }
 
 public sealed class HandleQueryException : Exception, IDiagnosticException
