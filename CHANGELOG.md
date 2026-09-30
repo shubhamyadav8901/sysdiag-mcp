@@ -13,6 +13,8 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-01
+
 ### Removed
 
 - **BREAKING: `WinDiag.Mcp.exe --relay`.** The relay is now its own executable, `DiagRelay.Mcp`,
@@ -20,7 +22,7 @@ release fixed something that had been silently wrong, it says what the wrong ans
   naming the new executable, rather than falling through to stdio mode and silently serving this
   machine's own tools in the fleet's place. To move over, point your MCP registration at
   `DiagRelay.Mcp` and keep its name — every forwarded tool name stays the same. Because this removes a
-  documented interface, the next release is **2.0.0**, not a minor bump.
+  documented interface, this release is **2.0.0**, not a minor bump.
 
 ### Added
 
@@ -385,7 +387,8 @@ The full tool surface, verified on both bitnesses.
   without being started. Both transports, stdio locally and authenticated Streamable HTTP on a
   target.
 
-[Unreleased]: https://example.internal/windiag/compare/v1.3.0...HEAD
+[Unreleased]: https://example.internal/windiag/compare/v2.0.0...HEAD
+[2.0.0]: https://example.internal/windiag/compare/v1.3.0...v2.0.0
 [1.3.0]: https://example.internal/windiag/compare/v1.2.1...v1.3.0
 [1.2.1]: https://example.internal/windiag/compare/v1.2.0...v1.2.1
 [1.2.0]: https://example.internal/windiag/compare/v1.1.0...v1.2.0

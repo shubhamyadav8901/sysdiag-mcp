@@ -15,7 +15,7 @@ process; this server sees the machine.
 
 ## Status
 
-**Current release: `v1.3.0`.** Versions before `v1.0.0` were tagged retroactively at the commits
+**Current release: `v2.0.0`.** Versions before `v1.0.0` were tagged retroactively at the commits
 that shipped something; `v1.0.0` is the first release in which every tool could actually be called
 from an MCP client. See the [changelog](CHANGELOG.md) for what each one changed.
 
