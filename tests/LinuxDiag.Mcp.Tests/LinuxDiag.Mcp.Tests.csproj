@@ -33,6 +33,7 @@
     <Using Include="Diag.Mcp.Core" />
     <Using Include="Diag.Mcp.Server" />
     <Using Include="Diag.Mcp.Server.Capabilities" />
+    <Using Include="Diag.Mcp.Server.External" />
     <Using Include="Diag.Mcp.Server.Tests" />
     <Using Include="DiagRelay.Mcp.Tests" />
   </ItemGroup>

@@ -35,6 +35,7 @@
     <Using Include="Diag.Mcp.Core" />
     <Using Include="Diag.Mcp.Server" />
     <Using Include="Diag.Mcp.Server.Capabilities" />
+    <Using Include="Diag.Mcp.Server.External" />
   </ItemGroup>
 
   <ItemGroup>
