@@ -15,9 +15,18 @@ namespace Diag.Mcp.Server.Files;
 /// <c>[DefaultDllImportSearchPaths]</c> without <c>AssemblyDirectory</c> looks like the fix and is not:
 /// the runtime tries the host's native search directories before it consults that attribute, and for
 /// this app they are the application directory. A resolver runs ahead of every probe, and
-/// <see cref="NativeLibrary.Load(string)"/> with a bare file name is a plain <c>dlopen</c>, which
-/// searches only the system paths. The name is glibc's soname: a linux-x64 build targets glibc, which is
-/// the only place <see cref="LinuxNoFollow"/> is used.
+/// <see cref="NativeLibrary.Load(string)"/> with a bare file name is a plain <c>dlopen</c>. That is not
+/// "only the system paths": the host's RUNPATH, <c>$ORIGIN/netcoredeps</c>, is searched first. What
+/// makes <c>libc.so.6</c> safe is that it is already mapped -- it is the host's own NEEDED dependency --
+/// and <c>dlopen</c> matches an already-loaded object by soname before it searches anything. The name is
+/// glibc's soname: a linux-x64 build targets glibc, which is the only place <see cref="LinuxNoFollow"/>
+/// is used.
+/// </para>
+/// <para>
+/// A future import of a library the host has <em>not</em> already mapped gets no such shortcut. It is
+/// protected only by the server-directory gate in <see cref="FileReceiver"/> keeping
+/// <c>netcoredeps</c> unwritable without the self-update grant; better, load it by its absolute system
+/// path.
 /// </para>
 /// <para>
 /// The resolver is registered once per assembly, and a second registration throws, so it is registered
