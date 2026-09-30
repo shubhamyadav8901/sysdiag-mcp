@@ -35,8 +35,7 @@ public static class LinuxServiceInstaller
         WriteOwnerOnly(options.EnvironmentFilePath, options.EnvironmentFile());
         Directory.CreateDirectory(options.ArtifactDirectory ?? LinuxDiagOptions.DefaultArtifactDirectory, OwnerOnlyDirectory);
 
-        File.WriteAllText(options.UnitFilePath, options.UnitFile(InstalledExecutable));
-        File.SetUnixFileMode(options.UnitFilePath, OwnerOnlyFile | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        WriteFresh(options.UnitFilePath, options.UnitFile(InstalledExecutable), UnitFileMode);
 
         foreach (var command in StartCommands(options.Name))
         {
@@ -77,28 +76,41 @@ public static class LinuxServiceInstaller
     /// <summary>How the service is brought up, each step's exit code checked.</summary>
     /// <remarks>
     /// Not `enable --now`: measured on Ubuntu 24.04, it exits 0 even when the start fails or the unit
-    /// never becomes ready, so the installer announced a running service that was not. A plain start
+    /// never becomes ready, so the installer announced a running service that was not. A plain (re)start
     /// waits for Type=notify readiness and reports its failure; is-active then catches a process that
-    /// exited after starting.
+    /// exited after starting. restart rather than start, because start on a service that is already
+    /// running is a no-op that exits 0: a re-install that changed grants, bind or token would otherwise
+    /// leave the old process serving the old configuration.
     /// </remarks>
     internal static IReadOnlyList<string[]> StartCommands(string name) =>
     [
         ["daemon-reload"],
         ["enable", name],
-        ["start", name],
+        ["restart", name],
         ["is-active", "--quiet", name]
     ];
 
     internal static bool NeedsCopy(string source, string destination) =>
         !string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.Ordinal);
 
+    /// <summary>The unit file's mode: root writes it, systemd and everyone else read it.</summary>
+    internal const UnixFileMode UnitFileMode = OwnerOnlyFile | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
+
     /// <summary>Replaces a file with one created 0600, so it never inherits a looser mode.</summary>
-    internal static void WriteOwnerOnly(string path, string text)
+    internal static void WriteOwnerOnly(string path, string text) => WriteFresh(path, text, OwnerOnlyFile);
+
+    /// <summary>Replaces whatever is at the path with a new file of exactly this mode.</summary>
+    /// <remarks>
+    /// Deleted first, then created with CreateNew: an existing file's looser mode is never inherited, and
+    /// a link at the path -- `systemctl mask` leaves the unit path as one to /dev/null -- is replaced
+    /// rather than written through.
+    /// </remarks>
+    internal static void WriteFresh(string path, string text, UnixFileMode mode)
     {
         File.Delete(path);
         using var stream = new FileStream(path, new FileStreamOptions
         {
-            Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, UnixCreateMode = OwnerOnlyFile
+            Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, UnixCreateMode = mode
         });
         using var writer = new StreamWriter(stream);
         writer.Write(text);

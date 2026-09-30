@@ -85,8 +85,36 @@ public sealed class InstallTests
         // a process that exits after forking.
         var commands = LinuxServiceInstaller.StartCommands("linuxdiag").Select(c => string.Join(' ', c)).ToList();
 
-        Assert.Equal(["daemon-reload", "enable linuxdiag", "start linuxdiag", "is-active --quiet linuxdiag"], commands);
+        // restart, not start: on a service that is already running, start is a no-op that exits 0, so a
+        // re-install to change grants, bind or token would change nothing that is running.
+        Assert.Equal(["daemon-reload", "enable linuxdiag", "restart linuxdiag", "is-active --quiet linuxdiag"], commands);
         Assert.DoesNotContain(commands, c => c.Contains("--now", StringComparison.Ordinal));
+    }
+
+    [LinuxFact]
+    public void The_unit_file_replaces_a_link_at_its_path_rather_than_writing_through_it()
+    {
+        // `systemctl mask` leaves the unit path as a link to /dev/null. Writing through it would change
+        // the link's target -- as root -- instead of installing the unit.
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-unit-{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var target = Path.Combine(dir, "elsewhere");
+            File.WriteAllText(target, "untouched");
+            var unit = Path.Combine(dir, "linuxdiag.service");
+            File.CreateSymbolicLink(unit, target);
+
+            LinuxServiceInstaller.WriteFresh(unit, "[Unit]\n", LinuxServiceInstaller.UnitFileMode);
+
+            Assert.Null(new FileInfo(unit).LinkTarget);
+            Assert.Equal("[Unit]\n", File.ReadAllText(unit));
+            Assert.Equal(LinuxServiceInstaller.UnitFileMode, File.GetUnixFileMode(unit));
+            Assert.Equal("untouched", File.ReadAllText(target));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     [LinuxFact]

@@ -31,6 +31,35 @@ public sealed class SystemOverviewTests
         Assert.Contains("size unknown", summary, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void A_mount_whose_size_never_comes_back_is_reported_unknown_instead_of_hanging_the_call()
+    {
+        // statvfs on a hard NFS mount whose server has gone blocks rather than failing. Waited on
+        // inline, system_overview would never return -- and update_self waits for in-flight calls.
+        using var never = new ManualResetEventSlim(false);
+        var mounts = new[]
+        {
+            new LinuxDiag.Mcp.Linux.Parsers.MountEntry("srv:/x", "/mnt/hung", "nfs4", false),
+            new LinuxDiag.Mcp.Linux.Parsers.MountEntry("/dev/sda1", "/", "ext4", false),
+        };
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var filesystems = LinuxSystemInspector.Filesystems(
+                mounts,
+                mountPoint => { if (mountPoint == "/mnt/hung") { never.Wait(); } return (100, 40); },
+                TimeSpan.FromMilliseconds(200));
+
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"took {watch.Elapsed}");
+            Assert.Equal(0, filesystems.Single(f => f.MountPoint == "/mnt/hung").TotalBytes);
+            Assert.Equal(100, filesystems.Single(f => f.MountPoint == "/").TotalBytes);
+        }
+        finally
+        {
+            never.Set();
+        }
+    }
+
     [LinuxFact]
     public void The_live_overview_describes_this_machine()
     {
