@@ -40,6 +40,16 @@ public sealed class InstallTests
     }
 
     [Fact]
+    public void A_token_on_both_stdin_and_the_command_line_is_refused_rather_than_one_silently_winning()
+    {
+        var ex = Assert.Throws<ConfigurationException>(() => LinuxServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://0.0.0.0:4024", "--token-stdin", "--token", "other"],
+            new StringReader("t0k\n")));
+
+        Assert.Contains("--token-stdin", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_env_file_carries_the_token_bind_service_name_and_only_granted_grants()
     {
         var options = LinuxServiceInstallOptions.Parse(
