@@ -22,6 +22,24 @@ public sealed class InstallTests
     }
 
     [Fact]
+    public void A_token_can_arrive_on_stdin_instead_of_the_command_line()
+    {
+        // A value on the command line is logged by sudo and visible in ps; stdin is neither.
+        var options = LinuxServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://0.0.0.0:4024", "--token-stdin"], new StringReader("  t0k  \nignored\n"));
+
+        Assert.Equal("t0k", options.Token);
+        Assert.True(options.TokenWasSupplied);
+    }
+
+    [Fact]
+    public void An_empty_token_on_stdin_is_refused()
+    {
+        Assert.Throws<ConfigurationException>(() => LinuxServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://0.0.0.0:4024", "--token-stdin"], new StringReader("\n")));
+    }
+
+    [Fact]
     public void The_env_file_carries_the_token_bind_service_name_and_only_granted_grants()
     {
         var options = LinuxServiceInstallOptions.Parse(

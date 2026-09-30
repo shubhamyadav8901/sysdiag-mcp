@@ -26,13 +26,14 @@ public static class ServerBuilder
           LinuxDiag.Mcp --help                   this text
 
         Service management (root; systemd):
-          LinuxDiag.Mcp --install-service --http <url> [--token <t>] [--service-name <n>] [--artifacts <dir>]
+          LinuxDiag.Mcp --install-service --http <url> [--token-stdin | --token <t>] [--service-name <n>] [--artifacts <dir>]
                         [--allow-self-update] [--allow-command-execution] [--allow-arbitrary-write]
                         [--allow-arbitrary-read] [--read-only] [--no-restart-on-failure]
           LinuxDiag.Mcp --uninstall-service [--service-name <n>]
           LinuxDiag.Mcp --service-status [--service-name <n>]
         Installs /opt/linuxdiag/LinuxDiag.Mcp, /etc/linuxdiag/<n>.env (0600: token and grants),
         /var/lib/linuxdiag (0700) and /etc/systemd/system/<n>.service, then enables and starts it.
+        --token-stdin reads the token from standard input, keeping it out of sudo's log and ps.
 
         Configuration (environment):
           LINUXDIAG_HTTP_BIND                    address to serve on when --http has none

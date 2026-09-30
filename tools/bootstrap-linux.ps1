@@ -57,8 +57,10 @@ $sha = (Get-FileHash -Algorithm SHA256 $local).Hash.ToLowerInvariant()
 $remote = "$User@$Target"
 $identity = if ($IdentityFile) { @('-i', (Resolve-Path $IdentityFile).Path) } else { @() }
 
+# Every argument is single-quoted for the remote shell below, so none may contain a quote.
+if ($Bind.Contains("'")) { throw "-Bind may not contain a single quote." }
 $installArgs = @('--install-service', '--http', $Bind)
-if ($Token) { $installArgs += @('--token', $Token) }
+if ($Token) { $installArgs += '--token-stdin' }
 switch ($Grants) {
     'Standard' { $installArgs += @('--allow-self-update', '--allow-command-execution') }
     'All'      { $installArgs += @('--allow-self-update', '--allow-command-execution', '--allow-arbitrary-write', '--allow-arbitrary-read') }
@@ -68,10 +70,20 @@ switch ($Grants) {
 Write-Host "==> copying $local to $remote"
 Invoke-Native { scp @identity -P $SshPort $local "${remote}:LinuxDiag.Mcp" }
 
+# A pinned token travels over SSH's stdin into an owner-only file, never on a command line: sudo logs
+# its command line and ps shows it. A separate session because the install session's terminal belongs
+# to sudo's password prompt.
+if ($Token) {
+    Write-Host "==> sending the token"
+    Invoke-Native { $Token | ssh @identity -p $SshPort $remote "umask 077 && cat > ~/.linuxdiag-token" }
+}
+
 # One remote command: verify, then install, then remove the copy -- which runs whatever the install
 # returned, so a failed install still leaves nothing behind. sudo is skipped when already root.
 $sudo = if ($User -eq 'root') { '' } else { 'sudo ' }
-$command = "echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo}~/LinuxDiag.Mcp $($installArgs -join ' ') ; rc=`$?; rm -f ~/LinuxDiag.Mcp; exit `$rc"
+$quoted = ($installArgs | ForEach-Object { "'$_'" }) -join ' '
+$tokenInput = if ($Token) { ' < ~/.linuxdiag-token' } else { '' }
+$command = "echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo}~/LinuxDiag.Mcp $quoted$tokenInput ; rc=`$?; rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token; exit `$rc"
 Write-Host "==> installing on $Target ($Grants grants)"
 Invoke-Native { ssh @identity -t -p $SshPort $remote $command }
 

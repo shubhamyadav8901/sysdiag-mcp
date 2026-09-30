@@ -45,8 +45,10 @@ else
   sha=$(shasum -a 256 "$binary" | cut -d' ' -f1)   # macOS
 fi
 
+# Every argument is single-quoted for the remote shell below, so none may contain a quote.
+case "$bind" in *\'*) echo "-b may not contain a single quote" >&2; exit 2 ;; esac
 install_args=(--install-service --http "$bind")
-[ -n "$token" ] && install_args+=(--token "$token")
+[ -n "$token" ] && install_args+=(--token-stdin)
 case "$grants" in
   Standard) install_args+=(--allow-self-update --allow-command-execution) ;;
   All)      install_args+=(--allow-self-update --allow-command-execution --allow-arbitrary-write --allow-arbitrary-read) ;;
@@ -65,8 +67,19 @@ sudo_prefix='sudo '
 echo "==> copying $binary to $user@$target"
 scp ${ssh_opts[@]+"${ssh_opts[@]}"} -P "$port" "$binary" "$user@$target:LinuxDiag.Mcp"
 
+# A pinned token travels over SSH's stdin into an owner-only file, never on a command line: sudo logs
+# its command line and ps shows it. A separate session because the install session's terminal belongs
+# to sudo's password prompt.
+token_input=''
+if [ -n "$token" ]; then
+  echo "==> sending the token"
+  printf '%s\n' "$token" | ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -p "$port" "$user@$target" 'umask 077 && cat > ~/.linuxdiag-token'
+  token_input=' < ~/.linuxdiag-token'
+fi
+
 # One remote command: verify, install, then remove the copy whatever the install returned.
-remote="echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo_prefix}~/LinuxDiag.Mcp ${install_args[*]} ; rc=\$?; rm -f ~/LinuxDiag.Mcp; exit \$rc"
+quoted=$(printf "'%s' " "${install_args[@]}")
+remote="echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo_prefix}~/LinuxDiag.Mcp ${quoted}${token_input} ; rc=\$?; rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token; exit \$rc"
 echo "==> installing on $target ($grants grants)"
 ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -t -p "$port" "$user@$target" "$remote"
 

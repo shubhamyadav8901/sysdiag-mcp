@@ -36,7 +36,10 @@ public sealed record LinuxServiceInstallOptions
 
     public string UnitFilePath => $"/etc/systemd/system/{Name}.service";
 
-    public static LinuxServiceInstallOptions Parse(IReadOnlyList<string> args)
+    public static LinuxServiceInstallOptions Parse(IReadOnlyList<string> args) => Parse(args, stdin: null);
+
+    /// <param name="stdin">Where --token-stdin reads the token from; the process's standard input when null.</param>
+    public static LinuxServiceInstallOptions Parse(IReadOnlyList<string> args, TextReader? stdin)
     {
         ArgumentNullException.ThrowIfNull(args);
 
@@ -65,7 +68,8 @@ public sealed record LinuxServiceInstallOptions
         HttpBind.Resolve(["--http", bind], null, "LINUXDIAG_HTTP_BIND");
 
         var name = ServiceName(args);
-        var supplied = Value("--token");
+        // --token-stdin keeps a pinned token out of the command line, where sudo logs it and ps shows it.
+        var supplied = Flag("--token-stdin") ? ReadToken(stdin ?? Console.In) : Value("--token");
         return new LinuxServiceInstallOptions
         {
             Name = name,
@@ -80,6 +84,14 @@ public sealed record LinuxServiceInstallOptions
             ReadOnly = Flag("--read-only"),
             RestartOnFailure = !Flag("--no-restart-on-failure")
         };
+    }
+
+    private static string ReadToken(TextReader reader)
+    {
+        var token = reader.ReadLine()?.Trim();
+        return string.IsNullOrEmpty(token)
+            ? throw new ConfigurationException("--token-stdin was given but standard input held no token.")
+            : token;
     }
 
     /// <summary>The --service-name value, or the default, refused if it could escape the paths it names.</summary>

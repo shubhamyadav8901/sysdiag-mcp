@@ -307,8 +307,10 @@ dotnet publish src/LinuxDiag.Mcp -c Release -r linux-x64 --self-contained -p:Pub
 ```
 
 (`tools/bootstrap-linux.sh` is the same for a Linux or macOS operator; it is the one verified against a
-live host so far -- the `.ps1` has not yet been run end to end.) Prefer letting the installer generate
-the token, as above: a token passed with `-Token` reaches the remote command line, where sudo logs it. The script copies the binary into
+live host so far -- the `.ps1` has not yet been run end to end.) A token given with `-Token` is sent
+over the SSH connection's standard input into a `0600` file that the install reads with `--token-stdin`
+and then removes, so it never appears on a command line; leave `-Token` out and the installer generates
+one and prints it once. The script copies the binary into
 the SSH user's home directory -- not the shared `/tmp`, where another account could swap it -- checks its
 hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the same presets as
 `bootstrap-target.ps1`. That installs:
