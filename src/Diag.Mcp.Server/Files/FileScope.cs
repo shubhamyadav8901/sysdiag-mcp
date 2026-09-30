@@ -43,10 +43,14 @@ internal static class FileScope
     /// directory, or above it (<c>/opt</c>, <c>/</c>), exempts nothing: counting "under the artifacts" as
     /// the exemption there made the server's own binary writable with no grant at all.</para>
     /// </remarks>
+    /// <param name="replacesFinalLink">
+    /// The operation replaces a link at the last component instead of following it, so it is judged at
+    /// the link's own location: see <see cref="LandingPath"/>.
+    /// </param>
     internal static (WriteScope Scope, bool InServerDirectory) Classify(
-        string fullPath, FileTransferOptions options, string serverDirectory)
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink = false)
     {
-        var real = RealPath(fullPath);
+        var real = LandingPath(fullPath, replacesFinalLink);
         var server = RealPath(serverDirectory);
         var artifacts = RealPath(options.ArtifactDirectory);
         var inServer = IsUnder(real, server);
@@ -54,6 +58,23 @@ internal static class FileScope
         var artifactsNestedInServer = IsUnder(artifacts, server) && !IsUnder(server, artifacts);
         return (inServer || inArtifacts ? WriteScope.WinDiag : WriteScope.Arbitrary,
             inServer && !(inArtifacts && artifactsNestedInServer));
+    }
+
+    /// <summary>The real path an operation on <paramref name="fullPath"/> touches.</summary>
+    /// <remarks>
+    /// A read, an append and a Windows write follow a link at the last component, so they touch its
+    /// target. A Unix write unlinks the destination and creates a new file in its place, so a link
+    /// there is replaced where it sits: only the parent directories are followed, and the name is kept
+    /// as spelled. Judging that write at the link's target let <c>/tmp/x -&gt; /var/lib/linuxdiag/x</c>
+    /// pass as owned while root created <c>/tmp/x</c>.
+    /// </remarks>
+    internal static string LandingPath(string fullPath, bool replacesFinalLink)
+    {
+        var name = Path.GetFileName(fullPath);
+        var parent = Path.GetDirectoryName(fullPath);
+        return replacesFinalLink && !string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(parent)
+            ? Path.Combine(RealPath(parent), name)
+            : RealPath(fullPath);
     }
 
     /// <summary>How many links one resolution may follow before it is called a loop: the kernel's own limit.</summary>

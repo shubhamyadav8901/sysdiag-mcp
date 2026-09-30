@@ -179,14 +179,34 @@ public sealed class ServerDirectoryWriteTests : IDisposable
     [UnixFact]
     public void A_link_in_the_artifact_directory_into_the_server_directory_is_refused_without_the_grant()
     {
-        // Judged where the write really lands: a link planted among the artifacts must not carry a
-        // write into the server's folder while the path still looks like an artifact.
+        // Judged where the write really lands: a link among the parent directories is followed by the
+        // write, so one planted among the artifacts must not carry it into the server's folder while the
+        // path still looks like an artifact. (A link as the last component is replaced, not followed --
+        // A_link_in_the_server_directory_to_an_artifact_is_refused_without_the_grant covers that.)
         Directory.CreateSymbolicLink(Path.Combine(_artifactDir, "bin"), _serverDir);
 
         Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: false).Receive(
             Put(Path.Combine(_artifactDir, "bin", "LinuxDiag.Mcp.new")), CancellationToken.None));
 
         Assert.False(File.Exists(Path.Combine(_serverDir, "LinuxDiag.Mcp.new")));
+    }
+
+    [UnixFact]
+    public void A_link_in_the_server_directory_to_an_artifact_is_refused_without_the_grant()
+    {
+        // The write replaces the link, so it lands in the server's folder whatever the link points at.
+        // The gate must judge that path, not the artifact the link names, or a planted link would open
+        // the folder the gate reserves.
+        var artifact = Path.Combine(_artifactDir, "input.bin");
+        File.WriteAllBytes(artifact, [9]);
+        var link = Path.Combine(_serverDir, "libplanted.so");
+        File.CreateSymbolicLink(link, artifact);
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: false).Receive(
+            new FileWriteRequest(link, [1], Overwrite: true), CancellationToken.None));
+
+        Assert.Contains(SelfUpdateSetting, ex.Message, StringComparison.Ordinal);
+        Assert.Equal(artifact, new FileInfo(link).LinkTarget);
     }
 
     [UnixFact]

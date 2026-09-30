@@ -19,8 +19,10 @@ namespace Diag.Mcp.Server.Files;
 /// as the server's account, one step from code execution, and is refused unless explicitly enabled.
 /// A server may also close its own folder unless its self-update grant is on
 /// (<see cref="FileTransferOptions.ServerDirectoryWritable"/>): LinuxDiag does, windiag does not.
-/// The path is canonicalised with <see cref="Path.GetFullPath(string)"/> first, so a <c>..</c> that
-/// climbs out of an owned directory is judged by where it actually lands, not by how it was spelled.</para>
+/// The path is canonicalised with <see cref="Path.GetFullPath(string)"/> first, and its links resolved,
+/// so a <c>..</c> or a link that climbs out of an owned directory is judged by where the write actually
+/// lands, not by how it was spelled -- including a link at the last component, which a Unix write
+/// replaces rather than follows (<see cref="FileScope.LandingPath"/>).</para>
 /// </remarks>
 public sealed class FileReceiver : IFileReceiver
 {
@@ -47,7 +49,11 @@ public sealed class FileReceiver : IFileReceiver
         cancellationToken.ThrowIfCancellationRequested();
 
         var full = FileScope.Resolve(request.Path, "destination path");
-        var (scope, inServerDirectory) = FileScope.Classify(full, _options, _serverDirectory);
+
+        // Both answers come from where the bytes will land. Off Windows, Write replaces a link at the
+        // destination rather than following it, so that write is judged at the link, not its target.
+        var replacesFinalLink = !OperatingSystem.IsWindows() && !request.Append;
+        var (scope, inServerDirectory) = FileScope.Classify(full, _options, _serverDirectory, replacesFinalLink);
 
         if (scope == WriteScope.Arbitrary && !_options.AllowArbitraryWrite)
         {
@@ -148,7 +154,9 @@ public sealed class FileReceiver : IFileReceiver
             // Cleared first: deleting a link removes the link, not what it points at. Recreated with
             // CreateNew, which is O_EXCL -- it cannot follow a link and fails if one reappears -- and born
             // 0600, so a file replacing a loose one never inherits its mode. The same pattern as the
-            // relay's partial files, for the same reason: this process may be root.
+            // relay's partial files, for the same reason: this process may be root. Because a link here
+            // is replaced where it sits, Receive judges this write at the link, not at its target; the
+            // two must change together.
             File.Delete(fullPath);
             using var stream = new FileStream(fullPath, new FileStreamOptions
             {

@@ -67,6 +67,43 @@ public sealed class FileReceiverTests : IDisposable
     }
 
     [UnixFact]
+    public void A_link_outside_as_the_final_component_is_refused_even_when_it_points_into_an_owned_directory()
+    {
+        // Off Windows a write unlinks the destination and creates a new file there, so a link as the
+        // last component is replaced, not followed: the file lands where the link sits, outside. Judged
+        // at the link's target, the write looked owned, and root created a file anywhere a link was.
+        var owned = Path.Combine(_artifactDir, "owned.bin");
+        File.WriteAllBytes(owned, [9]);
+        var link = Path.Combine(_outsideDir, "bait.bin");
+        File.CreateSymbolicLink(link, owned);
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+            new FileWriteRequest(link, [1], Overwrite: true), CancellationToken.None));
+
+        Assert.Contains("arbitrary write", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(owned, new FileInfo(link).LinkTarget);
+        Assert.Equal([9], File.ReadAllBytes(owned));
+    }
+
+    [UnixFact]
+    public void A_link_inside_as_the_final_component_is_replaced_and_what_it_points_at_is_untouched()
+    {
+        // The other side of the same rule: the write lands at the link, which is owned, so it is allowed
+        // without the grant -- and it replaces the link rather than writing through it.
+        var outside = Path.Combine(_outsideDir, "victim.bin");
+        File.WriteAllBytes(outside, [9]);
+        var link = Path.Combine(_artifactDir, "input.bin");
+        File.CreateSymbolicLink(link, outside);
+
+        var result = Receiver().Receive(new FileWriteRequest(link, [1, 2], Overwrite: true), CancellationToken.None);
+
+        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.Null(new FileInfo(link).LinkTarget);
+        Assert.Equal([1, 2], File.ReadAllBytes(link));
+        Assert.Equal([9], File.ReadAllBytes(outside));
+    }
+
+    [UnixFact]
     public void A_link_whose_target_climbs_with_dotdot_is_judged_where_the_kernel_lands()
     {
         // 'hop' points into the outside directory's child, and 'climb' is 'hop/..'. Collapsed as spelled,
