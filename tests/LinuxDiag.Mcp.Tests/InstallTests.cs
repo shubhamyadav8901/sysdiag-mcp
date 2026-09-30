@@ -68,6 +68,23 @@ public sealed class InstallTests
         Assert.Equal("/etc/systemd/system/linuxdiag.service", options.UnitFilePath);
     }
 
+    [Theory]
+    [InlineData(null, "/var/lib/linuxdiag")]
+    [InlineData("/srv/ld", "/srv/ld")]
+    public void The_unit_points_the_host_at_nothing_put_file_can_write(string? artifacts, string artifactDirectory)
+    {
+        // put_file writes freely under the artifact directory. A bundle-extract directory there -- the
+        // default one, or one --artifacts moved -- would let a caller plant native code the service loads
+        // on its next start.
+        string[] args = artifacts is null
+            ? ["--install-service", "--http", "http://0.0.0.0:4024"]
+            : ["--install-service", "--http", "http://0.0.0.0:4024", "--artifacts", artifacts];
+        var unit = LinuxServiceInstallOptions.Parse(args).UnitFile("/opt/linuxdiag/LinuxDiag.Mcp");
+
+        Assert.DoesNotContain("DOTNET_BUNDLE_EXTRACT_BASE_DIR", unit, StringComparison.Ordinal);
+        Assert.DoesNotContain(artifactDirectory, unit, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void No_restart_on_failure_is_honoured()
     {

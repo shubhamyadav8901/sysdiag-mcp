@@ -164,9 +164,16 @@ public sealed record LinuxServiceInstallOptions
 
     /// <summary>The unit. Deliberately not sandboxed: a diagnostics server must see every process's /proc.</summary>
     /// <remarks>
-    /// DOTNET_BUNDLE_EXTRACT_BASE_DIR is set because a system service has no HOME, and a single-file host
-    /// that ever needs to extract falls back to it; pointing it at the root-only artifact directory means
-    /// that never becomes a start failure.
+    /// <para>No DOTNET_BUNDLE_EXTRACT_BASE_DIR. It once pointed at /var/lib/linuxdiag/.net so a service
+    /// with no HOME could never fail to extract, but that is inside the artifact directory, where put_file
+    /// writes freely: a caller could plant a native library for the service to load on its next start.
+    /// Nothing needs the setting. This build sets neither IncludeNativeLibrariesForSelfExtract nor
+    /// IncludeAllContentForSelfExtract, and the native runtime is linked into the single-file host, so
+    /// nothing is extracted and HOME is never consulted -- the published binary starts with HOME unset and
+    /// leaves an extract directory empty.</para>
+    /// <para>Turning either property on must bring the variable back in the same change, pointed at a
+    /// root-only directory put_file cannot reach (systemd's CacheDirectory= with CacheDirectoryMode=0700),
+    /// never under the artifact directory.</para>
     /// </remarks>
     public string UnitFile(string executable) => $"""
         [Unit]
@@ -177,7 +184,6 @@ public sealed record LinuxServiceInstallOptions
         [Service]
         Type=notify
         EnvironmentFile={EnvironmentFilePath}
-        Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/linuxdiag/.net
         ExecStart={executable}
         Restart={(RestartOnFailure ? "on-failure" : "no")}
         RestartSec=5
