@@ -85,7 +85,8 @@ public sealed class LockTools(ILockInspector locks)
                 builder.Append(" - named by /proc/locks only, not confirmed through its open files");
             }
 
-            if (!holder.StillRunning)
+            // A PID of 0 or -1 names no process, so there is no PID to warn about acting on.
+            if (!holder.StillRunning && holder.ProcessId > 0)
             {
                 builder.Append(" (no longer running; do not act on this PID)");
             }

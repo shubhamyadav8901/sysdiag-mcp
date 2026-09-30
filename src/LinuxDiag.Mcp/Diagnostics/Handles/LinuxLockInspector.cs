@@ -93,7 +93,11 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
             }
         }
 
-        var deviceMismatch = AddFromProcLocks(target, table, fdLocks, holders);
+        var (deviceMismatch, skipped) = AddFromProcLocks(target, table, fdLocks, holders);
+        if (skipped > 0)
+        {
+            limitations.Add($"{skipped} lines of /proc/locks could not be read and were left out.");
+        }
 
         var exhaustive = privileges.IsElevated && walk.UnreadableProcesses == 0 && !deviceMismatch;
         if (walk.UnreadableProcesses > 0)
@@ -122,12 +126,14 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
         return new LockQuery(fullPath, true, ordered, exhaustive, limitations);
     }
 
-    /// <summary>Waiters, and locks no open file confirmed, from /proc/locks; true when a device number disagreed.</summary>
-    private static bool AddFromProcLocks(FileIdentity target, ProcessTable table, HashSet<LockKey> fdLocks, List<LockHolder> holders)
+    /// <summary>Waiters, and locks no open file confirmed, from /proc/locks: whether a device number disagreed, and lines skipped.</summary>
+    private static (bool Mismatch, int Skipped) AddFromProcLocks(
+        FileIdentity target, ProcessTable table, HashSet<LockKey> fdLocks, List<LockHolder> holders)
     {
         var byPid = table.Processes.ToDictionary(p => p.ProcessId);
         var mismatch = false;
-        foreach (var entry in ProcLocks.Parse(ProcFiles.Read(ProcFiles.Locks)).Where(e => (ulong)e.Inode == target.Inode))
+        var (entries, skipped) = ProcLocks.ParseLenient(ProcFiles.Read(ProcFiles.Locks));
+        foreach (var entry in entries.Where(e => (ulong)e.Inode == target.Inode))
         {
             if (entry.DeviceMajor != target.DeviceMajor || entry.DeviceMinor != target.DeviceMinor)
             {
@@ -140,7 +146,7 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
                 // A waiter's PID is the blocked process itself, so it needs no confirmation.
                 holders.Add(byPid.TryGetValue(entry.ProcessId, out var waiter)
                     ? Holder(waiter, kind, entry.Access.ToLowerInvariant(), waiting: true, confirmed: true)
-                    : Gone(entry, kind));
+                    : Unlisted(entry, kind, LiveName));
                 continue;
             }
 
@@ -150,11 +156,47 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
             {
                 holders.Add(byPid.TryGetValue(entry.ProcessId, out var named)
                     ? Holder(named, kind, entry.Access.ToLowerInvariant(), waiting: false, confirmed: false)
-                    : Gone(entry, kind));
+                    : Unlisted(entry, kind, LiveName));
             }
         }
 
-        return mismatch;
+        return (mismatch, skipped);
+    }
+
+    /// <summary>A /proc/locks entry whose PID the walk did not see.</summary>
+    /// <remarks>
+    /// Missing from the snapshot is not the same as gone: /proc/locks is read after the walk, so a process that
+    /// took or began waiting for the lock in between -- the installer that just started -- is looked up again.
+    /// A PID of -1 (an open file description lock) or 0 (a process in another PID namespace) names no process
+    /// here at all, which is different again from one that stopped.
+    /// </remarks>
+    internal static LockHolder Unlisted(LockEntry entry, LockHolderKind kind, Func<int, string?> liveName)
+    {
+        var access = entry.Access.ToLowerInvariant();
+        if (entry.ProcessId <= 0)
+        {
+            var name = entry.ProcessId == 0
+                ? "(a process in another PID namespace)"
+                : "(an open file description lock, which names no process)";
+            return new LockHolder(entry.ProcessId, name, kind, access, entry.Waiting, Confirmed: false, StartedAt: null, StillRunning: false);
+        }
+
+        return liveName(entry.ProcessId) is { } live
+            ? new LockHolder(entry.ProcessId, live, kind, access, entry.Waiting, Confirmed: entry.Waiting, StartedAt: null, StillRunning: true)
+            : new LockHolder(entry.ProcessId, "(exited)", kind, access, entry.Waiting, Confirmed: false, StartedAt: null, StillRunning: false);
+    }
+
+    /// <summary>The process's name now, or null when it has exited.</summary>
+    private static string? LiveName(int processId)
+    {
+        try
+        {
+            return ProcFiles.ReadProcess(processId, "stat") is { } stat ? ProcStat.Parse(stat).Name : null;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or FormatException)
+        {
+            return null;
+        }
     }
 
     private static bool Same(FileIdentity a, FileIdentity b) =>
@@ -176,11 +218,6 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
 
     private static LockHolder Holder(ProcessRecord process, LockHolderKind kind, string? access, bool waiting, bool confirmed) =>
         new(process.ProcessId, process.Name, kind, access, waiting, confirmed, process.StartTime, StillRunning: true);
-
-    private static LockHolder Gone(LockEntry entry, LockHolderKind kind) =>
-        new(entry.ProcessId,
-            entry.ProcessId <= 0 ? "(unknown: an open file description lock names no process)" : "(exited)",
-            kind, entry.Access.ToLowerInvariant(), entry.Waiting, Confirmed: false, StartedAt: null, StillRunning: false);
 
     private static LockHolderKind KindOf(string type) => type switch
     {

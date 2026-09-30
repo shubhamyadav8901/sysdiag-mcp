@@ -16,6 +16,29 @@ public static class ProcLocks
         return text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(ParseLine).ToList();
     }
 
+    /// <summary>Every line that parses, and how many did not: one odd line must not sink the answer.</summary>
+    /// <remarks>The kernel prints <c>&lt;none&gt;</c> for a lock on a file with no inode, which no caller can match anyway.</remarks>
+    public static (IReadOnlyList<LockEntry> Entries, int Skipped) ParseLenient(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var entries = new List<LockEntry>();
+        var skipped = 0;
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                entries.Add(ParseLine(line));
+            }
+            catch (FormatException)
+            {
+                skipped++;
+            }
+        }
+
+        return (entries, skipped);
+    }
+
     /// <summary>One line: <c>id: [->] TYPE MODE ACCESS PID MAJ:MIN:INODE START END</c>, device in hex.</summary>
     public static LockEntry ParseLine(string line)
     {

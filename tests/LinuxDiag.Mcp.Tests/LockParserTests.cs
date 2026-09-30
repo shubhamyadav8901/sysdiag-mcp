@@ -40,6 +40,18 @@ public sealed class LockParserTests : IDisposable
     }
 
     [Fact]
+    public void A_lenient_parse_skips_a_line_it_cannot_read_and_counts_it()
+    {
+        // One odd line -- the kernel prints '<none>' for a lock on a file with no inode -- must not sink the
+        // whole answer.
+        var (entries, skipped) = ProcLocks.ParseLenient(
+            "1: FLOCK  ADVISORY  WRITE 206 08:30:44684 0 EOF\n2: FLOCK  ADVISORY  WRITE 207 <none>:0 0 EOF\n");
+
+        Assert.Equal(206, Assert.Single(entries).ProcessId);
+        Assert.Equal(1, skipped);
+    }
+
+    [Fact]
     public void A_short_line_is_a_format_error()
     {
         Assert.Throws<FormatException>(() => ProcLocks.ParseLine("1: FLOCK ADVISORY"));
@@ -77,6 +89,24 @@ public sealed class LockParserTests : IDisposable
         Assert.True(LibC.Identify(fifo)!.Value.IsFifo);
         Assert.False(LibC.Identify(file)!.Value.IsFifo);
         Assert.Null(LibC.Identify(Path.Combine(_root, "missing")));
+    }
+
+    [LinuxFact]
+    public void Identify_reads_the_same_device_and_inode_stat_reports()
+    {
+        // Pins the statx offsets: a hard link compared with itself passes even at a wrong offset.
+        var file = Path.Combine(_root, "pinned");
+        File.WriteAllText(file, "x");
+        using var stat = Process.Start(new ProcessStartInfo("stat", ["-c", "%d %i", file]) { RedirectStandardOutput = true })!;
+        var fields = stat.StandardOutput.ReadToEnd().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        stat.WaitForExit();
+
+        var identity = LibC.Identify(file)!.Value;
+        ulong major = identity.DeviceMajor, minor = identity.DeviceMinor;
+        var device = (minor & 0xff) | ((major & 0xfff) << 8) | ((minor & ~0xffUL) << 12) | ((major & ~0xfffUL) << 32);
+
+        Assert.Equal(ulong.Parse(fields[0], System.Globalization.CultureInfo.InvariantCulture), device);
+        Assert.Equal(ulong.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture), identity.Inode);
     }
 
     internal static void Run(string program, params string[] arguments)

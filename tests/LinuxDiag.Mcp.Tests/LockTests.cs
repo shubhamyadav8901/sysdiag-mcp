@@ -3,6 +3,7 @@ using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Handles;
 using LinuxDiag.Mcp.Diagnostics.Processes;
+using LinuxDiag.Mcp.Linux.Parsers;
 using LinuxDiag.Mcp.Tools;
 
 namespace LinuxDiag.Mcp.Tests;
@@ -44,6 +45,37 @@ public sealed class LockTests : IDisposable
         Assert.Contains("do not act on this PID", summary, StringComparison.Ordinal);
         Assert.Contains("WAITING for the lock", summary, StringComparison.Ordinal);
         Assert.StartsWith("WARNING: Not running as root.", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_pid_missing_from_the_walk_but_alive_now_is_a_running_holder_not_exited()
+    {
+        // /proc/locks is read after the walk, so a process that took the lock in between -- the installer
+        // that just started -- is missing from the snapshot. Missing is not gone: look again.
+        var entry = ProcLocks.ParseLine("1: FLOCK  ADVISORY  WRITE 4242 08:30:5 0 EOF");
+
+        var live = LinuxLockInspector.Unlisted(entry, LockHolderKind.Flock, pid => pid == 4242 ? "apt-get" : null);
+        var gone = LinuxLockInspector.Unlisted(entry, LockHolderKind.Flock, _ => null);
+
+        Assert.Equal("apt-get", live.ProcessName);
+        Assert.True(live.StillRunning);
+        Assert.Equal("(exited)", gone.ProcessName);
+        Assert.False(gone.StillRunning);
+    }
+
+    [Fact]
+    public void A_lock_that_names_no_process_is_not_called_a_process_that_stopped()
+    {
+        var ofd = LinuxLockInspector.Unlisted(
+            ProcLocks.ParseLine("2: OFDLCK ADVISORY  READ  -1 00:3d:642 0 EOF"), LockHolderKind.OpenFileDescription, _ => "x");
+        var foreign = LinuxLockInspector.Unlisted(
+            ProcLocks.ParseLine("3: FLOCK  ADVISORY  WRITE 0 00:3d:642 0 EOF"), LockHolderKind.Flock, _ => "x");
+
+        var summary = LockTools.RenderLockSummary(new LockQuery("/x", true, [ofd, foreign], false, []));
+
+        Assert.Contains("names no process", summary, StringComparison.Ordinal);
+        Assert.Contains("another PID namespace", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("do not act on this PID", summary, StringComparison.Ordinal);
     }
 
     [LinuxFact]

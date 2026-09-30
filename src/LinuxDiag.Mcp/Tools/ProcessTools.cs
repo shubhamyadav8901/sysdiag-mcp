@@ -77,7 +77,7 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
         if (table.PartlyUnreadable > 0)
         {
             limitations.Add($"{table.PartlyUnreadable} processes owned by other users could not be fully read: their " +
-                            "executable path, container PID and namespaces are null. Run the server as root.");
+                            "executable path and namespaces are null. Run the server as root.");
         }
 
         var limitation = limitations.Count == 0 ? null : string.Join(" ", limitations);
