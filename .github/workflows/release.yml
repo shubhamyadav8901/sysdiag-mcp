@@ -104,3 +104,44 @@ jobs:
           path: |
             artifacts/diagrelay-${{ matrix.rid }}/${{ matrix.exe }}
             artifacts/diagrelay-${{ matrix.rid }}/SHA256.txt
+
+  publish-linuxdiag:
+    # The Linux server, built and tested on Linux: its [LinuxFact] tests skip anywhere else, so a Windows
+    # runner would publish a build nothing had exercised. x86-64 only -- its P/Invoke flag values are.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build and test
+        run: |
+          dotnet build tests/LinuxDiag.Mcp.Tests -warnaserror
+          dotnet test tests/Diag.Mcp.Server.Tests --no-build
+          dotnet test tests/LinuxDiag.Mcp.Tests --no-build
+
+      - name: Publish linux-x64
+        run: >
+          dotnet publish src/LinuxDiag.Mcp
+          -c Release -r linux-x64 --self-contained
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o artifacts/linuxdiag-linux-x64
+
+      # The hash update_self must be given; see the publish job.
+      - name: Hash
+        shell: pwsh
+        run: |
+          $exe = "artifacts/linuxdiag-linux-x64/LinuxDiag.Mcp"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash
+          "$sha  LinuxDiag.Mcp" | Set-Content "artifacts/linuxdiag-linux-x64/SHA256.txt"
+          Write-Host "linux-x64 $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linuxdiag-linux-x64
+          path: |
+            artifacts/linuxdiag-linux-x64/LinuxDiag.Mcp
+            artifacts/linuxdiag-linux-x64/SHA256.txt
