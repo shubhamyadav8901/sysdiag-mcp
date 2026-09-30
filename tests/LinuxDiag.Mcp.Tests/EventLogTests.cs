@@ -65,7 +65,7 @@ public sealed class EventLogTests
             "app.service", Now.AddMinutes(-60), JournalQuery.Priorities(["critical", "warning"]), "app", ["_UID=1000"], 51);
 
         Assert.Equal(
-            ["-o", "json", "--no-pager", "-r", "--output-fields=" + JournalQuery.Fields, "-n", "51",
+            ["-o", "json", "--all", "--no-pager", "-r", "--output-fields=" + JournalQuery.Fields, "-n", "51",
              "--since", "@" + Now.AddMinutes(-60).ToUnixTimeSeconds(), "-p", "0..4", "-u", "app.service",
              "SYSLOG_IDENTIFIER=app", "_UID=1000"],
             arguments);
@@ -102,6 +102,20 @@ public sealed class EventLogTests
         Assert.Equal(2, result.Events.Count);
         Assert.True(result.Truncated);
         Assert.Contains("More records matched", EventLogTools.Render(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_empty_but_truncated_answer_does_not_claim_there_are_no_records_and_a_textless_record_says_so()
+    {
+        // Final review: a level set with a gap is fetched as its range and filtered, so the newest records in
+        // range can all be outside it -- that is not "no matching records".
+        var empty = EventLogTools.Render(new EventQueryResult(null, 60, [], true, [], []));
+        var textless = EventLogTools.Render(new EventQueryResult(null, 60,
+            [new EventEntry(DateTimeOffset.UnixEpoch, "Error", 3, "app", null, null, 7)], false, [], []));
+
+        Assert.DoesNotContain("No matching records", empty, StringComparison.Ordinal);
+        Assert.Contains("outside the requested levels", empty, StringComparison.Ordinal);
+        Assert.Contains("(no message text)", textless, StringComparison.Ordinal);
     }
 
     [Fact]

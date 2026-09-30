@@ -104,7 +104,9 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
 
         LogChanged(logger, verb, unit);
         var after = await ShowAsync([unit, .. dependents], cancellationToken).ConfigureAwait(false);
-        var targetAfter = after.FirstOrDefault(u => u["Id"] == unit) ?? target;
+        // By the unit's own Id: systemctl answers an alias (mysql) with the primary name (mariadb.service).
+        var id = target["Id"] ?? unit;
+        var targetAfter = after.FirstOrDefault(u => u["Id"] == id) ?? target;
         var stopped = after
             .Where(u => u["Id"] is { } id && dependents.Contains(id) && u["ActiveState"] is "inactive" or "failed")
             .Select(u => u["Id"]!)

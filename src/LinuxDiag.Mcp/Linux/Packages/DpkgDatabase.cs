@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using LinuxDiag.Mcp.Linux.Native;
 
 namespace LinuxDiag.Mcp.Linux.Packages;
 
@@ -304,7 +305,8 @@ public static class FileHashes
     {
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        // Never a FIFO or device: a path swapped for one between a caller's check and this read must not hang it.
+        using var stream = new FileStream(LibC.OpenRegularFile(path), FileAccess.Read);
         var buffer = new byte[81920];
         int read;
         while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)

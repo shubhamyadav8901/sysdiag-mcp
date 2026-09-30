@@ -92,8 +92,10 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
 
             builder.Append("  ").Append(entry.ImagePath ?? "(no program recorded)");
             if (entry.ImageMissing) builder.Append("  [FILE NOT FOUND]");
-            if (entry.Packaged == false) builder.Append("  [NOT FROM A PACKAGE]");
-            else if (entry.Package is { } package) builder.Append("  ").Append(package);
+            // The program's package is named whenever it has one: a foreign drop-in or a changed binary is not
+            // "not from a package", and the '!' lines below say which file failed.
+            if (entry.Package is { } package) builder.Append("  ").Append(package);
+            if (entry.Packaged == false) builder.Append(entry.Package is null ? "  [NOT FROM A PACKAGE]" : "  [FILES DO NOT MATCH THE PACKAGE]");
             if (entry.Profile is { } profile) builder.Append("  (").Append(profile).Append(')');
             builder.AppendLine();
             builder.Append("    ").AppendLine(entry.Location);

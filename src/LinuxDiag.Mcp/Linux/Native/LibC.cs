@@ -29,6 +29,15 @@ public readonly record struct FileStatus(uint UserId, uint GroupId, ushort Mode,
 
 public sealed record AccountEntry(string Name, uint UserId, uint GroupId, string Home);
 
+/// <summary>A path that leads to a FIFO, device or socket, which a reader of files must never open.</summary>
+public sealed class NotRegularFileException : IOException, IDiagnosticException
+{
+    public NotRegularFileException(string path)
+        : base($"'{path}' is not a regular file (a FIFO, device or socket), so it was not opened.")
+    {
+    }
+}
+
 /// <summary>A C-library call's failure, with its errno for a caller that maps it to words.</summary>
 public sealed class ErrnoException : Exception, IDiagnosticException
 {
@@ -68,6 +77,12 @@ internal static class LibC
     private const ulong StatxAttrImmutable = 0x10;
     private const ulong StatxAttrAppend = 0x20;
     private const int PasswdSize = 48;
+    private const int ORdOnly = 0;
+    private const int ONoCtty = 0x100;
+    private const int ONonBlock = 0x800;
+    private const int OCloExec = 0x80000;
+    private const int OPath = 0x200000;
+    private const int AtEmptyPath = 0x1000;
     private const int GroupSize = 32;
 
     public const int ROk = 4;
@@ -164,6 +179,52 @@ internal static class LibC
             (attributes & StatxAttrImmutable) != 0,
             (attributes & StatxAttrAppend) != 0);
     }
+
+    /// <summary>A read handle on a regular file; a FIFO, device or socket throws <see cref="NotRegularFileException"/>.</summary>
+    /// <remarks>
+    /// <para>For every file whose path comes from configuration another account controls: a user's unit link,
+    /// a crontab command, a program an autostart entry names. Opening a FIFO blocks until a writer comes;
+    /// /dev/zero never ends; opening /dev/watchdog arms it and reboots the machine when nobody pets it.</para>
+    /// <para>The path is taken with O_PATH, which opens nothing, and its type is read from that descriptor. Only a
+    /// regular file is reopened for reading, through /proc/self/fd, so the file read is the file checked --
+    /// swapping the path for a FIFO in between changes nothing.</para>
+    /// </remarks>
+    public static SafeFileHandle OpenRegularFile(string path)
+    {
+        var located = open(path, OPath | OCloExec);
+        if (located < 0)
+        {
+            throw OpenError(path, Marshal.GetLastPInvokeError());
+        }
+
+        using var locator = new SafeFileHandle(located, ownsHandle: true);
+        Span<byte> buffer = stackalloc byte[256];
+        if (statx(located, string.Empty, AtEmptyPath | AtStatxDontSync, StatxBasicStats, ref MemoryMarshal.GetReference(buffer)) != 0)
+        {
+            throw OpenError(path, Marshal.GetLastPInvokeError());
+        }
+
+        if ((BinaryPrimitives.ReadUInt16LittleEndian(buffer[28..]) & 0xF000) != 0x8000)
+        {
+            throw new NotRegularFileException(path);
+        }
+
+        var reopened = open($"/proc/self/fd/{located}", ORdOnly | ONonBlock | ONoCtty | OCloExec);
+        return reopened < 0
+            ? throw OpenError(path, Marshal.GetLastPInvokeError())
+            : new SafeFileHandle(reopened, ownsHandle: true);
+    }
+
+    private static Exception OpenError(string path, int errno) => errno switch
+    {
+        ENOENT or ENOTDIR => new FileNotFoundException($"'{path}' does not exist.", path),
+        EACCES or EPERM => new UnauthorizedAccessException($"Permission denied opening '{path}'."),
+        _ => new IOException($"Could not open '{path}': {Marshal.GetPInvokeErrorMessage(errno)}", errno),
+    };
+
+    // open(2) is variadic in C; with no mode argument the two fixed parameters travel as in any call on x86-64.
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern int open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
 
     /// <summary>An extended attribute's value, or null when the file has none by that name or the filesystem has no xattrs.</summary>
     public static byte[]? GetXattr(string path, string name)

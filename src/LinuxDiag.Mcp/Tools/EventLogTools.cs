@@ -63,6 +63,15 @@ public sealed class EventLogTools(IJournalInspector journal)
                 return builder.ToString().TrimEnd();
             }
 
+            if (result.Truncated)
+            {
+                // A level set with a gap is fetched as its range and filtered: the newest records in the range were
+                // all at other levels, which says nothing about older ones.
+                return builder.Append("The newest records in ").Append(where).Append(" in the last ").Append(result.Minutes)
+                    .Append(" minutes were all outside the requested levels, so older matching records may exist. ")
+                    .Append("Narrow the window, raise maxEvents, or ask for a contiguous set of levels.").ToString();
+            }
+
             return builder.Append("No matching records in ").Append(where).Append(" in the last ").Append(result.Minutes)
                 .Append(" minutes. Widen the window, relax the severity filter, or check the unit name.").ToString();
         }
@@ -84,11 +93,8 @@ public sealed class EventLogTools(IJournalInspector journal)
             }
 
             builder.AppendLine();
-            if (entry.Message is { } message)
-            {
-                var first = message.Split('\n')[0];
-                builder.Append("    ").AppendLine(first.Length <= 300 ? first : first[..300] + "...");
-            }
+            var first = entry.Message?.Split('\n')[0] ?? "(no message text)";
+            builder.Append("    ").AppendLine(first.Length <= 300 ? first : first[..300] + "...");
         }
 
         RenderLimits.NoteElision(builder, result.Events.Count, "returned records");

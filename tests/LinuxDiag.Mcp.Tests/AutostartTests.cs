@@ -134,6 +134,88 @@ public sealed class AutostartTests
     }
 
     [LinuxFact]
+    public void A_fifo_or_a_device_named_by_configuration_is_never_opened()
+    {
+        // Final review, Critical: a user's *.wants link to a FIFO blocked the root server forever, and one to
+        // /dev/zero read until it ran out of memory. Configuration is opened only when it is a regular file.
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-fifo-{Guid.NewGuid():N}")).FullName;
+        var fifo = Path.Combine(directory, "p");
+        LockParserTests.Run("mkfifo", fifo);
+
+        var read = Task.Run(() => LinuxAutostartInspector.ReadConfiguration(fifo));
+        Assert.True(read.Wait(TimeSpan.FromSeconds(5)), "reading a FIFO named by configuration blocked");
+        Assert.Equal(string.Empty, read.Result);
+
+        var hash = Task.Run(() => FileHashes.Compute(fifo));
+        Assert.True(((IAsyncResult)hash).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(5)), "hashing a FIFO blocked");
+        Assert.IsAssignableFrom<IOException>(hash.Exception?.InnerException);
+
+        Assert.Equal(string.Empty, LinuxAutostartInspector.ReadConfiguration("/dev/zero"));
+        Directory.Delete(directory, recursive: true);
+    }
+
+    [LinuxFact]
+    public void A_symlink_loop_in_a_users_wants_directory_is_reported_not_fatal()
+    {
+        // Final review: one self-referencing link made the whole default audit fail.
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-loop-{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var link = Path.Combine(directory, "loop.service");
+            File.CreateSymbolicLink(link, link);
+
+            var entry = LinuxAutostartInspector.UserUnitEntry(link, "someone", lingering: false);
+
+            Assert.Equal("loop.service", entry.Entry);
+            Assert.Null(entry.ImagePath);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void A_packaged_program_with_a_file_that_does_not_match_is_named_and_not_called_unpackaged()
+    {
+        // Final review: a trojaned /usr/sbin/cron or a foreign drop-in was tagged "not from a package".
+        var entry = new AutostartEntry("services", "/usr/lib/systemd/system/cron.service", "cron.service", true, null, "cron",
+            "/usr/sbin/cron", null, null, [], "cron", false, ["/usr/sbin/cron: Does NOT match the dpkg database for cron 3.0."], false);
+
+        var summary = AutostartTools.Render(new AutostartAuditResult([entry], 1, false, true, true, 1, 0, []), "all", null);
+
+        Assert.Contains("cron  [FILES DO NOT MATCH THE PACKAGE]", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("NOT FROM A PACKAGE", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Without_a_dpkg_database_nothing_is_hidden_and_packages_are_not_claimed_checked()
+    {
+        // Final review: with no database, unpackagedOnly hid every entry and the summary said all matched.
+        var unchecked_ = new AutostartEntry("preload", "/etc/ld.so.preload", "/x.so", true, null, null, "/x.so", null, null, [], null, null, [], false);
+        var inspector = new LinuxAutostartInspector(
+            new FakeCommands((_, arguments) => throw new InvalidOperationException(string.Join(' ', arguments))),
+            new NoDatabase(), new LinuxPrivilegeProbe(), Options);
+
+        var result = await inspector.AuditAsync(new AutostartQuery("preload", UnpackagedOnly: true), CancellationToken.None);
+
+        Assert.False(LinuxAutostartInspector.Hidden(unchecked_, new AutostartQuery(UnpackagedOnly: true)));
+        Assert.False(result.PackagesVerified);
+    }
+
+    private sealed class NoDatabase : IPackageDatabaseSource
+    {
+        public IPackageDatabase Open() => new Empty();
+
+        private sealed class Empty : IPackageDatabase
+        {
+            public bool Available => false;
+
+            public PackageFile? Owner(string path) => null;
+        }
+    }
+
+    [LinuxFact]
     public void A_packaged_program_reached_through_a_symlink_is_judged_by_the_file_it_leads_to()
     {
         // dpkg records a symlink without a checksum, so judging the link itself called /usr/bin/python3 (a link

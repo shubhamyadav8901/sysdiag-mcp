@@ -47,7 +47,8 @@ public static partial class JournalQuery
     {
         var arguments = new List<string>
         {
-            "-o", "json", "--no-pager", "-r", "--output-fields=" + Fields,
+            // --all: without it JSON output replaces any field over 4096 bytes with null -- a coredump's stack trace.
+            "-o", "json", "--all", "--no-pager", "-r", "--output-fields=" + Fields,
             "-n", limit.ToString(CultureInfo.InvariantCulture),
             "--since", "@" + since.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
             "-p", $"{priorities.Min()}..{priorities.Max()}",

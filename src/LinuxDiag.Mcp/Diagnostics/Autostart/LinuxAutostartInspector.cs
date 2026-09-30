@@ -47,6 +47,7 @@ public sealed class LinuxAutostartInspector(
             .ToList();
 
         var verify = query.VerifyPackages || query.UnpackagedOnly || query.HidePackaged;
+        var verified = false;
         if (verify)
         {
             var database = packages.Open();
@@ -57,6 +58,7 @@ public sealed class LinuxAutostartInspector(
             else
             {
                 matched = matched.Select(e => Verify(e, path => PackageOwner(database, path), Md5)).ToList();
+                verified = true;
             }
         }
 
@@ -67,7 +69,7 @@ public sealed class LinuxAutostartInspector(
             .ToList();
         return new AutostartAuditResult(
             ordered.Take(options.MaxResults).ToList(), ordered.Count, ordered.Count > options.MaxResults, privileges.IsElevated,
-            verify, ordered.Count(e => e.Packaged == false), ordered.Count(e => e.ImageMissing), limitations);
+            verified, ordered.Count(e => e.Packaged == false), ordered.Count(e => e.ImageMissing), limitations);
     }
 
     internal static IReadOnlyList<string> ParseCategories(string categories)
@@ -149,7 +151,7 @@ public sealed class LinuxAutostartInspector(
 
     /// <summary>Hidden only when asked to, and only when every checked file matched its package.</summary>
     internal static bool Hidden(AutostartEntry entry, AutostartQuery query) =>
-        (query.UnpackagedOnly && entry.Packaged != false) ||
+        (query.UnpackagedOnly && entry.Packaged == true) ||
         (query.HidePackaged && entry.Packaged == true);
 
     internal static async Task<List<AutostartEntry>> SystemdAsync(
@@ -260,7 +262,7 @@ public sealed class LinuxAutostartInspector(
 
     private static IEnumerable<AutostartEntry> UserUnits(List<string> limitations)
     {
-        var accounts = Passwd.Entries(ReadOrEmpty(ProcFiles.Passwd));
+        var accounts = Passwd.Entries(ReadConfiguration(ProcFiles.Passwd));
         var places = new List<(string? User, string? Home, string Directory)> { (null, null, "/etc/systemd/user") };
         places.AddRange(accounts.Where(a => a.Home.Length > 1).Select(a => ((string?)a.Name, (string?)a.Home, Path.Combine(a.Home, ".config/systemd/user"))));
         var unreadable = 0;
@@ -292,14 +294,7 @@ public sealed class LinuxAutostartInspector(
             var lingering = user is not null && File.Exists(Path.Combine("/var/lib/systemd/linger", user));
             foreach (var link in links)
             {
-                var target = new FileInfo(link).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? link;
-                var execStart = ReadOrEmpty(target).Split('\n').Select(l => l.Trim())
-                    .FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?[10..].TrimStart('-', '@', '+', '!', ':');
-                var (program, script) = execStart is null ? (null, null) : LaunchCommand.Split(execStart);
-                yield return new AutostartEntry(
-                    "userunits", target, Path.GetFileName(link), true, user ?? "(every user)",
-                    user is null ? "starts at every user's login" : lingering ? "starts at boot (lingering)" : "starts at the user's login",
-                    program, execStart, script, [], null, null, [], program is not null && program.StartsWith('/') && !File.Exists(program));
+                yield return UserUnitEntry(link, user, lingering);
             }
         }
 
@@ -307,6 +302,29 @@ public sealed class LinuxAutostartInspector(
         {
             limitations.Add($"{unreadable} home directories could not be read, so those users' units are missing; run the server as root.");
         }
+    }
+
+    /// <summary>One link in a user's *.wants directory, and the unit file it leads to.</summary>
+    internal static AutostartEntry UserUnitEntry(string link, string? user, bool lingering)
+    {
+        // A link loop or a dangling link is the user's to make; it names the entry rather than failing the audit.
+        string target;
+        try
+        {
+            target = LibC.RealPath(link) ?? link;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            target = link;
+        }
+
+        var execStart = ReadConfiguration(target).Split('\n').Select(l => l.Trim())
+            .FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?[10..].TrimStart('-', '@', '+', '!', ':');
+        var (program, script) = execStart is null ? (null, null) : LaunchCommand.Split(execStart);
+        return new AutostartEntry(
+            "userunits", target, Path.GetFileName(link), true, user ?? "(every user)",
+            user is null ? "starts at every user's login" : lingering ? "starts at boot (lingering)" : "starts at the user's login",
+            program, execStart, script, [], null, null, [], program is not null && program.StartsWith('/') && !File.Exists(program));
     }
 
     private static IEnumerable<AutostartEntry> Cron(List<string> limitations)
@@ -325,7 +343,7 @@ public sealed class LinuxAutostartInspector(
 
         foreach (var (file, system, owner) in sources)
         {
-            foreach (var cron in CronTab.Parse(ReadOrEmpty(file), system))
+            foreach (var cron in CronTab.Parse(ReadConfiguration(file), system))
             {
                 var (program, script) = LaunchCommand.Split(cron.Command);
                 yield return new AutostartEntry(
@@ -357,7 +375,7 @@ public sealed class LinuxAutostartInspector(
     private static IEnumerable<AutostartEntry> Preload()
     {
         const string path = "/etc/ld.so.preload";
-        foreach (var library in ReadOrEmpty(path).Split('\n').Select(l => l.Split('#')[0])
+        foreach (var library in ReadConfiguration(path).Split('\n').Select(l => l.Split('#')[0])
                      .SelectMany(l => l.Split([' ', '\t', ':'], StringSplitOptions.RemoveEmptyEntries)))
         {
             yield return new AutostartEntry("preload", path, library, true, null, "loaded into every dynamically linked program",
@@ -398,11 +416,33 @@ public sealed class LinuxAutostartInspector(
         }
     }
 
-    private static string ReadOrEmpty(string path)
+    /// <summary>The largest configuration file read; a unit file or crontab is a few kilobytes.</summary>
+    private const int MaxConfigurationBytes = 4 * 1024 * 1024;
+
+    /// <summary>A configuration file's text, or empty when it is missing, unreadable or not a regular file.</summary>
+    /// <remarks>
+    /// Users control these paths -- a link in ~/.config/systemd/user, a crontab -- and the server is root, so a
+    /// FIFO, a device or an endless file must not be opened, and a huge one is read only as far as the cap.
+    /// </remarks>
+    internal static string ReadConfiguration(string path)
     {
+        if (!File.Exists(path))
+        {
+            return string.Empty;
+        }
+
         try
         {
-            return File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+            using var stream = new FileStream(LibC.OpenRegularFile(path), FileAccess.Read);
+            var buffer = new byte[Math.Min(MaxConfigurationBytes, Math.Max(0, stream.Length))];
+            var read = 0;
+            int chunk;
+            while (read < buffer.Length && (chunk = stream.Read(buffer, read, buffer.Length - read)) > 0)
+            {
+                read += chunk;
+            }
+
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, read);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

@@ -17,6 +17,7 @@ public sealed class ServiceControlTests
         public string Before { get; init; } = "active";
         public string After { get; init; } = "inactive";
         public string Names { get; init; } = "";
+        public string? Id { get; init; }
         public string Extra { get; init; } = "";
         public string Dependents { get; init; } = "";
         public ExternalResult Action { get; init; } = FakeCommands.Ok("");
@@ -36,7 +37,7 @@ public sealed class ServiceControlTests
             {
                 var units = arguments.SkipWhile(a => a != "--").Skip(1).ToList();
                 return FakeCommands.Ok(string.Join("\n", units.Select(u =>
-                    u == "worker.service" ? Show(u, _acted ? "inactive" : "active") : Show(u, _acted ? After : Before, Names, Extra))));
+                    u == "worker.service" ? Show(u, _acted ? "inactive" : "active") : Show(Id ?? u, _acted ? After : Before, Names, Extra))));
             }
 
             if (TimesOut)
@@ -81,6 +82,18 @@ public sealed class ServiceControlTests
 
         Assert.Contains("shuts down, reboots or suspends", ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(script.Calls, c => c.Contains("start"));
+    }
+
+    [Fact]
+    public async Task A_service_asked_for_by_an_alias_reports_its_state_after_the_action()
+    {
+        // Final review: systemctl show prints the primary name as Id (mysql -> mariadb.service), so matching the
+        // after-state on the requested name fell back to the before-state and reported a stop as still running.
+        var script = new Scripted { Id = "mariadb.service", Names = "mariadb.service mysql.service" };
+
+        var result = await Controller(script.Commands).ControlAsync("mysql", ServiceAction.Stop, CancellationToken.None);
+
+        Assert.Equal("inactive (dead)", result.StatusAfter);
     }
 
     [Fact]

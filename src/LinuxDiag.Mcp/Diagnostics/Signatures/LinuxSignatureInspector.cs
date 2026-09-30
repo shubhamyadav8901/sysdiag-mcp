@@ -45,16 +45,23 @@ public sealed class LinuxSignatureInspector(IPackageDatabaseSource packages) : I
 
             // Every link resolved, in the middle of the path too (/usr/lib/jvm/default-java/bin/java): the file
             // hashed is the real one, so it is the real one whose package is asked first.
-            var real = LibC.RealPath(full) ?? full;
-            var resolved = real == full ? null : real;
+            string? resolved;
             string sha256, md5;
             try
             {
+                var real = LibC.RealPath(full) ?? full;
+                resolved = real == full ? null : real;
                 (sha256, md5) = FileHashes.Compute(full);
             }
             catch (UnauthorizedAccessException)
             {
                 notFound.Add($"{full} (permission denied)");
+                continue;
+            }
+            catch (IOException ex)
+            {
+                // Replaced by a FIFO or removed since the check above, or an I/O error: this file, not the batch.
+                notFound.Add($"{full} ({ex.Message})");
                 continue;
             }
 
