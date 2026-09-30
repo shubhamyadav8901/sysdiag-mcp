@@ -97,6 +97,16 @@ public sealed class ServiceControlTests
     }
 
     [Fact]
+    public async Task Dependents_are_listed_in_full_so_a_long_unit_name_is_never_shortened()
+    {
+        var script = new Scripted();
+
+        await Controller(script.Commands).ControlAsync("app", ServiceAction.Stop, CancellationToken.None);
+
+        Assert.Contains(script.Calls, c => c.Contains("list-dependencies") && c.Contains("--full"));
+    }
+
+    [Fact]
     public async Task Starting_a_critical_service_is_allowed()
     {
         var script = new Scripted { Before = "inactive", After = "active", Names = "ssh.service sshd.service" };

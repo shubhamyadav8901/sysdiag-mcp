@@ -86,6 +86,8 @@ public static partial class SystemctlShow
             ? time
             : null;
 
-    [GeneratedRegex(@"path=(?<path>[^ ]+) ; argv\[\]=(?<argv>.*?) ; [a-z_]+=")]
+    // argv runs to the key systemd always prints next (ignore_errors, or flags on newer versions), so an argv
+    // holding " ; b=1" is kept whole; the path is everything before " ; argv[]=", spaces included.
+    [GeneratedRegex(@"path=(?<path>.+?) ; argv\[\]=(?<argv>.*) ; (?:ignore_errors|flags)=")]
     private static partial Regex ExecPattern();
 }

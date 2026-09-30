@@ -4,6 +4,13 @@ namespace LinuxDiag.Mcp.Tests;
 
 public sealed class ExternalCommandTests
 {
+    [Fact]
+    public async Task A_timeout_that_is_zero_or_negative_is_refused_before_anything_starts()
+    {
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            new LinuxExternalCommand().RunAsync("sh", [], TimeSpan.FromSeconds(-1), CancellationToken.None));
+    }
+
     [Theory]
     [InlineData("-H", "starts with '-'")]
     [InlineData("a\nb", "control character")]

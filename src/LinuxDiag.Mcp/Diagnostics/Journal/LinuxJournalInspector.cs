@@ -29,9 +29,10 @@ public sealed class LinuxJournalInspector : IJournalInspector
         string? unit, int minutes, string[]? levels, string? provider, string[]? match, int maxEvents,
         CancellationToken cancellationToken)
     {
-        if (minutes < 1)
+        if (minutes is < 1 or > MaxMinutes)
         {
-            throw new ArgumentOutOfRangeException(nameof(minutes), minutes, "Look-back must be at least one minute.");
+            throw new ArgumentOutOfRangeException(
+                nameof(minutes), minutes, $"Look-back must be between one minute and {MaxMinutes:N0} minutes (ten years).");
         }
 
         var checkedUnit = unit is null ? null : ServiceNames.CheckUnit(unit, nameof(unit));
@@ -85,6 +86,9 @@ public sealed class LinuxJournalInspector : IJournalInspector
 
         return new EventQueryResult(checkedUnit, minutes, events, entries.Count > limit, candidates, limitations);
     }
+
+    /// <summary>Ten years: past it, --since would reach before the epoch, and no journal keeps that much.</summary>
+    internal const int MaxMinutes = 10 * 365 * 24 * 60;
 
     internal static string LevelName(int priority) => priority switch
     {

@@ -39,7 +39,9 @@ public sealed class LinuxServiceInspector(IExternalCommand commands, LinuxDiagOp
 
         // list-units: UNIT LOAD ACTIVE SUB DESCRIPTION...; list-unit-files: UNIT STATE PRESET.
         var descriptions = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (var fields in Lines(loaded).Select(l => l.Split(' ', 5, StringSplitOptions.RemoveEmptyEntries)).Where(f => f.Length > 0))
+        // A not-found row is a name another unit refers to; offering it would suggest a unit that does not exist.
+        foreach (var fields in Lines(loaded).Select(l => l.Split(' ', 5, StringSplitOptions.RemoveEmptyEntries))
+                     .Where(f => f.Length > 0 && !(f.Length > 1 && f[1] == "not-found")))
         {
             descriptions[fields[0]] = fields.Length == 5 ? fields[4] : null;
         }

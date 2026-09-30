@@ -40,7 +40,8 @@ public static class UnixSockets
                 throw new FormatException($"/proc/net/unix line is too short: '{line}'.");
             }
 
-            var path = position < line.Length ? line[position..].Trim() : string.Empty;
+            // One space follows the inode, then the name exactly as bound -- leading and trailing spaces included.
+            var path = position + 1 < line.Length ? line[(position + 1)..] : string.Empty;
             entries.Add(new UnixSocketEntry(
                 int.Parse(fields[4], NumberStyles.HexNumber, CultureInfo.InvariantCulture),
                 int.Parse(fields[5], NumberStyles.HexNumber, CultureInfo.InvariantCulture),

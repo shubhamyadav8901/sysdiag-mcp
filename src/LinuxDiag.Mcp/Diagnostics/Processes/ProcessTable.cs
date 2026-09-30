@@ -35,25 +35,34 @@ public sealed class LinuxProcessTable : IProcessTable
     /// <summary>USER_HZ. Fixed at 100 by the x86 ABI, which is the only architecture this server runs on.</summary>
     internal const int ClockTicksPerSecond = 100;
 
-    public ProcessTable Read(CancellationToken cancellationToken)
+    public ProcessTable Read(CancellationToken cancellationToken) =>
+        Walk(ProcFiles.ProcessIds(), Collect, KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat)), cancellationToken);
+
+    /// <summary>One pass over the processes; a process that cannot be read is counted, never fatal to the rest.</summary>
+    /// <remarks>
+    /// A process that exits mid-read is already null from <see cref="Collect"/>. What is left -- permission denied,
+    /// or an I/O error from a process in a bad state -- is counted, so the answer says it is partial instead of
+    /// losing every other process to one.
+    /// </remarks>
+    internal static ProcessTable Walk(
+        IEnumerable<int> processIds, Func<int, RawProcess?> collect, DateTimeOffset boot, CancellationToken cancellationToken)
     {
-        var boot = KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat));
         var processes = new List<ProcessRecord>();
         var unreadable = 0;
         var partlyUnreadable = 0;
 
-        foreach (var pid in ProcFiles.ProcessIds())
+        foreach (var pid in processIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                if (Collect(pid) is { } raw)
+                if (collect(pid) is { } raw)
                 {
                     processes.Add(Parse(raw, boot));
                     partlyUnreadable += raw.AttributesDenied ? 1 : 0;
                 }
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
                 unreadable++;
             }

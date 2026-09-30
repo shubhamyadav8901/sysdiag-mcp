@@ -61,7 +61,8 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
             }
 
             var info = FdInfoOf(descriptor);
-            var locks = info?.Locks.Select(ProcLocks.ParseLine).ToList() ?? [];
+            // Leniently, as /proc/locks is read: one line in an unexpected shape must not lose every holder.
+            var locks = info is null ? [] : ProcLocks.ParseLenient(string.Join('\n', info.Locks)).Entries;
             if (locks.Count == 0)
             {
                 holders.Add(Holder(descriptor.Process, LockHolderKind.Open, info?.Access, waiting: false, confirmed: true));

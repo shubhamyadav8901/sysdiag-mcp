@@ -55,6 +55,34 @@ public sealed class ServiceConfigTests
     }
 
     [Fact]
+    public void Exec_start_keeps_a_command_line_holding_a_semicolon_and_a_program_path_holding_a_space()
+    {
+        var shell = SystemctlShow.Command(
+            "{ path=/bin/sh ; argv[]=/bin/sh -c \"a ; b=1\" ; ignore_errors=no ; start_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }");
+        var spaced = SystemctlShow.Command(
+            "{ path=/opt/my app/run ; argv[]=/opt/my app/run --x ; flags= ; start_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }");
+
+        Assert.Equal(new ExecCommand("/bin/sh", "/bin/sh -c \"a ; b=1\""), shell);
+        Assert.Equal(new ExecCommand("/opt/my app/run", "/opt/my app/run --x"), spaced);
+    }
+
+    [Fact]
+    public async Task Near_matches_leave_out_units_systemd_only_knows_as_missing()
+    {
+        var commands = new FakeCommands((_, arguments) => arguments[0] switch
+        {
+            "show" => FakeCommands.Ok("Id=crond.service\nLoadState=not-found\n"),
+            "list-units" => FakeCommands.Ok("cronie.service not-found inactive dead cronie.service\ncron.service loaded active running Cron\n"),
+            "list-unit-files" => FakeCommands.Ok(""),
+            _ => throw new InvalidOperationException(string.Join(' ', arguments)),
+        });
+
+        var result = await new LinuxServiceInspector(commands, Options).QueryAsync("cron", CancellationToken.None);
+
+        Assert.Equal(["cron.service (Cron)"], result.Candidates);
+    }
+
+    [Fact]
     public void Exec_start_gives_the_program_and_its_command_line_and_timestamps_are_utc()
     {
         var command = SystemctlShow.Command(

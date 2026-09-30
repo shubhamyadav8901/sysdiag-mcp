@@ -17,6 +17,21 @@ public sealed class ProcessListTests
             cmdline, denied, "/", container, innermost, "net:[1]", "mnt:[1]");
 
     [Fact]
+    public void One_process_that_fails_with_an_unexpected_io_error_is_counted_not_fatal()
+    {
+        // Final review of plan 2: a single EIO from one live process failed the whole walk.
+        var stat = ProcParserTests.Fixture(ProcParserTests.Distros().First(), "pid-stat")!;
+        RawProcess? Collect(int pid) => pid == 2
+            ? throw new IOException("Input/output error")
+            : new RawProcess(pid, stat, null, null, null, null, null, null, false);
+
+        var table = LinuxProcessTable.Walk([1, 2, 3], Collect, DateTimeOffset.UnixEpoch, CancellationToken.None);
+
+        Assert.Equal(2, table.Processes.Count);
+        Assert.Equal(1, table.Unreadable);
+    }
+
+    [Fact]
     public void A_filter_matches_name_command_line_or_container_name_and_rows_are_ordered_by_name_then_pid()
     {
         var catalog = new ContainerCatalog([new ContainerInfo("docker", Id, "shop-web", "nginx", "running", 30, [30], null, null, false)], []);

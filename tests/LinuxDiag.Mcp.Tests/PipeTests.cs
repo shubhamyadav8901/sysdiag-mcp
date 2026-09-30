@@ -20,6 +20,19 @@ public sealed class PipeTests : IDisposable
     }
 
     [Fact]
+    public void A_socket_name_keeps_the_spaces_that_are_part_of_it()
+    {
+        // The kernel writes one space after the inode and then the name as bound; a name may begin or end with spaces.
+        var entries = UnixSockets.Parse(
+            "Num       RefCount Protocol Flags    Type St Inode Path\n" +
+            "0000000000000000: 00000002 00000000 00010000 0001 01 19159  @lead\n" +
+            "0000000000000000: 00000002 00000000 00010000 0001 01 19160 @trail \n");
+
+        Assert.Equal(" @lead", entries[0].Path);
+        Assert.Equal("@trail ", entries[1].Path);
+    }
+
+    [Fact]
     public void Unix_socket_lines_give_type_state_listening_inode_and_a_path_with_spaces()
     {
         // The first three lines are captured from WSL Ubuntu's /proc/net/unix.

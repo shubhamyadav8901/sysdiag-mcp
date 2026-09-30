@@ -82,6 +82,12 @@ public sealed class LinuxExternalCommand : IExternalCommand
         ArgumentException.ThrowIfNullOrWhiteSpace(program);
         ArgumentNullException.ThrowIfNull(arguments);
 
+        // Before anything starts: CancelAfter would refuse it only once a child was running, and leak that child.
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The timeout must be positive and under 24 days.");
+        }
+
         var path = Resolve(program) ?? throw new ExternalCommandException(
             $"'{program}' is not installed on this machine: it is in none of {string.Join(", ", SystemDirectories)}.");
 
@@ -105,7 +111,18 @@ public sealed class LinuxExternalCommand : IExternalCommand
         start.Environment["PAGER"] = "cat";
         start.Environment["SYSTEMD_COLORS"] = "0";
 
-        using var process = Process.Start(start) ?? throw new ExternalCommandException($"{program} could not be started.");
+        Process process;
+        try
+        {
+            process = Process.Start(start) ?? throw new ExternalCommandException($"{program} could not be started.");
+        }
+        catch (Win32Exception ex)
+        {
+            // A noexec mount, a binary apt is replacing (text file busy), a broken interpreter line: say which program.
+            throw new ExternalCommandException($"{path} could not be started: {ex.Message}", ex);
+        }
+
+        using var owned = process;
         process.StandardInput.Close();
 
         var overflowed = false;

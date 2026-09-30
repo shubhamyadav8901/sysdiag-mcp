@@ -18,6 +18,15 @@ public sealed class EventLogTests
         "\"_SYSTEMD_UNIT\":\"app.service\",\"MESSAGE\":\"disk full\"}";
 
     [Fact]
+    public async Task A_look_back_longer_than_the_journal_can_hold_is_refused_before_journalctl_runs()
+    {
+        var commands = new FakeCommands((_, _) => throw new InvalidOperationException("journalctl must not run"));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => new LinuxJournalInspector(commands, new NoServices(), Options, () => Now)
+            .QueryAsync(null, 6_000_000, null, null, null, 10, CancellationToken.None));
+    }
+
+    [Fact]
     public void A_journal_line_gives_time_priority_provider_unit_pid_and_message()
     {
         var (entries, skipped) = JournalJson.Parse(Line + "\n");

@@ -144,7 +144,7 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
     private async Task<List<string>> ActiveDependentsAsync(string unit, CancellationToken cancellationToken)
     {
         var result = await commands.RunAsync(
-            "systemctl", ["list-dependencies", "--reverse", "--all", "--plain", "--no-legend", "--no-pager", "--", unit], QueryWait, cancellationToken)
+            "systemctl", ["list-dependencies", "--reverse", "--all", "--full", "--plain", "--no-legend", "--no-pager", "--", unit], QueryWait, cancellationToken)
             .ConfigureAwait(false);
         var names = result.StandardOutput
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
