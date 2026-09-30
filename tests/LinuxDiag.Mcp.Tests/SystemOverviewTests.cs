@@ -40,5 +40,11 @@ public sealed class SystemOverviewTests
         Assert.True(overview.TotalPhysicalMemoryBytes > 0);
         Assert.True(overview.Uptime > TimeSpan.Zero);
         Assert.Contains(overview.Filesystems, fs => fs.MountPoint == "/" && fs.TotalBytes > 0);
+
+        // The kernel release, not the distribution again: RuntimeInformation.OSDescription returns the
+        // distro's name on Linux, which is how the first live run printed "Ubuntu 24.04.4 LTS" twice.
+        Assert.StartsWith("Linux ", overview.Kernel, StringComparison.Ordinal);
+        Assert.Matches(@"^Linux \d+\.\d+", overview.Kernel);
+        Assert.NotEqual(overview.OperatingSystem, overview.Kernel);
     }
 }

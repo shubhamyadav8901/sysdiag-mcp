@@ -11,6 +11,7 @@ public static class ProcFiles
     public const string Meminfo = "/proc/meminfo";
     public const string Uptime = "/proc/uptime";
     public const string Mounts = "/proc/self/mounts";
+    public const string KernelRelease = "/proc/sys/kernel/osrelease";
 
     public static string Read(string path) => File.ReadAllText(path);
 }

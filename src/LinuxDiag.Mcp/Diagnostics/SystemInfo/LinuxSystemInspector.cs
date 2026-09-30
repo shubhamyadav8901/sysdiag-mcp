@@ -15,7 +15,9 @@ public sealed class LinuxSystemInspector(IPrivilegeProbe privileges) : ISystemIn
             MachineName: Environment.MachineName,
             UserName: Environment.UserName,
             OperatingSystem: OsRelease.PrettyName(File.Exists(ProcFiles.OsRelease) ? ProcFiles.Read(ProcFiles.OsRelease) : string.Empty),
-            Kernel: RuntimeInformation.OSDescription,
+            // The running kernel's release, read directly: RuntimeInformation.OSDescription returns the
+            // distribution's name on Linux, so the summary printed "Ubuntu 24.04.4 LTS" twice.
+            Kernel: "Linux " + ProcFiles.Read(ProcFiles.KernelRelease).Trim(),
             Architecture: RuntimeInformation.OSArchitecture.ToString(),
             Elevated: privileges.IsElevated,
             BootTime: DateTimeOffset.UtcNow - uptime,
