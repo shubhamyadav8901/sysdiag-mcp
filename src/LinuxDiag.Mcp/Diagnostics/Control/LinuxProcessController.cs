@@ -1,0 +1,193 @@
+using LinuxDiag.Mcp.Diagnostics.Processes;
+using LinuxDiag.Mcp.Linux.Native;
+using LinuxDiag.Mcp.Linux.Parsers;
+using LinuxDiag.Mcp.Linux.Proc;
+using Microsoft.Extensions.Logging;
+using Microsoft.Win32.SafeHandles;
+
+namespace LinuxDiag.Mcp.Diagnostics.Control;
+
+public sealed partial class LinuxProcessController(ILogger<LinuxProcessController> logger) : IProcessController
+{
+    /// <summary>How long terminate and kill wait to see the process exit. A test shortens it.</summary>
+    internal TimeSpan ExitWait { get; init; } = TimeSpan.FromSeconds(10);
+
+    public ProcessControlResult Control(int processId, string expectedName, ProcessAction action, CancellationToken cancellationToken)
+    {
+        if (processId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(processId), "A process id must be positive. Get one from process_list.");
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedName);
+        if (processId == 1)
+        {
+            throw new ProcessControlException(
+                "Refusing to signal PID 1, the init process: stopping it takes the machine down, and most signals to " +
+                "it are ignored anyway. Nothing has been done.");
+        }
+
+        if (processId == Environment.ProcessId)
+        {
+            throw new ProcessControlException(
+                "Refusing to act on this diagnostics server's own process. Stopping it would end the session that " +
+                "asked, and nothing would be left to report the result.");
+        }
+
+        if (!LibC.Supported)
+        {
+            throw new ProcessControlException("process_control needs x86-64 Linux, where its syscalls and signal numbers are defined.");
+        }
+
+        using var pidfd = Open(processId);
+
+        // Read after the pidfd is open. If the PID was reused in between, this reads the newcomer -- and the
+        // signal below, sent through the pidfd, can only fail with ESRCH; it cannot reach the newcomer.
+        var stat = ProcStat.Parse(ProcFiles.ReadProcess(processId, "stat")
+            ?? throw new ProcessControlException($"PID {processId} exited before it could be checked. Nothing has been done."));
+        if (stat.IsKernelThread)
+        {
+            throw new ProcessControlException(
+                $"PID {processId} ({stat.Name}) is a kernel thread; signals to it are ignored or dangerous. Nothing has been done.");
+        }
+
+        if (!NamesMatch(Names(processId, stat.Name), expectedName))
+        {
+            throw new ProcessControlException(
+                $"PID {processId} is '{stat.Name}', not '{expectedName}'. Nothing has been done. PIDs are reused, so " +
+                "this one probably belongs to a different process now - call process_list to get a current one.");
+        }
+
+        if (stat.State == "Z")
+        {
+            throw new ProcessControlException(
+                $"PID {processId} ({stat.Name}) has already exited and is a zombie waiting for its parent (PID " +
+                $"{stat.ParentProcessId}) to reap it; signals do nothing to it. Nothing has been done.");
+        }
+
+        var started = KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat)) +
+                      TimeSpan.FromSeconds(stat.StartTimeTicks / (double)LinuxProcessTable.ClockTicksPerSecond);
+        try
+        {
+            LibC.SendSignal(pidfd, Signal(action));
+
+            // SIGTERM stays pending on a stopped process until it runs again, so a suspended process is
+            // continued after it -- as systemd does -- or terminate would always wait out its timeout.
+            if (action == ProcessAction.Terminate && stat.State == "T")
+            {
+                LibC.SendSignal(pidfd, LibC.SIGCONT);
+            }
+        }
+        catch (ErrnoException ex) when (ex.Errno == ErrnoException.ESRCH)
+        {
+            throw new ProcessControlException($"PID {processId} exited before it could be signalled. Nothing has been done.");
+        }
+        catch (ErrnoException ex) when (ex.Errno == ErrnoException.EPERM)
+        {
+            throw new ProcessControlException(
+                $"Could not {action.ToString().ToLowerInvariant()} '{stat.Name}' (PID {processId}): permission denied. " +
+                "Signalling another user's process needs root.");
+        }
+
+        var detail = action switch
+        {
+            ProcessAction.Suspend => "Stopped with SIGSTOP. Every thread is frozen until it is resumed, so it can be inspected in the meantime.",
+            ProcessAction.Resume => "Continued with SIGCONT.",
+            _ => AfterStop(pidfd, processId, action, cancellationToken),
+        };
+
+        LogControlled(logger, action, stat.Name, processId, detail);
+        return new ProcessControlResult(processId, stat.Name, started, action, detail);
+    }
+
+    /// <summary>Whether the name the caller expects is this process's: its comm, its executable, or argv[0].</summary>
+    /// <remarks>comm is cut to 15 bytes by the kernel, so a longer expected name matches on that prefix.</remarks>
+    internal static bool NamesMatch(IEnumerable<string> names, string expected)
+    {
+        var wanted = Path.GetFileName(expected.Trim());
+        return names.Any(name =>
+            string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase) ||
+            (name.Length == 15 && wanted.StartsWith(name, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static SafeFileHandle Open(int processId)
+    {
+        try
+        {
+            return LibC.OpenPidFd(processId);
+        }
+        catch (ErrnoException ex)
+        {
+            throw ex.Errno switch
+            {
+                ErrnoException.ESRCH => new ProcessControlException($"No process with PID {processId} is running. Nothing has been done."),
+                ErrnoException.EINVAL => new ProcessControlException(
+                    $"PID {processId} is a thread of another process, not a process. Pass the process's PID - the Tgid " +
+                    $"line of /proc/{processId}/status. Nothing has been done."),
+                ErrnoException.ENOSYS => new ProcessControlException(
+                    "This kernel has no pidfd_open (Linux 5.3 or later is needed), so a process cannot be signalled " +
+                    "without the risk of hitting a reused PID. Nothing has been done."),
+                _ => new ProcessControlException($"Could not open PID {processId}: {ex.Message}. Nothing has been done.", ex),
+            };
+        }
+    }
+
+    private static IEnumerable<string> Names(int processId, string comm)
+    {
+        yield return comm;
+        var exe = Optional(() => ProcFiles.ReadProcessLink(processId, "exe"));
+        var cmdline = Optional(() => ProcFiles.ReadProcess(processId, "cmdline"));
+
+        if (exe is not null)
+        {
+            yield return Path.GetFileName(exe);
+        }
+
+        if (cmdline?.Split('\0')[0] is { Length: > 0 } argv0)
+        {
+            yield return Path.GetFileName(argv0);
+        }
+    }
+
+    /// <summary>Another user's exe link or command line may be unreadable; the other names still count.</summary>
+    private static string? Optional(Func<string?> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
+    }
+
+    private static int Signal(ProcessAction action) => action switch
+    {
+        ProcessAction.Terminate => LibC.SIGTERM,
+        ProcessAction.Kill => LibC.SIGKILL,
+        ProcessAction.Suspend => LibC.SIGSTOP,
+        _ => LibC.SIGCONT,
+    };
+
+    private string AfterStop(SafeFileHandle pidfd, int processId, ProcessAction action, CancellationToken cancellationToken)
+    {
+        if (LibC.WaitForExit(pidfd, ExitWait, cancellationToken))
+        {
+            // Exited -- but a zombie keeps its /proc entry until the parent reaps it, so say who that is.
+            var after = ProcFiles.ReadProcess(processId, "stat") is { } text ? ProcStat.Parse(text) : null;
+            return after is { State: "Z" }
+                ? $"Exited. It remains a zombie until its parent (PID {after.ParentProcessId}) reaps it."
+                : "Exited.";
+        }
+
+        return action == ProcessAction.Terminate
+            ? $"Sent SIGTERM, but it has not exited after {ExitWait.TotalSeconds:0.#} s: it may be handling or ignoring " +
+              "the signal. Use action 'kill' to end it outright."
+            : "Sent SIGKILL, but it has not exited yet: it is probably in uninterruptible sleep (state D) inside the " +
+              "kernel, and will die when that call returns.";
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "process_control: {Action} {Name} (PID {ProcessId}): {Detail}")]
+    private static partial void LogControlled(ILogger logger, ProcessAction action, string name, int processId, string detail);
+}

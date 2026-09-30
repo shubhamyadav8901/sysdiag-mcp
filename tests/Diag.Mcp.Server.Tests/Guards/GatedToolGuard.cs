@@ -20,6 +20,7 @@ public static class GatedToolGuard
         Assert.DoesNotContain("update_self", ungranted);
         Assert.DoesNotContain("run_command", ungranted);
         Assert.Contains("put_file", ungranted);
+        Assert.Contains("process_control", ungranted);
 
         var update = toolNames(false, true, false);
         Assert.Contains("update_self", update);
@@ -33,6 +34,7 @@ public static class GatedToolGuard
         Assert.DoesNotContain("update_self", readOnly);
         Assert.DoesNotContain("run_command", readOnly);
         Assert.DoesNotContain("put_file", readOnly);
+        Assert.DoesNotContain("process_control", readOnly);
         Assert.Contains("get_file", readOnly);
     }
 }

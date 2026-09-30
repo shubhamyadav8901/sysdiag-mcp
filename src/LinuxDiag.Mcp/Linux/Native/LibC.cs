@@ -1,7 +1,9 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Diag.Mcp.Server.Files;
+using Microsoft.Win32.SafeHandles;
 
 namespace LinuxDiag.Mcp.Linux.Native;
 
@@ -11,6 +13,20 @@ public readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, u
     public bool IsFifo => (Mode & 0xF000) == 0x1000;
 
     public bool IsDirectory => (Mode & 0xF000) == 0x4000;
+}
+
+/// <summary>A C-library call's failure, with its errno for a caller that maps it to words.</summary>
+public sealed class ErrnoException : Exception, IDiagnosticException
+{
+    public const int EPERM = 1;
+    public const int ESRCH = 3;
+    public const int EINVAL = 22;
+    public const int ENOSYS = 38;
+
+    public ErrnoException(string operation, int errno)
+        : base($"{operation} failed: {Marshal.GetPInvokeErrorMessage(errno)}") => Errno = errno;
+
+    public int Errno { get; }
 }
 
 /// <summary>Every C-library call this server makes.</summary>
@@ -96,4 +112,79 @@ internal static class LibC
 
     [DllImport(SystemLibrary.C, SetLastError = true)]
     private static extern nint readlink([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] buffer, nint size);
+
+    public const int SIGKILL = 9;
+    public const int SIGTERM = 15;
+    public const int SIGCONT = 18;
+    public const int SIGSTOP = 19;
+
+    private const long SysPidfdSendSignal = 424;
+    private const long SysPidfdOpen = 434;
+    private const short PollIn = 1;
+    private const int EINTR = 4;
+
+    /// <summary>A pidfd for the process: once open, a signal through it reaches that process or fails -- never a newcomer on its PID.</summary>
+    public static SafeFileHandle OpenPidFd(int pid)
+    {
+        var fd = syscall(SysPidfdOpen, pid, 0, 0, 0);
+        return fd < 0
+            ? throw new ErrnoException("pidfd_open", Marshal.GetLastPInvokeError())
+            : new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+    }
+
+    public static void SendSignal(SafeFileHandle pidfd, int signal)
+    {
+        if (syscall(SysPidfdSendSignal, (long)pidfd.DangerousGetHandle(), signal, 0, 0) < 0)
+        {
+            throw new ErrnoException("pidfd_send_signal", Marshal.GetLastPInvokeError());
+        }
+    }
+
+    /// <summary>Whether the process exits within the timeout: a pidfd becomes readable when it does.</summary>
+    /// <remarks>
+    /// Asked of the pidfd, not of /proc: a zombie keeps /proc/&lt;pid&gt; until its parent reaps it, so "the
+    /// directory is still there" reports an exited process as running. Polled in slices so cancellation
+    /// interrupts the wait.
+    /// </remarks>
+    public static bool WaitForExit(SafeFileHandle pidfd, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var watch = Stopwatch.StartNew();
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var left = timeout - watch.Elapsed;
+            var request = new PollFd { Fd = (int)pidfd.DangerousGetHandle(), Events = PollIn };
+            var ready = poll(ref request, 1, (int)Math.Clamp(left.TotalMilliseconds, 0, 250));
+            if (ready > 0)
+            {
+                return true;
+            }
+
+            if (ready < 0 && Marshal.GetLastPInvokeError() is var errno && errno != EINTR)
+            {
+                throw new ErrnoException("poll", errno);
+            }
+
+            if (left <= TimeSpan.Zero)
+            {
+                return false;
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PollFd
+    {
+        public int Fd;
+        public short Events;
+        public short Revents;
+    }
+
+    // syscall(2) is variadic in C. On x86-64 a variadic long travels exactly as a fixed one does, the same
+    // reason the kit's open(2) declaration is sound there -- and another reason this class is x86-64 only.
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern long syscall(long number, long a1, long a2, long a3, long a4);
+
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern int poll(ref PollFd fds, ulong nfds, int timeout);
 }

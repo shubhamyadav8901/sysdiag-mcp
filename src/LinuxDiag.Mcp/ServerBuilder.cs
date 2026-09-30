@@ -6,6 +6,7 @@ using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
 using LinuxDiag.Mcp.Diagnostics.Commands;
 using LinuxDiag.Mcp.Diagnostics.Containers;
+using LinuxDiag.Mcp.Diagnostics.Control;
 using LinuxDiag.Mcp.Diagnostics.Handles;
 using LinuxDiag.Mcp.Diagnostics.Network;
 using LinuxDiag.Mcp.Diagnostics.Processes;
@@ -107,6 +108,13 @@ public static class ServerBuilder
             mcp.WithTools<SelfUpdateTools>(DiagServerKit.ToolJsonOptions);
         }
 
+        // Signals any process the server can reach -- as root, every one. A read-only server does not
+        // advertise what it would refuse, as in windiag.
+        if (!options.ReadOnly)
+        {
+            mcp.WithTools<ControlTools>(DiagServerKit.ToolJsonOptions);
+        }
+
         return mcp;
     }
 
@@ -132,6 +140,8 @@ public static class ServerBuilder
         services.TryAddSingleton<NetworkTools>();
         services.TryAddSingleton<IPipeInspector, LinuxPipeInspector>();
         services.TryAddSingleton<PipeTools>();
+        services.TryAddSingleton<IProcessController, LinuxProcessController>();
+        services.TryAddSingleton<ControlTools>();
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();

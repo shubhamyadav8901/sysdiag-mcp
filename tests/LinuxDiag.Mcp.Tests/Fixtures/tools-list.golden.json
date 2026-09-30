@@ -678,6 +678,89 @@
     }
   },
   {
+    "name": "process_control",
+    "title": "Terminate, kill, suspend or resume a process",
+    "description": "Terminate, kill, suspend or resume a running process by signal. \u0027terminate\u0027 sends SIGTERM and waits up to 10 seconds to see it exit - unlike windiag, where terminate is a hard kill; \u0027kill\u0027 sends SIGKILL, which cannot be caught, and matches windiag\u0027s terminate. \u0027suspend\u0027 (SIGSTOP) freezes every thread without ending the process, so a hang can be caught in the act; \u0027resume\u0027 (SIGCONT) undoes it. You must pass the name you expect alongside the PID. It is checked through a pidfd, so a PID reused since your process_list can never be signalled by mistake. PID 1, kernel threads and this server itself are refused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id to act on. Get a current one from process_list.",
+          "type": "integer"
+        },
+        "expectedName": {
+          "description": "The name you expect that PID to be, e.g. \u0027nginx\u0027 or \u0027/usr/sbin/nginx\u0027. Verified before anything happens.",
+          "type": "string"
+        },
+        "action": {
+          "description": "\u0027terminate\u0027, \u0027kill\u0027, \u0027suspend\u0027 or \u0027resume\u0027",
+          "type": "string",
+          "default": "suspend"
+        }
+      },
+      "required": [
+        "processId",
+        "expectedName"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "startTime": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "Terminate",
+                "Kill",
+                "Suspend",
+                "Resume"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "processId",
+            "processName",
+            "startTime",
+            "action",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "result"
+      ]
+    },
+    "annotations": {
+      "title": "Terminate, kill, suspend or resume a process",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "process_handles",
     "title": "Everything one process has open",
     "description": "List everything one process has open - files, directories, devices, sockets, pipes and anonymous inodes (eventfd, epoll, inotify) - plus the files it has memory-mapped, each with how it was opened: read, write or read-write. Use it to answer what a process is actually touching: which log it is writing, which deleted file it is keeping alive, how many sockets it holds. Scoped to one process, so it is far cheaper than path_handle_search, which walks every process.",

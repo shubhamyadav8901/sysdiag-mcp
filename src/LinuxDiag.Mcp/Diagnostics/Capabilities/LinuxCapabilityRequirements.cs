@@ -58,6 +58,10 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "/proc/<pid>/net/unix per network namespace, and FIFOs among /proc/<pid>/fd",
                 null,
                 "cannot name the holders of sockets and FIFOs owned by other users"),
+            ["process_control"] = new(
+                "signals through a pidfd (pidfd_open, pidfd_send_signal); Linux 5.3 or later",
+                null,
+                "can only signal processes owned by the current user"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }
