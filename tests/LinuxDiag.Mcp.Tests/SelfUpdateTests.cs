@@ -1,5 +1,7 @@
 using Diag.Mcp.Server.SelfUpdate;
+using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LinuxDiag.Mcp.Tests;
 
@@ -97,5 +99,32 @@ public sealed class RestartScriptTests
         // Review Focus 5: a quote would end the shell string mid-path and the helper would run whatever
         // followed. Refused up front, while the server is still running and nothing has been launched.
         Assert.Throws<SelfUpdateRejectedException>(() => SystemdRestartHelper.ShellQuote("/opt/it's/LinuxDiag.Mcp"));
+    }
+
+    [LinuxFact]
+    public void Launch_with_a_quote_in_the_artifact_path_leaves_no_script_behind()
+    {
+        // Refusing the quote is half of it; the other half is that Launch refuses before it writes, so
+        // "nothing has been changed" is true of the disk as well as of the running server. The log lives
+        // in the artifact directory, so a quote there reaches Launch through the log path -- the one
+        // shell-quoted value this test lets carry it; the script's own path goes to sh as an argument.
+        var artifacts = Path.Combine(Path.GetTempPath(), $"ld-it's-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifacts);
+        var log = Path.Combine(artifacts, "self-update.log");
+        var helper = new SystemdRestartHelper(
+            new LinuxDiagOptions { ArtifactDirectory = artifacts, ServiceName = null },
+            NullLogger<SystemdRestartHelper>.Instance);
+        try
+        {
+            var ex = Assert.Throws<SelfUpdateRejectedException>(() => helper.Launch(
+                "/opt/linuxdiag/LinuxDiag.Mcp", "/opt/linuxdiag/LinuxDiag.Mcp.new", "ABC", log));
+
+            Assert.Contains(log, ex.Message, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(artifacts, "self-update.sh")), "no script may be left behind");
+        }
+        finally
+        {
+            Directory.Delete(artifacts, recursive: true);
+        }
     }
 }
