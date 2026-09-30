@@ -56,7 +56,13 @@ internal static class FileScope
     /// are kept as spelled, since there is nothing there to be a link.
     /// </para>
     /// </remarks>
-    internal static string RealPath(string fullPath)
+    internal static string RealPath(string fullPath) =>
+        RealPath(fullPath, path => LinkTargetOf(path, fullPath), relativeTargetsBySpelling: OperatingSystem.IsWindows());
+
+    /// <summary>The walk itself, with the link lookup and the OS's rule for relative targets supplied.</summary>
+    /// <param name="linkTargetOf">The raw target of the link at a path, or null when it is not a link.</param>
+    /// <param name="relativeTargetsBySpelling">Windows' rule for a relative link target, rather than POSIX's.</param>
+    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling)
     {
         var root = Path.GetPathRoot(fullPath);
         if (string.IsNullOrEmpty(root))
@@ -85,7 +91,7 @@ internal static class FileScope
             }
 
             var next = Path.Combine(current, part);
-            var target = LinkTargetOf(next, fullPath);
+            var target = linkTargetOf(next);
             if (target is null)
             {
                 current = next;
@@ -97,6 +103,15 @@ internal static class FileScope
                 throw new FileTransferException(
                     $"'{fullPath}' could not be resolved: it passes through more than {MaxLinkHops} links, " +
                     "which is a link loop.");
+            }
+
+            // Windows and POSIX disagree on a relative target. The NT I/O manager joins it onto the
+            // link's directory and collapses its '..' by spelling, never going through the links the
+            // target names; POSIX walks those components like any others. Walking on Windows judged
+            // 'hop\..\..' by where hop points, while Windows opened the directory two levels up.
+            if (relativeTargetsBySpelling && !Path.IsPathRooted(target))
+            {
+                target = Path.GetFullPath(Path.Combine(current, target));
             }
 
             // An absolute target starts again from its own root; a relative one carries on from the
