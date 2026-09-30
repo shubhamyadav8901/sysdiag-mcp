@@ -38,10 +38,12 @@ internal static class FileScope
     /// <remarks>
     /// <para>The server directory is resolved the same way as the path, so a link cannot get around the
     /// comparison from either side.</para>
-    /// <para>An artifact directory strictly inside the server directory is still the artifact directory:
-    /// it is owned in its own right, and an input dropped there stages nothing. One that is the server
-    /// directory, or above it (<c>/opt</c>, <c>/</c>), exempts nothing: counting "under the artifacts" as
-    /// the exemption there made the server's own binary writable with no grant at all.</para>
+    /// <para>Every real path under the server directory counts as in it, wherever the artifact directory
+    /// is. One above it (<c>/opt</c>, <c>/</c>) or equal to it made the server's own binary writable with
+    /// no grant when "under the artifacts" was an exemption; one nested inside it did the same for
+    /// whatever it held. The published binary's RUNPATH is <c>$ORIGIN/netcoredeps</c>, so an artifact
+    /// directory of <c>/opt/linuxdiag/netcoredeps</c> would have made a directory a root process loads
+    /// libraries from writable with only the token.</para>
     /// </remarks>
     /// <param name="replacesFinalLink">
     /// The operation replaces a link at the last component instead of following it, so it is judged at
@@ -54,10 +56,7 @@ internal static class FileScope
         var server = RealPath(serverDirectory);
         var artifacts = RealPath(options.ArtifactDirectory);
         var inServer = IsUnder(real, server);
-        var inArtifacts = IsUnder(real, artifacts);
-        var artifactsNestedInServer = IsUnder(artifacts, server) && !IsUnder(server, artifacts);
-        return (inServer || inArtifacts ? WriteScope.WinDiag : WriteScope.Arbitrary,
-            inServer && !(inArtifacts && artifactsNestedInServer));
+        return (inServer || IsUnder(real, artifacts) ? WriteScope.WinDiag : WriteScope.Arbitrary, inServer);
     }
 
     /// <summary>The real path an operation on <paramref name="fullPath"/> touches.</summary>

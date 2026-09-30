@@ -336,7 +336,9 @@ Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `u
 need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). Unlike windiag,
 `put_file` does not write into the server's own directory without it: that directory holds a root
 service's binary, and staging a build is the only reason to write there. The artifact directory stays
-writable either way, and arbitrary write lifts the restriction too. A path is judged where the write
+writable either way -- unless it is placed inside the server's own directory, which gets no exemption:
+everything under `/opt/linuxdiag`, the `netcoredeps` folder the binary loads libraries from included,
+needs the grant. Arbitrary write lifts the restriction too. A path is judged where the write
 really lands: links among its parent directories are followed, but a link as the final name is replaced
 where it sits rather than written through, so `put_file /tmp/x` is a write to `/tmp` even when
 `/tmp/x` links into `/var/lib/linuxdiag`. The staged

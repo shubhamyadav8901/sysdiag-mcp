@@ -102,16 +102,19 @@ public sealed class ServerDirectoryWriteTests : IDisposable
     }
 
     [Fact]
-    public void An_artifact_directory_inside_the_server_directory_stays_writable_without_the_grant()
+    public void An_artifact_directory_inside_the_server_directory_does_not_open_it()
     {
-        // The artifact directory is owned in its own right; that an operator nested it under the
-        // server's folder does not make an input dropped there a build being staged.
-        var nested = Directory.CreateDirectory(Path.Combine(_serverDir, "artifacts")).FullName;
-        var target = Path.Combine(nested, "input.bin");
+        // Nothing under the server's folder is exempt. The published binary's RUNPATH is
+        // $ORIGIN/netcoredeps, so an artifact directory of /opt/linuxdiag/netcoredeps, exempted as
+        // "the artifacts", would let anyone with the token plant a library a root process loads.
+        var nested = Directory.CreateDirectory(Path.Combine(_serverDir, "netcoredeps")).FullName;
+        var target = Path.Combine(nested, "libplanted.so");
 
-        Receiver(serverDirectoryWritable: false, artifactDirectory: nested).Receive(Put(target), CancellationToken.None);
+        var ex = Assert.Throws<FileTransferException>(() => Receiver(serverDirectoryWritable: false, artifactDirectory: nested)
+            .Receive(Put(target), CancellationToken.None));
 
-        Assert.True(File.Exists(target));
+        Assert.Contains(SelfUpdateSetting, ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(target));
     }
 
     [Fact]
