@@ -52,7 +52,14 @@ internal static class FileScope
     internal static (WriteScope Scope, bool InServerDirectory) Classify(
         string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink = false)
     {
-        var real = LandingPath(fullPath, replacesFinalLink);
+        var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink);
+        if (crossesMagicLink)
+        {
+            // Unjudgeable, so not owned: it needs the arbitrary grant, as any path outside would.
+            // Refusing it outright would also take /proc/<pid>/fd from an operator who granted that.
+            return (WriteScope.Arbitrary, false);
+        }
+
         var server = RealPath(serverDirectory);
         var artifacts = RealPath(options.ArtifactDirectory);
         var inServer = IsUnder(real, server);
@@ -67,13 +74,17 @@ internal static class FileScope
     /// as spelled. Judging that write at the link's target let <c>/tmp/x -&gt; /var/lib/linuxdiag/x</c>
     /// pass as owned while root created <c>/tmp/x</c>.
     /// </remarks>
-    internal static string LandingPath(string fullPath, bool replacesFinalLink)
+    internal static (string Path, bool CrossesMagicLink) LandingPath(string fullPath, bool replacesFinalLink)
     {
         var name = Path.GetFileName(fullPath);
         var parent = Path.GetDirectoryName(fullPath);
-        return replacesFinalLink && !string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(parent)
-            ? Path.Combine(RealPath(parent), name)
-            : RealPath(fullPath);
+        if (replacesFinalLink && !string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(parent))
+        {
+            var (real, crossesMagicLink) = Walk(parent);
+            return (Path.Combine(real, name), crossesMagicLink);
+        }
+
+        return Walk(fullPath);
     }
 
     /// <summary>How many links one resolution may follow before it is called a loop: the kernel's own limit.</summary>
@@ -99,18 +110,54 @@ internal static class FileScope
     /// are kept as spelled, since there is nothing there to be a link.
     /// </para>
     /// </remarks>
-    internal static string RealPath(string fullPath) =>
-        RealPath(fullPath, path => LinkTargetOf(path, fullPath), relativeTargetsBySpelling: OperatingSystem.IsWindows());
+    internal static string RealPath(string fullPath) => Walk(fullPath).Path;
 
-    /// <summary>The walk itself, with the link lookup and the OS's rule for relative targets supplied.</summary>
+    /// <summary>The walk with the link lookup and the OS's rule for relative targets supplied, and no magic links.</summary>
     /// <param name="linkTargetOf">The raw target of the link at a path, or null when it is not a link.</param>
     /// <param name="relativeTargetsBySpelling">Windows' rule for a relative link target, rather than POSIX's.</param>
-    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling)
+    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling) =>
+        Walk(fullPath, linkTargetOf, relativeTargetsBySpelling, isMagicLink: null).Path;
+
+    /// <summary>The real walk on this machine, and whether it crossed a link it could not judge.</summary>
+    private static (string Path, bool CrossesMagicLink) Walk(string fullPath) =>
+        Walk(fullPath, path => LinkTargetOf(path, fullPath), OperatingSystem.IsWindows(),
+            OperatingSystem.IsLinux() ? link => IsOnProcfs(Path.GetDirectoryName(link) ?? link) : null);
+
+    /// <summary>Whether <paramref name="path"/> is on procfs, where every link is judged a magic link.</summary>
+    /// <remarks>
+    /// Asked of the filesystem rather than of the spelling, so procfs mounted somewhere other than
+    /// <c>/proc</c> -- a container given the host's at <c>/host/proc</c> -- is caught too. The ordinary
+    /// links there (<c>/proc/self</c>, <c>/proc/mounts</c>) are caught with the magic ones; that costs
+    /// nothing, since nothing under procfs is ever an owned directory. A filesystem that cannot be asked
+    /// counts as procfs: the answer then is "not owned", which a grant can still override.
+    /// </remarks>
+    internal static bool IsOnProcfs(string path)
+    {
+        try
+        {
+            return string.Equals(new DriveInfo(path).DriveFormat, "proc", StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>The walk, with the link lookup, the OS's rule for relative targets and its magic links supplied.</summary>
+    /// <param name="isMagicLink">
+    /// Whether the link at a path is one the kernel does not follow by name, or null where there are none.
+    /// </param>
+    /// <returns>
+    /// The real path, and whether it crossed a magic link. Past one, the rest is kept as spelled and the
+    /// path is not judged: see <see cref="Classify"/>.
+    /// </returns>
+    internal static (string Path, bool CrossesMagicLink) Walk(
+        string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling, Func<string, bool>? isMagicLink)
     {
         var root = Path.GetPathRoot(fullPath);
         if (string.IsNullOrEmpty(root))
         {
-            return fullPath;
+            return (fullPath, false);
         }
 
         var current = root;
@@ -141,6 +188,16 @@ internal static class FileScope
                 continue;
             }
 
+            // readlink on /proc/<pid>/root, cwd or fd/N prints a name, but the kernel jumps straight to
+            // the object -- a container's root, a descriptor's file -- and an absolute link below it
+            // resolves against this process's root again. Neither the name nor anything spliced after it
+            // says where the bytes land, so the walk stops judging here.
+            if (isMagicLink?.Invoke(next) == true)
+            {
+                var rest = pending.ToArray();
+                return (rest.Length == 0 ? next : Path.Combine([next, .. rest]), true);
+            }
+
             if (++hops > MaxLinkHops)
             {
                 throw new FileTransferException(
@@ -168,7 +225,7 @@ internal static class FileScope
             PushComponents(pending, target[(targetRoot?.Length ?? 0)..]);
         }
 
-        return current;
+        return (current, false);
     }
 
     /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>
