@@ -37,6 +37,30 @@ public sealed class RealPathTests
 
         Assert.Equal(Path.Combine(A, "x"), real);
     }
+
+    // A\l0 -> l1 -> ... -> l{hops}, which is not a link: exactly `hops` links to follow.
+    private static Func<string, string?> Chain(int hops) => path =>
+    {
+        var name = Path.GetFileName(path);
+        return name.StartsWith('l') && int.TryParse(name.AsSpan(1), out var i) && i < hops ? $"l{i + 1}" : null;
+    };
+
+    [Fact]
+    public void A_chain_of_exactly_the_kernels_link_limit_resolves()
+    {
+        var real = FileScope.RealPath(Path.Combine(A, "l0"), Chain(FileScope.MaxLinkHops), relativeTargetsBySpelling: false);
+
+        Assert.Equal(Path.Combine(A, $"l{FileScope.MaxLinkHops}"), real);
+    }
+
+    [Fact]
+    public void One_link_past_the_kernels_limit_is_refused_as_a_loop()
+    {
+        var ex = Assert.Throws<FileTransferException>(() =>
+            FileScope.RealPath(Path.Combine(A, "l0"), Chain(FileScope.MaxLinkHops + 1), relativeTargetsBySpelling: false));
+
+        Assert.Contains("link loop", ex.Message, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>A Windows fact that needs to create a symbolic link, and reports itself skipped where it cannot.</summary>
