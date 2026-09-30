@@ -40,6 +40,12 @@ release fixed something that had been silently wrong, it says what the wrong ans
   the process that took it and exited. `network_owners` names every process sharing a socket.
   `process_control` signals through a pidfd, so a PID reused since `process_list` cannot be hit; its
   `terminate` is SIGTERM with a 10-second wait, and `kill` is SIGKILL.
+- **LinuxDiag host configuration.** `service_config`, `service_control` (writable servers only),
+  `event_log_tail`, `file_signatures`, `autostart_audit` and `effective_access`. `file_signatures` and
+  `autostart_audit` judge files against the dpkg database - including the drop-ins that can override a
+  packaged unit - and say "matches the database", never "signed". `effective_access` names the rule that
+  decides, down to an ACL mask or a parent directory, and shows the kernel's own answer beside it.
+
 - **`RenderLimits` is shared by both servers**, and the kit's capability table can say a tool is
   Degraded when none of the sockets or directories it reads exists.
 - **The relay runs on Linux**, and is built for macOS (untested until CI has run on it). A Linux machine

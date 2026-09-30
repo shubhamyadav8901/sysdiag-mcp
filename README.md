@@ -34,7 +34,6 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `path_handle_search` | Sysinternals `handle` | Handle search across every process (files by default; all object types on request) |
 | `process_handles` | Sysinternals `handle -p` | Everything one process holds open — files, keys, sections, mutants, tokens |
 | `autostart_audit` | Sysinternals `autorunsc` | What runs without anybody starting it, and who signed it |
-| `effective_access` | statx, the `system.posix_acl_*` and `security.capability` xattrs, mountinfo, `faccessat` | For an `account` or a `processId`: read, write and execute with the rule that decides, and the first directory on the way it cannot search. AppArmor and SELinux are seen only through the server's own kernel check |
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
@@ -43,8 +42,6 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
-| `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Owning package and version; Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database (integrity, not provenance) |
-| `autostart_audit` | enabled units, users' units, cron, rc.local, profile.d, ld.so.preload | Package check covers the unit, its drop-ins, the program and an interpreter's script; a timer or socket names the unit it runs |
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
 | `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |
@@ -324,13 +321,18 @@ partial instead of presenting it as complete. The Docker socket is asked one fix
 than risk signalling a reused PID. `path_handle_search`, `who_locks_path` and `named_pipes` need glibc 2.28
 or later, which every distribution .NET 9 supports has.
 
-#### Services, logs, packages and permissions
+#### Services, logs and host configuration
 
 | Tool | Answers from | Notes |
 |---|---|---|
-| `service_config` | `systemctl show` | State and configuration, unit file and drop-ins, restarts, both dependency directions; near matches for a wrong name |
-| `service_control` | `systemctl start`, `stop`, `restart` | Writable servers only. Services only; refuses stopping journald, logind, udevd, networking, dbus, polkit, ssh, this server or its dependencies; reports dependents it stopped |
-| `event_log_tail` | `journalctl -o json` | Newest first by unit, severity, provider and raw `FIELD=value` matches; says when only this account's records were visible |
+| `service_config` | `systemctl show` | Unit file, drop-ins, main PID, restart count, result, dependencies both ways; a close name is offered when the unit does not exist |
+| `service_control` | `systemctl start/stop/restart` | Writable server only. Services only; bus, journal, login, network, resolver, SSH and polkit units are refused, as is the server's own unit (use `update_self`). Waits at most 75 s, then reports "still running" |
+| `event_log_tail` | `journalctl -o json` | `unit`, `minutes`, `levels`, `provider` (the syslog identifier), `match` (`FIELD=value`), `maxEvents` |
+| `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database - integrity, not provenance |
+| `autostart_audit` | enabled units, users' units, cron, rc.local, profile.d, ld.so.preload | `unpackagedOnly` checks the unit, its drop-ins, the program and an interpreter's script against their packages |
+| `effective_access` | statx, ACL and capability xattrs, mountinfo, `faccessat` | For an `account` or a `processId`: each right with the rule that decides, and the first directory it cannot search |
+
+These tools run `systemctl` and `journalctl` from the system directories only, with a fixed `PATH`, `LC_ALL=C.UTF-8` and no pager, and never pass a caller's value where it could be read as an option. A host without dpkg (a non-Debian distribution) still gets SHA-256 from `file_signatures`, and `capabilities` says the package check is unavailable.
 
 Publish it, then install it over SSH:
 
