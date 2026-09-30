@@ -70,12 +70,12 @@ public sealed record LinuxServiceInstallOptions
         var name = ServiceName(args);
         // --token-stdin keeps a pinned token out of the command line, where sudo logs it and ps shows it.
         // Both at once is refused: whichever silently won, the operator installed a token they did not mean.
-        if (Flag("--token-stdin") && Value("--token") is not null)
+        if (Flag("--token-stdin") && Flag("--token"))
         {
             throw new ConfigurationException("--token-stdin and --token both supply the token; give only one.");
         }
 
-        var supplied =Flag("--token-stdin") ? ReadToken(stdin ?? Console.In) : Value("--token");
+        var supplied = Flag("--token-stdin") ? ReadToken(stdin ?? Console.In) : Value("--token");
         return new LinuxServiceInstallOptions
         {
             Name = name,

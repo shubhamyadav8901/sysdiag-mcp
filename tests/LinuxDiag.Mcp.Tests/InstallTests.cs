@@ -47,6 +47,11 @@ public sealed class InstallTests
             new StringReader("t0k\n")));
 
         Assert.Contains("--token-stdin", ex.Message, StringComparison.Ordinal);
+
+        // A trailing bare --token carries no value, and is still a second, conflicting instruction.
+        Assert.Throws<ConfigurationException>(() => LinuxServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://0.0.0.0:4024", "--token-stdin", "--token"],
+            new StringReader("t0k\n")));
     }
 
     [Fact]
