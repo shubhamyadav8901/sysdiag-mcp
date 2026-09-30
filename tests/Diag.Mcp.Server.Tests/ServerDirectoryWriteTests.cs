@@ -270,7 +270,7 @@ public sealed class ServerDirectoryWriteTests : IDisposable
     public void The_resolver_loads_the_c_library_by_its_system_name()
     {
         Assert.Equal(
-            NativeLibrary.Load(SystemLibrary.CLibrary),
+            NativeLibrary.Load(SystemLibrary.LinuxLibrary),
             SystemLibrary.Resolve("libc", typeof(FileReceiver).Assembly, null));
     }
 }

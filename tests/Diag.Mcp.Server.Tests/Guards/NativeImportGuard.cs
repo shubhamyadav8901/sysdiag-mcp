@@ -18,7 +18,7 @@ namespace Diag.Mcp.Server.Tests;
 public static class NativeImportGuard
 {
     /// <summary>The library name the resolver answers for; any other name falls through to probing.</summary>
-    public const string LibraryName = "libc";
+    public const string LibraryName = Diag.Mcp.Server.Files.SystemLibrary.C;
 
     /// <returns>How many imports were checked, so a caller can see the sweep was not vacuous.</returns>
     public static int AssertEveryImportUsesTheSystemResolver(params Assembly[] assemblies)

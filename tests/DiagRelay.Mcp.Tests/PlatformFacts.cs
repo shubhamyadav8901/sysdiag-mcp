@@ -28,6 +28,18 @@ public sealed class UnixFactAttribute : FactAttribute
     }
 }
 
+/// <summary>A fact that runs only on macOS -- CI's macos-latest job runs it.</summary>
+public sealed class MacFactAttribute : FactAttribute
+{
+    public MacFactAttribute()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            Skip = "macOS only. CI's macos-latest job runs it.";
+        }
+    }
+}
+
 /// <summary>A fact that runs only on Linux -- run it with tools/test-linux.sh.</summary>
 public sealed class LinuxFactAttribute : FactAttribute
 {
