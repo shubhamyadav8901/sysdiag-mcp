@@ -13,6 +13,8 @@ public readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, u
     public bool IsFifo => (Mode & 0xF000) == 0x1000;
 
     public bool IsDirectory => (Mode & 0xF000) == 0x4000;
+
+    public bool IsRegular => (Mode & 0xF000) == 0x8000;
 }
 
 /// <summary>A C-library call's failure, with its errno for a caller that maps it to words.</summary>
@@ -105,6 +107,27 @@ internal static class LibC
             BinaryPrimitives.ReadUInt64LittleEndian(buffer[32..]),
             BinaryPrimitives.ReadUInt16LittleEndian(buffer[28..]));
     }
+
+    /// <summary>The path with every link resolved, or null when some part of it does not exist.</summary>
+    public static string? RealPath(string path)
+    {
+        var buffer = new byte[PathMax];
+        if (realpath(path, buffer) != 0)
+        {
+            return Encoding.UTF8.GetString(buffer, 0, Array.IndexOf(buffer, (byte)0));
+        }
+
+        var errno = Marshal.GetLastPInvokeError();
+        return errno switch
+        {
+            ENOENT or ENOTDIR => null,
+            EACCES or EPERM => throw new UnauthorizedAccessException($"Permission denied resolving '{path}'."),
+            _ => throw new IOException(Marshal.GetPInvokeErrorMessage(errno), errno),
+        };
+    }
+
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern nint realpath([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] resolved);
 
     [DllImport(SystemLibrary.C, SetLastError = true)]
     private static extern int statx(

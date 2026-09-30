@@ -13,8 +13,10 @@ using LinuxDiag.Mcp.Diagnostics.Network;
 using LinuxDiag.Mcp.Diagnostics.Processes;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
 using LinuxDiag.Mcp.Diagnostics.Services;
+using LinuxDiag.Mcp.Diagnostics.Signatures;
 using LinuxDiag.Mcp.Diagnostics.SystemInfo;
 using LinuxDiag.Mcp.Linux.External;
+using LinuxDiag.Mcp.Linux.Packages;
 using LinuxDiag.Mcp.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -98,7 +100,8 @@ public static class ServerBuilder
             .WithTools<NetworkTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<PipeTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<ServiceTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<EventLogTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<EventLogTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<SignatureTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -154,6 +157,9 @@ public static class ServerBuilder
         services.TryAddSingleton<ServiceTools>();
         services.TryAddSingleton<IJournalInspector, LinuxJournalInspector>();
         services.TryAddSingleton<EventLogTools>();
+        services.TryAddSingleton<IPackageDatabaseSource, DpkgDatabaseSource>();
+        services.TryAddSingleton<ISignatureInspector, LinuxSignatureInspector>();
+        services.TryAddSingleton<SignatureTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
         services.TryAddSingleton<CommandTools>();

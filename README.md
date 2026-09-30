@@ -42,6 +42,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
+| `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Owning package and version; Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database (integrity, not provenance) |
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
 | `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |

@@ -1,4 +1,5 @@
 using LinuxDiag.Mcp.Diagnostics.Containers;
+using LinuxDiag.Mcp.Linux.Packages;
 
 namespace LinuxDiag.Mcp.Diagnostics.Capabilities;
 
@@ -68,6 +69,11 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "journalctl -o json",
                 "journalctl",
                 "sees only this account's own records unless it is root or in the systemd-journal or adm group"),
+            ["file_signatures"] = new(
+                "SHA-256, and ownership and checksums from the dpkg database",
+                null,
+                null,
+                AnyOfPaths: [DpkgDatabase.DefaultRoot + "/info"]),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }
