@@ -69,6 +69,21 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Fixed
 
+- **LinuxDiag summaries can no longer be forged by the text they report.** A command line, process or
+  socket name, unit description, journal message or cron command containing a newline used to start a line
+  of its own in the summary an agent reads, and an ESC or direction override reached it raw; every such
+  value is now shown escaped (`\n`, `\u001b`), while the structured content keeps the original.
+- **LinuxDiag says more of what it could not see.** `process_list` names a `/proc` mounted with
+  `hidepid`, `named_pipes` names network namespaces it could not read, `service_config` shows why a unit
+  file failed to load, units written by systemd generators are no longer reported as unpackaged, and the
+  systemd tools report Degraded where systemd is not running. One unreadable process, odd lock line,
+  socket name or unit no longer loses the whole answer, and `container_list` and `file_signatures` are capped.
+- **LinuxDiag's control tools refuse more of what would cut a machine off.** `process_control` refuses to
+  stop or freeze journald, logind, udevd, dbus, networking, the resolver, polkit, sshd and VPN daemons, and
+  matches the expected name exactly (case-sensitive, a path compared whole). `service_control` refuses a
+  stop that would take a critical unit down with it, and treats `tailscaled`, `wg-quick@` and `openvpn@`
+  as critical.
+
 - **A link loop is refused instead of crashing the process** (windiag too). A symlink or junction whose
   target ran back through one of its own parent components sent path resolution into unbounded
   recursion, and the stack overflow took the whole server down with every call in flight; `put_file`
