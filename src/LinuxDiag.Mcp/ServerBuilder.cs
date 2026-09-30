@@ -5,6 +5,7 @@ using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
 using LinuxDiag.Mcp.Diagnostics.Commands;
+using LinuxDiag.Mcp.Diagnostics.Processes;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
 using LinuxDiag.Mcp.Diagnostics.SystemInfo;
 using LinuxDiag.Mcp.Tools;
@@ -107,6 +108,7 @@ public static class ServerBuilder
         services.TryAddSingleton<ICapabilityRequirements, LinuxCapabilityRequirements>();
         services.TryAddSingleton<ICapabilityReporter, CapabilityReporter>();
         services.TryAddSingleton<ISystemInspector, LinuxSystemInspector>();
+        services.TryAddSingleton<IProcessTable, LinuxProcessTable>();
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();

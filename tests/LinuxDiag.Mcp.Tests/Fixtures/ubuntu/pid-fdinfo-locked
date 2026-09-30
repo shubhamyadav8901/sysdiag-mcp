@@ -1,0 +1,5 @@
+pos:	0
+flags:	0100001
+mnt_id:	80
+ino:	208005
+lock:	1: FLOCK  ADVISORY  WRITE 0 08:30:208005 0 EOF

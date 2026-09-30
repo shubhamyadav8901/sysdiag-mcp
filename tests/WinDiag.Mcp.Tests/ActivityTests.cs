@@ -358,7 +358,7 @@ public sealed class ActivityQueryTests
         var rendered = summary.Split('\n').Count(line => line.StartsWith("- ", StringComparison.Ordinal));
 
         Assert.Equal(returned, result.Events.Count);                        // every row is still returned
-        Assert.Equal(WinDiag.Mcp.Tools.RenderLimits.MaxRenderedRows, rendered);
+        Assert.Equal(RenderLimits.MaxRenderedRows, rendered);
         Assert.Contains("every one is in this result's structured content", summary);
     }
 

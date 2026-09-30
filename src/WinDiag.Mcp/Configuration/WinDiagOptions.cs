@@ -48,7 +48,7 @@ public sealed record WinDiagOptions
     /// 50000 so high-cardinality tools -- process_handles and path_handle_search above all, where a
     /// single process can hold thousands of handles -- are not truncated in the common case.
     /// <para>This bounds the ROWS a tool returns, not the prose: summaries are capped separately by
-    /// <see cref="Tools.RenderLimits"/>, because a summary that grew with this would build one contiguous
+    /// <see cref="RenderLimits"/>, because a summary that grew with this would build one contiguous
     /// multi-megabyte string.</para>
     /// <para>Rows are still materialised in full before the cap is applied, so raising this far above the
     /// default trades memory on the TARGET for completeness. The win-x86 build has roughly 2 GB of

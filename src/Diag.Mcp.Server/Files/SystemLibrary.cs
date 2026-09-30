@@ -31,11 +31,12 @@ namespace Diag.Mcp.Server.Files;
 /// <para>
 /// The resolver is registered once per assembly, and a second registration throws, so it is registered
 /// in one place: the static constructor of the type that declares the import. An import in another
-/// assembly registers it for that assembly the same way. <c>NativeImportGuard</c> sweeps both servers'
+/// assembly registers it for that assembly the same way, which is why this type is public: each server's
+/// own imports go through it. <c>NativeImportGuard</c> sweeps both servers'
 /// assemblies for an import that does not.
 /// </para>
 /// </remarks>
-internal static class SystemLibrary
+public static class SystemLibrary
 {
     /// <summary>The name the imports declare, and the only one this resolver answers for.</summary>
     public const string C = "libc";

@@ -1,13 +1,13 @@
 using System.Globalization;
 using System.Text;
 
-namespace WinDiag.Mcp.Tools;
+namespace Diag.Mcp.Server;
 
 /// <summary>
 /// How much of a result is worth writing into the human-readable summary.
 /// </summary>
 /// <remarks>
-/// <para>Deliberately <strong>not</strong> tied to <c>WINDIAG_MAX_RESULTS</c>. That cap answers "how many
+/// <para>Deliberately <strong>not</strong> tied to a server's <c>…_MAX_RESULTS</c> setting. That cap answers "how many
 /// rows should this tool return", and it is set high so handle-heavy tools are not truncated. This one
 /// answers a different question -- "how many rows are worth prose" -- and the two must not move
 /// together: at a 50,000 row cap a summary that renders every row builds a single contiguous string of
@@ -16,7 +16,7 @@ namespace WinDiag.Mcp.Tools;
 /// <para>The rows themselves are never dropped. They are all in the structured content, which is what a
 /// caller filters and counts on; only the prose is abbreviated, and it says so.</para>
 /// </remarks>
-internal static class RenderLimits
+public static class RenderLimits
 {
     /// <summary>Rows rendered into a summary, however many the structured result carries.</summary>
     public const int MaxRenderedRows = 200;

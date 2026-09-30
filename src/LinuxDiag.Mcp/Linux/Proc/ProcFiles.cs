@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace LinuxDiag.Mcp.Linux.Proc;
 
 /// <summary>The one place this server reads /proc, /sys and /etc system files.</summary>
@@ -12,6 +14,56 @@ public static class ProcFiles
     public const string Uptime = "/proc/uptime";
     public const string Mounts = "/proc/self/mounts";
     public const string KernelRelease = "/proc/sys/kernel/osrelease";
+    public const string KernelStat = "/proc/stat";
+    public const string ProcRoot = "/proc";
 
     public static string Read(string path) => File.ReadAllText(path);
+
+    /// <summary>The PIDs alive when /proc was listed. Any of them may be gone by the time it is read.</summary>
+    public static IEnumerable<int> ProcessIds()
+    {
+        foreach (var directory in Directory.EnumerateDirectories(ProcRoot))
+        {
+            if (int.TryParse(Path.GetFileName(directory), NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
+            {
+                yield return pid;
+            }
+        }
+    }
+
+    public static string Of(int pid, string relative) => $"/proc/{pid}/{relative}";
+
+    public static bool IsAlive(int pid) => Directory.Exists($"/proc/{pid}");
+
+    /// <summary>A per-process file's text, or null when the process has exited.</summary>
+    /// <remarks>
+    /// "Exited" is decided by looking again, not by the exception: .NET reports ESRCH as a bare
+    /// IOException and ENOENT as either of two types, so matching on type alone would also swallow a
+    /// real read error from a live process. Permission denied is not an IOException and always propagates,
+    /// so a caller can count it.
+    /// </remarks>
+    public static string? ReadProcess(int pid, string relative)
+    {
+        try
+        {
+            return File.ReadAllText(Of(pid, relative));
+        }
+        catch (IOException) when (!IsAlive(pid))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A per-process link's raw target (<c>exe</c>, <c>ns/net</c>, <c>fd/3</c>), or null when the process has exited.</summary>
+    public static string? ReadProcessLink(int pid, string relative)
+    {
+        try
+        {
+            return new FileInfo(Of(pid, relative)).LinkTarget;
+        }
+        catch (IOException) when (!IsAlive(pid))
+        {
+            return null;
+        }
+    }
 }
