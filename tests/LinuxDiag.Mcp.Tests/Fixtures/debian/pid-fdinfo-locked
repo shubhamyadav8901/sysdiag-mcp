@@ -1,5 +1,5 @@
 pos:	0
-flags:	0100001
+flags:	0100000
 mnt_id:	631
-ino:	8
-lock:	1: FLOCK  ADVISORY  WRITE 0 00:74:8 0 EOF
+ino:	9
+lock:	1: FLOCK  ADVISORY  WRITE 1698 00:74:9 0 EOF

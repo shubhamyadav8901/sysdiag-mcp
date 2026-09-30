@@ -56,6 +56,14 @@ public sealed class ProcessListTests
     }
 
     [Fact]
+    public void Processes_whose_executable_and_namespaces_were_denied_are_counted_in_the_limitation()
+    {
+        var result = ProcessTools.Build(new ProcessTable([Record(5, "a")], 0, PartlyUnreadable: 7), NoContainers, null, null, 100);
+
+        Assert.Contains("7 processes owned by other users", result.Limitation, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_container_runtime_that_could_not_be_asked_is_in_the_limitation()
     {
         var result = ProcessTools.Build(new ProcessTable([Record(5, "a")], 0), new ContainerCatalog([], ["Docker did not answer."]), null, null, 100);

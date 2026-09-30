@@ -74,6 +74,12 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
             limitations.Add($"{table.Unreadable} processes could not be read at all and are not listed; run the server as root.");
         }
 
+        if (table.PartlyUnreadable > 0)
+        {
+            limitations.Add($"{table.PartlyUnreadable} processes owned by other users could not be fully read: their " +
+                            "executable path, container PID and namespaces are null. Run the server as root.");
+        }
+
         var limitation = limitations.Count == 0 ? null : string.Join(" ", limitations);
         var redacted = matched.Count(p => p.Record.CommandLineDenied);
         var truncated = matched.Count > maxResults;

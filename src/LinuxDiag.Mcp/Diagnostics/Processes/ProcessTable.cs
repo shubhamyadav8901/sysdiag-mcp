@@ -14,7 +14,11 @@ public sealed record ProcessRecord(
     int? InnermostProcessId, string? NetworkNamespace, string? MountNamespace);
 
 /// <param name="Unreadable">Processes listed but not readable at all: counted, so a result can say it is partial.</param>
-public sealed record ProcessTable(IReadOnlyList<ProcessRecord> Processes, int Unreadable);
+/// <param name="PartlyUnreadable">
+/// Processes listed whose executable, namespaces, status or cgroup were denied -- another user's, to a server
+/// not running as root. Those fields are null for them, and a result must say so rather than look complete.
+/// </param>
+public sealed record ProcessTable(IReadOnlyList<ProcessRecord> Processes, int Unreadable, int PartlyUnreadable = 0);
 
 public interface IProcessTable
 {
@@ -24,7 +28,7 @@ public interface IProcessTable
 /// <summary>The text one walk read for one process, before parsing.</summary>
 public sealed record RawProcess(
     int ProcessId, string Stat, string? Status, string? CommandLine, string? Cgroup, string? ExecutablePath,
-    string? NetworkNamespace, string? MountNamespace, bool CommandLineDenied);
+    string? NetworkNamespace, string? MountNamespace, bool CommandLineDenied, bool AttributesDenied = false);
 
 public sealed class LinuxProcessTable : IProcessTable
 {
@@ -36,6 +40,7 @@ public sealed class LinuxProcessTable : IProcessTable
         var boot = KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat));
         var processes = new List<ProcessRecord>();
         var unreadable = 0;
+        var partlyUnreadable = 0;
 
         foreach (var pid in ProcFiles.ProcessIds())
         {
@@ -45,6 +50,7 @@ public sealed class LinuxProcessTable : IProcessTable
                 if (Collect(pid) is { } raw)
                 {
                     processes.Add(Parse(raw, boot));
+                    partlyUnreadable += raw.AttributesDenied ? 1 : 0;
                 }
             }
             catch (UnauthorizedAccessException)
@@ -53,7 +59,7 @@ public sealed class LinuxProcessTable : IProcessTable
             }
         }
 
-        return new ProcessTable(processes, unreadable);
+        return new ProcessTable(processes, unreadable, partlyUnreadable);
     }
 
     /// <summary>Reads one process's files, or null when it exited before its stat could be read.</summary>
@@ -82,15 +88,34 @@ public sealed class LinuxProcessTable : IProcessTable
             }
         }
 
-        return new RawProcess(
-            pid, stat,
-            Optional(() => ProcFiles.ReadProcess(pid, "status")),
-            cmdline,
-            Optional(() => ProcFiles.ReadProcess(pid, "cgroup")),
-            kernel ? null : Optional(() => ProcFiles.ReadProcessLink(pid, "exe")),
-            Optional(() => ProcFiles.ReadProcessLink(pid, "ns/net")),
-            Optional(() => ProcFiles.ReadProcessLink(pid, "ns/mnt")),
-            denied);
+        var attributesDenied = false;
+
+        // An attribute that is nice to have: a failure to read it leaves it null rather than losing the
+        // process -- but a denial is counted, so the answer can say it is partial.
+        string? Optional(Func<string?> read)
+        {
+            try
+            {
+                return read();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                attributesDenied = true;
+                return null;
+            }
+            catch (IOException)
+            {
+                // A zombie's exe link fails with ENOENT while its /proc directory is still there.
+                return null;
+            }
+        }
+
+        var status = Optional(() => ProcFiles.ReadProcess(pid, "status"));
+        var cgroup = Optional(() => ProcFiles.ReadProcess(pid, "cgroup"));
+        var exe = kernel ? null : Optional(() => ProcFiles.ReadProcessLink(pid, "exe"));
+        var net = Optional(() => ProcFiles.ReadProcessLink(pid, "ns/net"));
+        var mnt = Optional(() => ProcFiles.ReadProcessLink(pid, "ns/mnt"));
+        return new RawProcess(pid, stat, status, cmdline, cgroup, exe, net, mnt, denied, attributesDenied);
     }
 
     internal static ProcessRecord Parse(RawProcess raw, DateTimeOffset bootTime)
@@ -115,18 +140,5 @@ public sealed class LinuxProcessTable : IProcessTable
     {
         var line = raw?.TrimEnd('\0').Replace('\0', ' ');
         return string.IsNullOrEmpty(line) ? null : line;
-    }
-
-    /// <summary>An attribute that is nice to have: a failure to read it leaves it null rather than losing the process.</summary>
-    private static string? Optional(Func<string?> read)
-    {
-        try
-        {
-            return read();
-        }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
-        {
-            return null;
-        }
     }
 }

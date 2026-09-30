@@ -22,13 +22,15 @@ cat /proc/self/cgroup > "$out/pid-cgroup"
 cat /proc/stat > "$out/kernel-stat"
 for table in tcp tcp6 udp udp6 unix; do cat "/proc/net/$table" > "$out/net-$table"; done
 
-# A lock this shell holds, so /proc/locks and its fdinfo both have a line to show.
+# A lock held by a process that is still running while both files are read. /proc/locks leaves out a flock
+# whose creator has exited -- flock(1) on an inherited descriptor exits at once -- so the lock is taken by
+# flock(1) running the reader, and its own descriptor's fdinfo is the one captured.
 lockfile="$(mktemp)"
-exec 9>"$lockfile"
-flock -x 9
-cat "/proc/$$/fdinfo/9" > "$out/pid-fdinfo-locked"
-cat /proc/locks > "$out/locks"
-exec 9>&-
+flock -x "$lockfile" sh -c '
+  cat /proc/locks > "$1/locks"
+  for fd in /proc/$PPID/fd/*; do
+    if [ "$(readlink "$fd")" = "$2" ]; then cat "/proc/$PPID/fdinfo/${fd##*/}" > "$1/pid-fdinfo-locked"; fi
+  done' _ "$out" "$lockfile"
 rm -f "$lockfile"
 
 if docker info >/dev/null 2>&1; then

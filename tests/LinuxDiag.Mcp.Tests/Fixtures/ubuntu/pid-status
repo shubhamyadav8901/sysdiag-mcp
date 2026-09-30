@@ -1,19 +1,19 @@
 Name:	cat
 Umask:	0022
 State:	R (running)
-Tgid:	711
+Tgid:	714
 Ngid:	0
-Pid:	711
-PPid:	613
+Pid:	714
+PPid:	616
 TracerPid:	0
 Uid:	1000	1000	1000	1000
 Gid:	1000	1000	1000	1000
 FDSize:	256
 Groups:	4 24 27 30 46 100 989 1000 
-NStgid:	711
-NSpid:	711
-NSpgid:	613
-NSsid:	613
+NStgid:	714
+NSpid:	714
+NSpgid:	616
+NSsid:	616
 Kthread:	0
 VmPeak:	    3268 kB
 VmSize:	    3268 kB
@@ -28,7 +28,7 @@ VmData:	     360 kB
 VmStk:	     132 kB
 VmExe:	      20 kB
 VmLib:	    1748 kB
-VmPTE:	      52 kB
+VmPTE:	      48 kB
 VmSwap:	       0 kB
 HugetlbPages:	       0 kB
 CoreDumping:	0
@@ -55,5 +55,5 @@ Cpus_allowed:	3fffff
 Cpus_allowed_list:	0-21
 Mems_allowed:	00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000001
 Mems_allowed_list:	0
-voluntary_ctxt_switches:	9
+voluntary_ctxt_switches:	15
 nonvoluntary_ctxt_switches:	0

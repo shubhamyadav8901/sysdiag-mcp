@@ -1,5 +1,7 @@
 using System.Globalization;
 
+using LinuxDiag.Mcp.Linux.Native;
+
 namespace LinuxDiag.Mcp.Linux.Proc;
 
 /// <summary>The one place this server reads /proc, /sys and /etc system files.</summary>
@@ -59,7 +61,7 @@ public static class ProcFiles
     {
         try
         {
-            return new FileInfo(Of(pid, relative)).LinkTarget;
+            return Link(Of(pid, relative));
         }
         catch (IOException) when (!IsAlive(pid))
         {
@@ -86,7 +88,7 @@ public static class ProcFiles
                 string? target;
                 try
                 {
-                    target = new FileInfo(entry).LinkTarget;
+                    target = Link(entry);
                 }
                 catch (IOException)
                 {
@@ -107,4 +109,7 @@ public static class ProcFiles
             return null;
         }
     }
+
+    /// <summary>A link's target through readlink(2) itself, so permission denied is not mistaken for "no link".</summary>
+    private static string? Link(string path) => LibC.Supported ? LibC.ReadLink(path) : new FileInfo(path).LinkTarget;
 }

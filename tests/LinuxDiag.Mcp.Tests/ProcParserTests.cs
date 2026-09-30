@@ -132,6 +132,7 @@ public sealed class ProcParserTests
     [Fact]
     public void Every_captured_distro_parses()
     {
+        Assert.NotEmpty(Distros());
         foreach (var distro in Distros())
         {
             var stat = ProcStat.Parse(Fixture(distro, "pid-stat")!);

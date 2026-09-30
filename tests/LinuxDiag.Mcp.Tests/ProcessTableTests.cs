@@ -54,6 +54,23 @@ public sealed class ProcessTableTests
     }
 
     [LinuxFact]
+    public void A_real_read_error_from_a_live_process_is_not_mistaken_for_it_exiting()
+    {
+        // The rule is "gone means not alive any more", not "any IOException": a live process's failed read
+        // must surface, or a genuine error reads as an empty answer.
+        Assert.ThrowsAny<IOException>(() => ProcFiles.ReadProcess(Environment.ProcessId, "no-such-entry"));
+    }
+
+    [UnprivilegedLinuxFact]
+    public void Another_users_process_is_counted_as_partly_unreadable_not_silently_blanked()
+    {
+        // PID 1 is root's: its exe link and namespaces are denied to this account. Blanking them silently
+        // made a non-root answer look complete.
+        Assert.True(LinuxProcessTable.Collect(1)!.AttributesDenied);
+        Assert.True(new LinuxProcessTable().Read(CancellationToken.None).PartlyUnreadable > 0);
+    }
+
+    [LinuxFact]
     public void The_live_table_holds_this_process_with_its_real_start_time_and_command_line()
     {
         var table = new LinuxProcessTable().Read(CancellationToken.None);
