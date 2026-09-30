@@ -67,20 +67,33 @@ sudo_prefix='sudo '
 echo "==> copying $binary to $user@$target"
 scp ${ssh_opts[@]+"${ssh_opts[@]}"} -P "$port" "$binary" "$user@$target:LinuxDiag.Mcp"
 
+# Best effort, from a fresh session: when a step below fails, the remote side may never have reached
+# its own cleanup -- the connection dropped, or the token session died mid-write -- and the token must
+# not be left sitting in the home directory.
+remove_leftovers() {
+  ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -p "$port" "$user@$target" 'rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token' ||
+    echo "warning: could not remove ~/LinuxDiag.Mcp and ~/.linuxdiag-token on $target; remove them by hand" >&2
+}
+
 # A pinned token travels over SSH's stdin into an owner-only file, never on a command line: sudo logs
 # its command line and ps shows it. A separate session because the install session's terminal belongs
-# to sudo's password prompt.
+# to sudo's password prompt. Removed first, because umask only sets the mode of a file it creates: a
+# token file left behind with a looser mode would otherwise keep it.
 token_input=''
 if [ -n "$token" ]; then
   echo "==> sending the token"
-  printf '%s\n' "$token" | ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -p "$port" "$user@$target" 'umask 077 && cat > ~/.linuxdiag-token'
+  printf '%s\n' "$token" | ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -p "$port" "$user@$target" \
+    'rm -f ~/.linuxdiag-token && umask 077 && cat > ~/.linuxdiag-token' || { rc=$?; remove_leftovers; exit $rc; }
   token_input=' < ~/.linuxdiag-token'
 fi
 
-# One remote command: verify, install, then remove the copy whatever the install returned.
+# One remote command: verify, then install. The trap removes the copy and the token however the session
+# ends -- the install's own exit, a failed check, or a dropped connection or Ctrl-C. The signals exit
+# rather than run the cleanup themselves: a trapped signal otherwise lets the shell carry on to the next
+# command, and dash, unlike bash, does not run an EXIT trap for a signal it leaves at its default.
 quoted=$(printf "'%s' " "${install_args[@]}")
-remote="echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo_prefix}~/LinuxDiag.Mcp ${quoted}${token_input} ; rc=\$?; rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token; exit \$rc"
+remote="trap 'rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token' EXIT; trap 'exit 1' HUP INT TERM; echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo_prefix}~/LinuxDiag.Mcp ${quoted}${token_input}"
 echo "==> installing on $target ($grants grants)"
-ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -t -p "$port" "$user@$target" "$remote"
+ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -t -p "$port" "$user@$target" "$remote" || { rc=$?; remove_leftovers; exit $rc; }
 
 echo "==> done. If a token was generated it was printed above, once: put it in ~/.windiag-targets.json."

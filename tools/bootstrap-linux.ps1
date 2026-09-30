@@ -70,21 +70,35 @@ switch ($Grants) {
 Write-Host "==> copying $local to $remote"
 Invoke-Native { scp @identity -P $SshPort $local "${remote}:LinuxDiag.Mcp" }
 
-# A pinned token travels over SSH's stdin into an owner-only file, never on a command line: sudo logs
-# its command line and ps shows it. A separate session because the install session's terminal belongs
-# to sudo's password prompt.
-if ($Token) {
-    Write-Host "==> sending the token"
-    Invoke-Native { $Token | ssh @identity -p $SshPort $remote "umask 077 && cat > ~/.linuxdiag-token" }
+# Best effort, from a fresh session: when a step below fails, the remote side may never have reached
+# its own cleanup -- the connection dropped, or the token session died mid-write -- and the token must
+# not be left sitting in the home directory.
+function Remove-Leftovers {
+    try { Invoke-Native { ssh @identity -p $SshPort $remote 'rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token' } }
+    catch { Write-Warning "Could not remove ~/LinuxDiag.Mcp and ~/.linuxdiag-token on ${Target}: $_. Remove them by hand." }
 }
 
-# One remote command: verify, then install, then remove the copy -- which runs whatever the install
-# returned, so a failed install still leaves nothing behind. sudo is skipped when already root.
+# A pinned token travels over SSH's stdin into an owner-only file, never on a command line: sudo logs
+# its command line and ps shows it. A separate session because the install session's terminal belongs
+# to sudo's password prompt. Removed first, because umask only sets the mode of a file it creates: a
+# token file left behind with a looser mode would otherwise keep it.
+if ($Token) {
+    Write-Host "==> sending the token"
+    try { Invoke-Native { $Token | ssh @identity -p $SshPort $remote 'rm -f ~/.linuxdiag-token && umask 077 && cat > ~/.linuxdiag-token' } }
+    catch { Remove-Leftovers; throw }
+}
+
+# One remote command: verify, then install. The trap removes the copy and the token however the session
+# ends -- the install's own exit, a failed check, or a dropped connection or Ctrl-C. The signals exit
+# rather than run the cleanup themselves: a trapped signal otherwise lets the shell carry on to the next
+# command, and dash, unlike bash, does not run an EXIT trap for a signal it leaves at its default.
+# sudo is skipped when already root.
 $sudo = if ($User -eq 'root') { '' } else { 'sudo ' }
 $quoted = ($installArgs | ForEach-Object { "'$_'" }) -join ' '
 $tokenInput = if ($Token) { ' < ~/.linuxdiag-token' } else { '' }
-$command = "echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo}~/LinuxDiag.Mcp $quoted$tokenInput ; rc=`$?; rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token; exit `$rc"
+$command = "trap 'rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token' EXIT; trap 'exit 1' HUP INT TERM; echo '$sha  LinuxDiag.Mcp' | sha256sum -c - && chmod 0755 ~/LinuxDiag.Mcp && ${sudo}~/LinuxDiag.Mcp $quoted$tokenInput"
 Write-Host "==> installing on $Target ($Grants grants)"
-Invoke-Native { ssh @identity -t -p $SshPort $remote $command }
+try { Invoke-Native { ssh @identity -t -p $SshPort $remote $command } }
+catch { Remove-Leftovers; throw }
 
 Write-Host "==> done. If a token was generated it was printed above, once: put it in ~/.windiag-targets.json."
