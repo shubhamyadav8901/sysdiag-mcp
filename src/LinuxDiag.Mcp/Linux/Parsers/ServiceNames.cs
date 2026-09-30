@@ -36,6 +36,16 @@ public static partial class ServiceNames
             : throw new ArgumentException($"'{value}' is a .{suffix} unit; only services are accepted here.", parameterName);
     }
 
+    /// <summary>Any unit name for journalctl -u -- a timer, a scope, a service -- refused if it is a pattern or an option.</summary>
+    public static string CheckUnit(string? name, string parameterName)
+    {
+        var value = ExternalArgument.Check(name?.Trim(), parameterName);
+        return UnitName().IsMatch(value)
+            ? value
+            : throw new ArgumentException(
+                $"'{value}' is not a unit name: use letters, digits and :-_.@\\ only. Glob patterns are not accepted.", parameterName);
+    }
+
     private static readonly HashSet<string> UnitTypes = new(StringComparer.Ordinal)
     {
         "service", "socket", "target", "device", "mount", "automount", "swap", "timer", "path", "slice", "scope",

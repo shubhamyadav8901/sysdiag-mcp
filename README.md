@@ -327,6 +327,7 @@ or later, which every distribution .NET 9 supports has.
 |---|---|---|
 | `service_config` | `systemctl show` | State and configuration, unit file and drop-ins, restarts, both dependency directions; near matches for a wrong name |
 | `service_control` | `systemctl start`, `stop`, `restart` | Writable servers only. Services only; refuses stopping journald, logind, udevd, networking, dbus, polkit, ssh, this server or its dependencies; reports dependents it stopped |
+| `event_log_tail` | `journalctl -o json` | Newest first by unit, severity, provider and raw `FIELD=value` matches; says when only this account's records were visible |
 
 Publish it, then install it over SSH:
 

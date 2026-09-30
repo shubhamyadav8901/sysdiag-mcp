@@ -178,6 +178,166 @@
     }
   },
   {
+    "name": "event_log_tail",
+    "title": "Recent journal records",
+    "description": "Read recent records from the systemd journal, newest first, filtered by age, severity, unit, provider (SYSLOG_IDENTIFIER) and raw journal matches. Defaults to the last hour at critical, error and warning. Use it to find out what the machine complained about around the time of a failure, or why a service refused to start - pass its unit. Without root, or membership of the systemd-journal or adm group, only this account\u0027s own records are visible, and the result says so.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "unit": {
+          "description": "Only records from this unit, for example \u0027nginx.service\u0027 or \u0027backup.timer\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "minutes": {
+          "description": "How far back to look, in minutes",
+          "type": "integer",
+          "default": 60
+        },
+        "levels": {
+          "description": "Severities to include: critical, error, warning, information, verbose, or \u0027all\u0027. Defaults to critical\u002Berror\u002Bwarning.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default": null
+        },
+        "provider": {
+          "description": "Only records from this provider (SYSLOG_IDENTIFIER), for example \u0027sshd\u0027 or \u0027kernel\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "match": {
+          "description": "Raw journal matches, each FIELD=value, for example _UID=1000 or _COMM=nginx",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default": null
+        },
+        "maxEvents": {
+          "description": "Maximum records to return",
+          "type": "integer",
+          "default": 50
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minutes": {
+          "type": "integer"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timeCreated": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "level": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "integer"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "timeCreated",
+              "level",
+              "priority",
+              "provider",
+              "unit",
+              "message",
+              "processId"
+            ]
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "unit",
+        "minutes",
+        "events",
+        "truncated",
+        "candidates",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Recent journal records",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "get_file",
     "title": "Read a file back off the host",
     "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",
