@@ -279,6 +279,181 @@
     }
   },
   {
+    "name": "network_owners",
+    "title": "Network endpoints and owning processes",
+    "description": "List TCP and UDP endpoints (IPv4 and IPv6) with every process that owns each socket - a prefork server\u0027s workers all share one listening socket - and, for a container\u0027s process, its container. Every network namespace with a running process is covered, so a container\u0027s sockets appear too, tagged with their namespace. Use it for \u0027what is already using port 8080\u0027, \u0027which process is talking to that address\u0027, or to confirm a service is listening where it should be. Filter by port, owning PID, or listening endpoints only. A namespace with no process in it (one kept only by /run/netns) is not visible.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "description": "Only endpoints using this local or remote port",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "Only endpoints owned by this process id",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "listeningOnly": {
+          "description": "Only listening TCP sockets and bound UDP endpoints, excluding established connections",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "Tcp",
+                  "Udp"
+                ]
+              },
+              "localAddress": {
+                "type": "string"
+              },
+              "localPort": {
+                "type": "integer"
+              },
+              "remoteAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "remotePort": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "processId": {
+                      "type": "integer"
+                    },
+                    "processName": {
+                      "type": "string"
+                    },
+                    "container": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "runtime": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "image": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "processIdInContainer": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "runtime",
+                        "id",
+                        "name",
+                        "image",
+                        "processIdInContainer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "processId",
+                    "processName",
+                    "container"
+                  ]
+                }
+              },
+              "networkNamespace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "protocol",
+              "localAddress",
+              "localPort",
+              "remoteAddress",
+              "remotePort",
+              "state",
+              "owners",
+              "networkNamespace"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "endpoints",
+        "totalMatched",
+        "truncated",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Network endpoints and owning processes",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "path_handle_search",
     "title": "Exhaustive handle search",
     "description": "Search every process\u0027s open files and memory-mapped files for names containing the given text. Give a full path and it also matches the same file under any other name - a hard link, a rename after opening, or the path a container\u0027s process knows it by. Use it as the follow-up when who_locks_path does not explain a problem, or to find everything touching a directory. Complete only when the server runs as root. By default it searches file references; set includeAllObjectTypes to also search sockets, pipes and anonymous inodes by their descriptor text.",

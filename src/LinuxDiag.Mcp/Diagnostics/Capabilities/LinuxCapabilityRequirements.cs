@@ -50,6 +50,10 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "statx identity against every /proc/<pid>/fd, fdinfo lock lines and /proc/locks",
                 null,
                 "cannot see files held by processes owned by other users, so it never reports Exhaustive"),
+            ["network_owners"] = new(
+                "/proc/<pid>/net/{tcp,tcp6,udp,udp6} per network namespace; owners by socket inode across /proc/<pid>/fd",
+                null,
+                "cannot name the owners of sockets held by processes owned by other users"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }
