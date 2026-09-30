@@ -30,6 +30,10 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 null,
                 "cannot reach the Docker socket or containerd's task state unless the account is root or in the docker group",
                 AnyOfPaths: [DockerEngineClient.DefaultSocket, ContainerdTasks.StateRoot]),
+            ["process_list"] = new(
+                "/proc/<pid>/{stat,status,cmdline,cgroup}, joined with container_list's runtimes",
+                null,
+                "cannot read the executable path or namespaces of processes owned by other users, which are reported as null"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

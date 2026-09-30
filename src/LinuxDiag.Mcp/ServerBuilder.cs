@@ -84,7 +84,8 @@ public static class ServerBuilder
 
         var mcp = services.AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _)
             .WithTools<SystemTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<ContainerTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<ContainerTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<ProcessTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -113,6 +114,7 @@ public static class ServerBuilder
         services.TryAddSingleton<IProcessTable, LinuxProcessTable>();
         services.TryAddSingleton<IContainerInspector, LinuxContainerInspector>();
         services.TryAddSingleton<ContainerTools>();
+        services.TryAddSingleton<ProcessTools>();
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
