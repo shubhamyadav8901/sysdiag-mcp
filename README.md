@@ -43,6 +43,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
 | `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Owning package and version; Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database (integrity, not provenance) |
+| `autostart_audit` | enabled units, users' units, cron, rc.local, profile.d, ld.so.preload | Package check covers the unit, its drop-ins, the program and an interpreter's script; a timer or socket names the unit it runs |
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
 | `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |

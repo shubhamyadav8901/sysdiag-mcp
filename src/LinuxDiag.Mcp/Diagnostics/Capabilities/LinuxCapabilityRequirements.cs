@@ -74,6 +74,10 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 null,
                 null,
                 AnyOfPaths: [DpkgDatabase.DefaultRoot + "/info"]),
+            ["autostart_audit"] = new(
+                "systemctl list-unit-files and show, crontabs, rc.local, profile.d, ld.so.preload, and the dpkg database",
+                "systemctl",
+                "cannot read users' crontabs or unreadable home directories, so those entries are silently absent"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

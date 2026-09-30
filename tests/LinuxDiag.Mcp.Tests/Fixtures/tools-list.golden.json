@@ -1,5 +1,194 @@
 [
   {
+    "name": "autostart_audit",
+    "title": "What starts on its own",
+    "description": "List what is configured to run without anybody starting it - enabled systemd services, timers, sockets and paths (with the unit a timer or socket actually runs), users\u0027 systemd units, cron (system and users\u0027 crontabs, /etc/cron.d, cron.hourly/daily/weekly/monthly), /etc/rc.local, /etc/profile.d and /etc/ld.so.preload - with the program each one runs. categories takes one or more of: all, services, timers, sockets, paths, userunits, cron, rclocal, profiled, preload. verifyPackages checks every file that decides what runs - unit file, drop-ins, program, and the script an interpreter runs - against the dpkg database; unpackagedOnly returns only entries with a file that is not from a package or was changed, which is usually the fastest route to an answer. Not covered: XDG autostart, udev RUN\u002B=, anacrontab, at jobs, update-motd.d, modules-load.d and modprobe install lines.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "categories": {
+          "description": "Comma-separated category names, or \u0027all\u0027. Defaults to all.",
+          "type": "string",
+          "default": "all"
+        },
+        "nameFilter": {
+          "description": "Only entries whose name, program, file, description or command contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "verifyPackages": {
+          "description": "Check each entry\u0027s files against the dpkg database and report the owning package.",
+          "type": "boolean",
+          "default": false
+        },
+        "unpackagedOnly": {
+          "description": "Return only entries with a file that is not from a package, or was changed. Implies verifyPackages.",
+          "type": "boolean",
+          "default": false
+        },
+        "hidePackaged": {
+          "description": "Drop entries whose every file matches its package. Implies verifyPackages.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "autostarts": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "entry": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "profile": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "imagePath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "launchString": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "scriptPath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "dropIns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "package": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "packaged": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "packageFindings": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "imageMissing": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "category",
+                  "location",
+                  "entry",
+                  "enabled",
+                  "profile",
+                  "description",
+                  "imagePath",
+                  "launchString",
+                  "scriptPath",
+                  "dropIns",
+                  "package",
+                  "packaged",
+                  "packageFindings",
+                  "imageMissing"
+                ]
+              }
+            },
+            "totalMatched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "packagesVerified": {
+              "type": "boolean"
+            },
+            "unpackagedCount": {
+              "type": "integer"
+            },
+            "missingImageCount": {
+              "type": "integer"
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "entries",
+            "totalMatched",
+            "truncated",
+            "elevated",
+            "packagesVerified",
+            "unpackagedCount",
+            "missingImageCount",
+            "limitations"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "autostarts"
+      ]
+    },
+    "annotations": {
+      "title": "What starts on its own",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "capabilities",
     "title": "Server capabilities",
     "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing helper program, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
