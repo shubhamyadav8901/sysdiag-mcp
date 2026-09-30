@@ -326,6 +326,7 @@ or later, which every distribution .NET 9 supports has.
 | Tool | Answers from | Notes |
 |---|---|---|
 | `service_config` | `systemctl show` | State and configuration, unit file and drop-ins, restarts, both dependency directions; near matches for a wrong name |
+| `service_control` | `systemctl start`, `stop`, `restart` | Writable servers only. Services only; refuses stopping journald, logind, udevd, networking, dbus, polkit, ssh, this server or its dependencies; reports dependents it stopped |
 
 Publish it, then install it over SSH:
 

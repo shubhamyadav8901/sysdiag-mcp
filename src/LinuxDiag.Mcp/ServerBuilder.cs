@@ -148,6 +148,7 @@ public static class ServerBuilder
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IExternalCommand, LinuxExternalCommand>();
         services.TryAddSingleton<IServiceInspector, LinuxServiceInspector>();
+        services.TryAddSingleton<IServiceController, LinuxServiceController>();
         services.TryAddSingleton<ServiceTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();

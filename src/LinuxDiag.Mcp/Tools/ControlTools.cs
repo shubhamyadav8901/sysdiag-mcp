@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using LinuxDiag.Mcp.Diagnostics.Control;
+using LinuxDiag.Mcp.Diagnostics.Services;
 using ModelContextProtocol.Server;
 
 namespace LinuxDiag.Mcp.Tools;
@@ -8,8 +9,11 @@ namespace LinuxDiag.Mcp.Tools;
 /// <summary>Structured result of <c>process_control</c>.</summary>
 public sealed record ProcessControlToolResult(string Summary, ProcessControlResult Result);
 
+/// <summary>Structured result of <c>service_control</c>.</summary>
+public sealed record ServiceControlToolResult(string Summary, ServiceControlResult Result);
+
 [McpServerToolType]
-public sealed class ControlTools(IProcessController controller)
+public sealed class ControlTools(IProcessController controller, IServiceController services)
 {
     [McpServerTool(
         Name = "process_control",
@@ -37,6 +41,61 @@ public sealed class ControlTools(IProcessController controller)
     {
         var result = controller.Control(processId, expectedName, ParseAction(action), cancellationToken, expectedStartTime);
         return new ProcessControlToolResult(Render(result), result);
+    }
+
+    [McpServerTool(
+        Name = "service_control",
+        Title = "Start, stop or restart a service",
+        ReadOnly = false,
+        Destructive = true,
+        Idempotent = false,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Start, stop or restart a systemd service and report its state before and after. Stopping a service also " +
+        "stops whatever depends on it, and those dependents are reported, because restarting the named service does " +
+        "NOT bring them back. Services only - no targets, sockets or patterns. Stopping or restarting a service that " +
+        "would cut the machine off (journald, logind, udevd, networking, name resolution, dbus, polkit, ssh), this " +
+        "server's own service, or anything it depends on, is refused. A job still running after 75 seconds is " +
+        "reported as still running; systemd finishes it.")]
+    public async Task<ServiceControlToolResult> ServiceControl(
+        [Description("Service name, for example 'nginx' or 'nginx.service'. Check it with service_config first.")] string serviceName,
+        [Description("'start', 'stop' or 'restart'")] string action,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await services.ControlAsync(serviceName, ParseServiceAction(action), cancellationToken).ConfigureAwait(false);
+        return new ServiceControlToolResult(RenderService(result), result);
+    }
+
+    internal static ServiceAction ParseServiceAction(string action) => action?.Trim().ToLowerInvariant() switch
+    {
+        "start" => ServiceAction.Start,
+        "stop" => ServiceAction.Stop,
+        "restart" or "bounce" => ServiceAction.Restart,
+        _ => throw new ArgumentException($"'{action}' is not an action. Use 'start', 'stop' or 'restart'.", nameof(action)),
+    };
+
+    internal static string RenderService(ServiceControlResult result)
+    {
+        var builder = new StringBuilder(result.ServiceName);
+        if (result.DisplayName is { } display)
+        {
+            builder.Append(" (").Append(display).Append(')');
+        }
+
+        builder.AppendLine().AppendLine(result.Detail);
+        if (result.DependentServicesStopped.Count > 0)
+        {
+            builder.AppendLine().AppendLine("Dependent services stopped:");
+            foreach (var dependent in result.DependentServicesStopped)
+            {
+                builder.Append("- ").AppendLine(dependent);
+            }
+
+            builder.Append("Start these again individually if they are needed.");
+        }
+
+        return builder.ToString().TrimEnd();
     }
 
     internal static ProcessAction ParseAction(string action) => action?.Trim().ToLowerInvariant() switch

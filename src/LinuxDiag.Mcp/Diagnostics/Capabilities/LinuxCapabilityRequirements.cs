@@ -63,6 +63,7 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 null,
                 "can only signal processes owned by the current user"),
             ["service_config"] = new("systemctl show", "systemctl", null),
+            ["service_control"] = new("systemctl start/stop/restart", "systemctl", null, RequiresElevation: true),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

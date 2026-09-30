@@ -1541,6 +1541,93 @@
     }
   },
   {
+    "name": "service_control",
+    "title": "Start, stop or restart a service",
+    "description": "Start, stop or restart a systemd service and report its state before and after. Stopping a service also stops whatever depends on it, and those dependents are reported, because restarting the named service does NOT bring them back. Services only - no targets, sockets or patterns. Stopping or restarting a service that would cut the machine off (journald, logind, udevd, networking, name resolution, dbus, polkit, ssh), this server\u0027s own service, or anything it depends on, is refused. A job still running after 75 seconds is reported as still running; systemd finishes it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceName": {
+          "description": "Service name, for example \u0027nginx\u0027 or \u0027nginx.service\u0027. Check it with service_config first.",
+          "type": "string"
+        },
+        "action": {
+          "description": "\u0027start\u0027, \u0027stop\u0027 or \u0027restart\u0027",
+          "type": "string"
+        }
+      },
+      "required": [
+        "serviceName",
+        "action"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "serviceName": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "Start",
+                "Stop",
+                "Restart"
+              ]
+            },
+            "statusBefore": {
+              "type": "string"
+            },
+            "statusAfter": {
+              "type": "string"
+            },
+            "dependentServicesStopped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "serviceName",
+            "displayName",
+            "action",
+            "statusBefore",
+            "statusAfter",
+            "dependentServicesStopped",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "result"
+      ]
+    },
+    "annotations": {
+      "title": "Start, stop or restart a service",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "system_overview",
     "title": "System overview",
     "description": "Describe the machine: distribution and kernel, architecture, uptime and boot time, processor count, memory, mounted filesystems with free space, the account the server runs as, and whether it is root. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full disk, a very recent reboot, exhausted memory) before you go looking for something subtler.",

@@ -71,6 +71,7 @@ public static class ProcFiles
     }
 
     public const string Passwd = "/etc/passwd";
+    public const string SelfCgroup = "/proc/self/cgroup";
 
     /// <summary>One process's open descriptors and their raw link targets, or null when it has exited.</summary>
     /// <remarks>Permission denied propagates: another user's fd directory needs root, and a caller counts that.</remarks>
