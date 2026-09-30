@@ -38,15 +38,54 @@ public sealed class ControlTests
     }
 
     [Theory]
-    [InlineData("sleep", true)]
-    [InlineData("SLEEP", true)]
-    [InlineData("/usr/bin/sleep", true)]
-    [InlineData("systemd-journald", true)] // comm is cut to 15 bytes: "systemd-journal"
-    [InlineData("sleepy", false)]
-    [InlineData("bash", false)]
-    public void An_expected_name_matches_comm_the_executable_or_argv0(string expected, bool matches)
+    [InlineData("systemd-journal", true)]                    // comm
+    [InlineData("systemd-journald", true)]                   // the executable's name, and comm's 15-byte prefix
+    [InlineData("/usr/lib/systemd/systemd-journald", true)]  // a path is compared whole
+    [InlineData("/tmp/systemd-journald", false)]             // not by its last part
+    [InlineData("SYSTEMD-JOURNALD", false)]                  // names are case-sensitive on Linux
+    [InlineData("journald", false)]
+    public void An_expected_name_matches_comm_the_executable_or_argv0_exactly(string expected, bool matches)
     {
-        Assert.Equal(matches, LinuxProcessController.NamesMatch(["sleep", "sleep", "systemd-journal"], expected));
+        Assert.Equal(matches, LinuxProcessController.NamesMatch(
+            "systemd-journal", "/usr/lib/systemd/systemd-journald", "/usr/lib/systemd/systemd-journald", expected));
+    }
+
+    [Fact]
+    public void Only_comm_is_matched_on_its_truncated_prefix()
+    {
+        // The kernel cuts comm to 15 bytes; an executable name or argv[0] is never cut, so no prefix rule applies.
+        Assert.True(LinuxProcessController.NamesMatch("averyveryverylo", null, null, "averyveryverylongname"));
+        Assert.False(LinuxProcessController.NamesMatch("x", "/opt/averyveryverylo", null, "averyveryverylongname"));
+    }
+
+    [Theory]
+    [InlineData("systemd-journal", "/usr/lib/systemd/systemd-journald", 1, true)]
+    [InlineData("sshd", "/usr/sbin/sshd", 1, true)]
+    [InlineData("sshd", "/usr/sbin/sshd", 4242, false)]   // a login session's sshd, not the listener
+    [InlineData("dbus-daemon", "/usr/bin/dbus-daemon", 1, true)]
+    [InlineData("nginx", "/usr/sbin/nginx", 1, false)]
+    public void A_daemon_that_holds_the_machine_together_is_protected_but_its_children_are_not(
+        string comm, string exe, int parent, bool isProtected)
+    {
+        Assert.Equal(isProtected, LinuxProcessController.IsProtected(comm, exe, parent));
+    }
+
+    [Theory]
+    [InlineData("t", ProcessAction.Terminate, "under a debugger")]
+    [InlineData("T", ProcessAction.Terminate, "was suspended, so it was continued")]
+    [InlineData("S", ProcessAction.Terminate, null)]
+    public void The_result_says_when_the_processs_stopped_state_changes_what_the_signal_does(string state, ProcessAction action, string? note)
+    {
+        var text = LinuxProcessController.StateNote(state, action);
+
+        if (note is null)
+        {
+            Assert.Null(text);
+        }
+        else
+        {
+            Assert.Contains(note, text, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

@@ -62,7 +62,9 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                 $"PID {processId} ({stat.Name}) is a kernel thread; signals to it are ignored or dangerous. Nothing has been done.");
         }
 
-        if (!NamesMatch(Names(processId, stat.Name), expectedName))
+        var executable = Optional(() => ProcFiles.ReadProcessLink(processId, "exe"));
+        var argv0 = Optional(() => ProcFiles.ReadProcess(processId, "cmdline"))?.Split('\0')[0];
+        if (!NamesMatch(stat.Name, executable, argv0, expectedName))
         {
             throw new ProcessControlException(
                 $"PID {processId} is '{stat.Name}', not '{expectedName}'. Nothing has been done. PIDs are reused, so " +
@@ -74,6 +76,14 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
             throw new ProcessControlException(
                 $"PID {processId} ({stat.Name}) has already exited and is a zombie waiting for its parent (PID " +
                 $"{stat.ParentProcessId}) to reap it; signals do nothing to it. Nothing has been done.");
+        }
+
+        if (action != ProcessAction.Resume && IsProtected(stat.Name, executable, stat.ParentProcessId))
+        {
+            throw new ProcessControlException(
+                $"Refusing to {action.ToString().ToLowerInvariant()} '{stat.Name}' (PID {processId}): it is a daemon this machine " +
+                "needs - logging, logins, devices, the system bus, networking or remote access - and stopping or freezing it " +
+                "can cut the machine off, these diagnostics included. Nothing has been done.");
         }
 
         var started = KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat)) +
@@ -92,13 +102,6 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
         try
         {
             LibC.SendSignal(pidfd, Signal(action));
-
-            // SIGTERM stays pending on a stopped process until it runs again, so a suspended process is
-            // continued after it -- as systemd does -- or terminate would always wait out its timeout.
-            if (action == ProcessAction.Terminate && stat.State == "T")
-            {
-                LibC.SendSignal(pidfd, LibC.SIGCONT);
-            }
         }
         catch (ErrnoException ex) when (ex.Errno == ErrnoException.ESRCH)
         {
@@ -113,6 +116,27 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
 
         // Logged the moment it is sent: a root signal must leave an audit line even if the wait below fails.
         LogSent(logger, SignalName(action), stat.Name, processId);
+
+        // SIGTERM stays pending on a stopped process until it runs again, so a suspended process is continued
+        // after it -- as systemd does -- or terminate would always wait out its timeout. Its own try: SIGTERM has
+        // been delivered by now, so a failure here must not say "nothing has been done".
+        if (action == ProcessAction.Terminate && stat.State == "T")
+        {
+            try
+            {
+                LibC.SendSignal(pidfd, LibC.SIGCONT);
+            }
+            catch (ErrnoException ex) when (ex.Errno == ErrnoException.ESRCH)
+            {
+                // It exited on SIGTERM already.
+            }
+            catch (ErrnoException ex)
+            {
+                throw new ProcessControlException(
+                    $"SIGTERM was sent to '{stat.Name}' (PID {processId}), but continuing it with SIGCONT failed: {ex.Message}. " +
+                    "It stays suspended with SIGTERM pending; resume it to let it act on the signal.", ex);
+            }
+        }
 
         string detail;
         try
@@ -132,19 +156,57 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                 "to see whether it is still running.", ex);
         }
 
+        if (StateNote(stat.State, action) is { } note)
+        {
+            detail += " " + note;
+        }
+
         LogControlled(logger, action, stat.Name, processId, detail);
         return new ProcessControlResult(processId, stat.Name, started, action, detail);
     }
 
     /// <summary>Whether the name the caller expects is this process's: its comm, its executable, or argv[0].</summary>
-    /// <remarks>comm is cut to 15 bytes by the kernel, so a longer expected name matches on that prefix.</remarks>
-    internal static bool NamesMatch(IEnumerable<string> names, string expected)
+    /// <remarks>
+    /// Exactly, as Linux names are: case-sensitive, and a path compared whole, never by its last part -- a
+    /// /tmp/nginx is not /usr/sbin/nginx. Only comm has a prefix rule, because only comm is cut to 15 bytes.
+    /// </remarks>
+    internal static bool NamesMatch(string comm, string? executable, string? argv0, string expected)
     {
-        var wanted = Path.GetFileName(expected.Trim());
-        return names.Any(name =>
-            string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase) ||
-            (name.Length == 15 && wanted.StartsWith(name, StringComparison.OrdinalIgnoreCase)));
+        var wanted = expected.Trim();
+        if (wanted.Contains('/', StringComparison.Ordinal))
+        {
+            return string.Equals(executable, wanted, StringComparison.Ordinal) || string.Equals(argv0, wanted, StringComparison.Ordinal);
+        }
+
+        return comm == wanted ||
+               (comm.Length == 15 && wanted.Length > 15 && wanted.StartsWith(comm, StringComparison.Ordinal)) ||
+               (executable is not null && Path.GetFileName(executable) == wanted) ||
+               (argv0 is { Length: > 0 } && Path.GetFileName(argv0) == wanted);
     }
+
+    /// <summary>Daemons whose stop or freeze cuts the machine off: the processes service_control also protects.</summary>
+    private static readonly HashSet<string> ProtectedDaemons = new(StringComparer.Ordinal)
+    {
+        "systemd-journald", "systemd-logind", "systemd-udevd", "systemd-networkd", "systemd-resolved", "dbus-daemon",
+        "dbus-broker", "NetworkManager", "polkitd", "sshd", "tailscaled", "openvpn",
+    };
+
+    /// <summary>One of those daemons itself -- a child of PID 1 -- not a login session's sshd or a udev worker.</summary>
+    internal static bool IsProtected(string comm, string? executable, int parentProcessId) =>
+        parentProcessId == 1 &&
+        ((executable is not null && ProtectedDaemons.Contains(Path.GetFileName(executable))) ||
+         ProtectedDaemons.Contains(comm) ||
+         (comm.Length == 15 && ProtectedDaemons.Any(d => d.StartsWith(comm, StringComparison.Ordinal))));
+
+    /// <summary>What a stopped process's state means for the signal just sent, or null when it changes nothing.</summary>
+    internal static string? StateNote(string state, ProcessAction action) => (state, action) switch
+    {
+        ("t", ProcessAction.Terminate) =>
+            "It is stopped under a debugger (tracing stop): SIGTERM stays pending until the debugger lets it run.",
+        ("T", ProcessAction.Terminate) =>
+            "It was suspended, so it was continued to act on SIGTERM - if it handles SIGTERM and keeps running, it is now running, not suspended.",
+        _ => null,
+    };
 
     private static SafeFileHandle Open(int processId)
     {
@@ -160,28 +222,14 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                 ErrnoException.EINVAL => new ProcessControlException(
                     $"PID {processId} is a thread of another process, not a process. Pass the process's PID - the Tgid " +
                     $"line of /proc/{processId}/status. Nothing has been done."),
+                ErrnoException.EPERM => new ProcessControlException(
+                    $"The kernel refused to open PID {processId} (EPERM): a seccomp filter or container profile blocks " +
+                    "pidfd_open for this server, so it cannot signal safely here. Nothing has been done."),
                 ErrnoException.ENOSYS => new ProcessControlException(
                     "This kernel has no pidfd_open (Linux 5.3 or later is needed), so a process cannot be signalled " +
                     "without the risk of hitting a reused PID. Nothing has been done."),
                 _ => new ProcessControlException($"Could not open PID {processId}: {ex.Message}. Nothing has been done.", ex),
             };
-        }
-    }
-
-    private static IEnumerable<string> Names(int processId, string comm)
-    {
-        yield return comm;
-        var exe = Optional(() => ProcFiles.ReadProcessLink(processId, "exe"));
-        var cmdline = Optional(() => ProcFiles.ReadProcess(processId, "cmdline"));
-
-        if (exe is not null)
-        {
-            yield return Path.GetFileName(exe);
-        }
-
-        if (cmdline?.Split('\0')[0] is { Length: > 0 } argv0)
-        {
-            yield return Path.GetFileName(argv0);
         }
     }
 

@@ -23,8 +23,15 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
     {
         "dbus.service", "dbus-broker.service", "systemd-journald.service", "systemd-logind.service",
         "systemd-udevd.service", "systemd-networkd.service", "NetworkManager.service", "systemd-resolved.service",
-        "ssh.service", "sshd.service", "polkit.service", "networking.service",
+        "ssh.service", "sshd.service", "polkit.service", "networking.service", "tailscaled.service", "openvpn.service",
+        "zerotier-one.service", "strongswan.service",
     };
+
+    /// <summary>Templates whose every instance is a tunnel the machine may be reached through.</summary>
+    private static readonly string[] CriticalTemplates = ["wg-quick@", "openvpn@", "openvpn-client@", "openvpn-server@"];
+
+    internal static bool IsCritical(string unit) =>
+        Critical.Contains(unit) || CriticalTemplates.Any(t => unit.StartsWith(t, StringComparison.Ordinal));
 
     /// <summary>Targets a unit pulls in only if running it shuts down, reboots or suspends the machine.</summary>
     private static readonly HashSet<string> ShutdownTargets = new(StringComparer.Ordinal)
@@ -69,7 +76,7 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
                     "restart it with a new build. Nothing has been done.");
             }
 
-            if (names.FirstOrDefault(Critical.Contains) is { } critical)
+            if (names.FirstOrDefault(IsCritical) is { } critical)
             {
                 throw new ServiceControlException(
                     $"Refusing to {verb} '{unit}' ({critical}): stopping it cuts this machine off - logging, logins, " +
@@ -82,6 +89,14 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
                 throw new ServiceControlException(
                     $"Refusing to {verb} '{unit}': stopping it would also stop this diagnostics server, which depends " +
                     "on it. Nothing has been done.");
+            }
+
+            // A dependent is stopped with it, so a critical one is refused as if it had been named.
+            if (dependents.FirstOrDefault(IsCritical) is { } criticalDependent)
+            {
+                throw new ServiceControlException(
+                    $"Refusing to {verb} '{unit}': it would also stop {criticalDependent}, which depends on it, and that cuts " +
+                    "this machine off. Nothing has been done.");
             }
         }
 

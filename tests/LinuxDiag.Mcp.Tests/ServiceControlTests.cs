@@ -107,6 +107,30 @@ public sealed class ServiceControlTests
     }
 
     [Fact]
+    public async Task A_stop_that_would_take_a_critical_service_down_with_it_is_refused()
+    {
+        var script = new Scripted { Dependents = "app.service\n  ssh.service\n" };
+
+        var ex = await Assert.ThrowsAsync<ServiceControlException>(() =>
+            Controller(script.Commands).ControlAsync("app", ServiceAction.Stop, CancellationToken.None));
+
+        Assert.Contains("would also stop ssh.service", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(script.Calls, c => c.Contains("stop"));
+    }
+
+    [Theory]
+    [InlineData("tailscaled")]
+    [InlineData("wg-quick@wg0")]
+    [InlineData("openvpn@office")]
+    public async Task A_vpn_or_tunnel_the_machine_may_be_reached_through_is_critical(string name)
+    {
+        var script = new Scripted();
+
+        await Assert.ThrowsAsync<ServiceControlException>(() =>
+            Controller(script.Commands).ControlAsync(name, ServiceAction.Stop, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Starting_a_critical_service_is_allowed()
     {
         var script = new Scripted { Before = "inactive", After = "active", Names = "ssh.service sshd.service" };
