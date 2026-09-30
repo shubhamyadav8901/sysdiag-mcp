@@ -56,4 +56,15 @@ public sealed class ExternalCommandTests
 
         Assert.Contains("more than", ex.Message, StringComparison.Ordinal);
     }
+
+    [LinuxFact]
+    public async Task A_program_that_leaves_its_output_open_behind_it_is_an_error_not_an_empty_answer()
+    {
+        // The background sleep inherits stdout, so the pipe stays open after sh exits. What was read so far
+        // must not come back as the whole answer.
+        var ex = await Assert.ThrowsAsync<ExternalCommandException>(() =>
+            new LinuxExternalCommand().RunAsync("sh", ["-c", "sleep 30 & echo partial"], TimeSpan.FromSeconds(20), CancellationToken.None));
+
+        Assert.Contains("left its output open", ex.Message, StringComparison.Ordinal);
+    }
 }

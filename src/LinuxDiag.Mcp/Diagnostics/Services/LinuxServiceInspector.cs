@@ -11,7 +11,8 @@ public sealed class LinuxServiceInspector(IExternalCommand commands, LinuxDiagOp
     [
         "Id", "Names", "Description", "LoadState", "ActiveState", "SubState", "UnitFileState", "Type", "FragmentPath",
         "DropInPaths", "ExecStart", "MainPID", "User", "Restart", "NRestarts", "Result", "Requires", "Wants", "RequiredBy",
-        "WantedBy", "ActiveEnterTimestamp", "ExecMainStatus",
+        "WantedBy", "ActiveEnterTimestamp", "ExecMainStatus", "BindsTo", "Requisite", "RequisiteOf", "BoundBy", "ConsistsOf",
+        "DynamicUser",
     ];
 
     public async Task<ServiceQueryResult> QueryAsync(string name, CancellationToken cancellationToken)
@@ -77,9 +78,11 @@ public sealed class LinuxServiceInspector(IExternalCommand commands, LinuxDiagOp
             NullIfEmpty(unit["UnitFileState"]) ?? "(none)",
             NullIfEmpty(unit["Type"]) ?? "(unknown)",
             command?.CommandLine,
-            NullIfEmpty(unit["User"]) ?? "root",
-            unit.List("Requires").Concat(unit.List("Wants")).ToList(),
-            unit.List("RequiredBy").Concat(unit.List("WantedBy")).ToList(),
+            Account(unit),
+
+            // What a stop takes down is the hard relations only: a unit that merely Wants this one keeps running.
+            unit.List("Requires").Concat(unit.List("BindsTo")).Concat(unit.List("Requisite")).ToList(),
+            unit.List("RequiredBy").Concat(unit.List("BoundBy")).Concat(unit.List("RequisiteOf")).Concat(unit.List("ConsistsOf")).ToList(),
             unit["LoadState"] ?? "(unknown)",
             Int(unit["MainPID"]) is int pid && pid > 0 ? pid : null,
             NullIfEmpty(unit["Restart"]),
@@ -88,7 +91,24 @@ public sealed class LinuxServiceInspector(IExternalCommand commands, LinuxDiagOp
             NullIfEmpty(unit["FragmentPath"]),
             unit.List("DropInPaths"),
             Int(unit["ExecMainStatus"]),
-            SystemctlShow.Timestamp(unit["ActiveEnterTimestamp"]));
+            SystemctlShow.Timestamp(unit["ActiveEnterTimestamp"]),
+            unit.List("Wants"),
+            unit.List("WantedBy"));
+    }
+
+    /// <summary>User=, or for DynamicUser=yes without one the name systemd derives from the unit; root otherwise.</summary>
+    /// <remarks>An empty User= under DynamicUser is not root: reporting it as root is the wrong answer to "which account".</remarks>
+    private static string Account(SystemdUnit unit)
+    {
+        if (NullIfEmpty(unit["User"]) is { } user)
+        {
+            return user;
+        }
+
+        var id = unit["Id"] ?? string.Empty;
+        return unit["DynamicUser"] == "yes"
+            ? $"dynamic user ({(id.EndsWith(".service", StringComparison.Ordinal) ? id[..^8] : id)})"
+            : "root";
     }
 
     internal static string FirstLine(string text) =>

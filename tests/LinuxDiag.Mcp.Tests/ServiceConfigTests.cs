@@ -80,7 +80,33 @@ public sealed class ServiceConfigTests
         Assert.Equal("/usr/sbin/cron -f -P $EXTRA_OPTS", info.ImagePath);
         Assert.Equal("root", info.Account);
         Assert.Equal(175, info.MainProcessId);
-        Assert.Equal(["multi-user.target"], info.DependedOnBy);
+        Assert.Equal(["system.slice", "sysinit.target"], info.DependsOn);
+        Assert.Empty(info.DependedOnBy);
+        Assert.Equal(["multi-user.target"], info.WantedBy);
+    }
+
+    [Fact]
+    public void Only_the_units_a_stop_takes_down_count_as_dependents_and_wanting_is_reported_apart()
+    {
+        // Stopping a unit stops what Requires, Requisite, BindsTo or PartOf it -- not what merely Wants it.
+        var info = LinuxServiceInspector.ToInfo(SystemctlShow.Parse(
+            "Id=db.service\nRequires=a.service\nBindsTo=b.device\nRequisite=c.service\nWants=d.service\n" +
+            "RequiredBy=app.service\nBoundBy=sidecar.service\nRequisiteOf=check.service\nConsistsOf=worker.service\n" +
+            "WantedBy=multi-user.target\nLoadState=loaded\nActiveState=active\nSubState=running\n")[0]);
+
+        Assert.Equal(["a.service", "b.device", "c.service"], info.DependsOn);
+        Assert.Equal(["d.service"], info.WeakDependsOn);
+        Assert.Equal(["app.service", "sidecar.service", "check.service", "worker.service"], info.DependedOnBy);
+        Assert.Equal(["multi-user.target"], info.WantedBy);
+    }
+
+    [Fact]
+    public void A_dynamic_user_service_is_not_reported_as_running_as_root()
+    {
+        var info = LinuxServiceInspector.ToInfo(SystemctlShow.Parse(
+            CronShow.Replace("User=\n", "User=\nDynamicUser=yes\n", StringComparison.Ordinal))[0]);
+
+        Assert.Equal("dynamic user (cron)", info.Account);
     }
 
     [Fact]

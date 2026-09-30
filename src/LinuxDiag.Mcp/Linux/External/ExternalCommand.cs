@@ -64,6 +64,9 @@ public sealed class LinuxExternalCommand : IExternalCommand
     internal static readonly string[] SystemDirectories = ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
     private const int DefaultMaxOutputChars = 32 * 1024 * 1024;
+
+    /// <summary>How long the pipes may stay open after the program exits.</summary>
+    private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(5);
     private readonly int _maxOutputChars;
 
     public LinuxExternalCommand()
@@ -123,16 +126,27 @@ public sealed class LinuxExternalCommand : IExternalCommand
         }
         catch (OperationCanceledException)
         {
-            Kill(process);
             ProcessStreams.Observe(output);
             ProcessStreams.Observe(error);
+            Kill(process);
             cancellationToken.ThrowIfCancellationRequested();
             throw new ExternalCommandException(
                 $"{program} did not finish within {timeout.TotalSeconds:0.#} s and was stopped.", timedOut: true);
         }
 
-        var standardOutput = await ProcessStreams.DrainAsync(output).ConfigureAwait(false);
-        var standardError = await ProcessStreams.DrainAsync(error).ConfigureAwait(false);
+        // The kit's drain returns what it has after its grace, which suits run_command. Here the output is parsed
+        // as the whole answer, so a pipe a surviving grandchild holds open is an error, not a short answer.
+        var drained = Task.WhenAll(output, error);
+        if (!ReferenceEquals(await Task.WhenAny(drained, Task.Delay(DrainGrace)).ConfigureAwait(false), drained))
+        {
+            ProcessStreams.Observe(drained);
+            Kill(process);
+            throw new ExternalCommandException(
+                $"{program} exited, but a process it started left its output open, so the answer may be incomplete and is not returned.");
+        }
+
+        var standardOutput = await output.ConfigureAwait(false);
+        var standardError = await error.ConfigureAwait(false);
         if (overflowed)
         {
             throw new ExternalCommandException(
@@ -178,9 +192,10 @@ public sealed class LinuxExternalCommand : IExternalCommand
         {
             process.Kill(entireProcessTree: true);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or AggregateException)
         {
-            // Already exited.
+            // Already exited, or part of the tree could not be killed: either way there is nothing more to do,
+            // and the caller must still get this runner's own error rather than this one.
         }
     }
 }

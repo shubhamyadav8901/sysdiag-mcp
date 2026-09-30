@@ -107,7 +107,13 @@ public sealed class ServiceTools(IServiceInspector services)
         }
 
         text.Append("Depends on: ").AppendLine(service.DependsOn.Count == 0 ? "(none)" : string.Join(", ", service.DependsOn));
-        text.Append("Depended on by: ").Append(service.DependedOnBy.Count == 0 ? "(none)" : string.Join(", ", service.DependedOnBy));
+        if (service.WeakDependsOn.Count > 0)
+        {
+            text.Append("Wants (runs without them): ").AppendLine(string.Join(", ", service.WeakDependsOn));
+        }
+
+        text.Append("Stops with it: ").AppendLine(service.DependedOnBy.Count == 0 ? "(none)" : string.Join(", ", service.DependedOnBy));
+        text.Append("Wanted by (keep running if it stops): ").Append(service.WantedBy.Count == 0 ? "(none)" : string.Join(", ", service.WantedBy));
         return text.ToString();
     }
 }

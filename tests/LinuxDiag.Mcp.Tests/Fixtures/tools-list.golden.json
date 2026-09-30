@@ -1655,6 +1655,18 @@
                 "null"
               ],
               "format": "date-time"
+            },
+            "weakDependsOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "wantedBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -1675,7 +1687,9 @@
             "fragmentPath",
             "dropIns",
             "lastExitStatus",
-            "activeSince"
+            "activeSince",
+            "weakDependsOn",
+            "wantedBy"
           ]
         },
         "candidates": {
