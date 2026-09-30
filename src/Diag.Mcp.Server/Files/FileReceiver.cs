@@ -17,6 +17,8 @@ namespace Diag.Mcp.Server.Files;
 /// already owns — its own folder or the artifact directory — because that grants nothing that
 /// SMB-to-those-folders plus <c>update_self</c> did not already allow. Anywhere else is arbitrary write
 /// as the server's account, one step from code execution, and is refused unless explicitly enabled.
+/// A server may also close its own folder unless its self-update grant is on
+/// (<see cref="FileTransferOptions.ServerDirectoryWritable"/>): LinuxDiag does, windiag does not.
 /// The path is canonicalised with <see cref="Path.GetFullPath(string)"/> first, so a <c>..</c> that
 /// climbs out of an owned directory is judged by where it actually lands, not by how it was spelled.</para>
 /// </remarks>
@@ -24,11 +26,19 @@ public sealed class FileReceiver : IFileReceiver
 {
     private readonly FileTransferOptions _options;
     private readonly ILogger<FileReceiver> _logger;
+    private readonly string _serverDirectory;
 
     public FileReceiver(FileTransferOptions options, ILogger<FileReceiver> logger)
+        : this(options, logger, FileScope.ServerDirectory)
+    {
+    }
+
+    /// <summary>For tests: under <c>dotnet test</c> the process directory is the SDK's, not a server's.</summary>
+    internal FileReceiver(FileTransferOptions options, ILogger<FileReceiver> logger, string serverDirectory)
     {
         _options = options;
         _logger = logger;
+        _serverDirectory = serverDirectory;
     }
 
     public FileWriteResult Receive(FileWriteRequest request, CancellationToken cancellationToken)
@@ -37,7 +47,7 @@ public sealed class FileReceiver : IFileReceiver
         cancellationToken.ThrowIfCancellationRequested();
 
         var full = FileScope.Resolve(request.Path, "destination path");
-        var scope = FileScope.Of(full, _options);
+        var (scope, inServerDirectory) = FileScope.Classify(full, _options, _serverDirectory);
 
         if (scope == WriteScope.Arbitrary && !_options.AllowArbitraryWrite)
         {
@@ -46,6 +56,19 @@ public sealed class FileReceiver : IFileReceiver
                 "so writing it needs arbitrary write, which is off. " +
                 $"Set {_options.ArbitraryWriteSetting} to allow writing anywhere, or choose a path under " +
                 "one of those directories. (run_command can also place a file anywhere if it is enabled.)");
+        }
+
+        // Staging a build for update_self is the only reason to write beside the server's binary, and on
+        // Linux that binary is a root service's: a planted file there is loaded or run as root. So a
+        // server that says so ties the write to the self-update grant; windiag leaves it open, as it
+        // always has. Checked before any disk write, so an append chunk is refused the same way.
+        if (inServerDirectory && !_options.ServerDirectoryWritable && !_options.AllowArbitraryWrite)
+        {
+            throw new FileTransferException(
+                $"'{full}' is in this server's own directory ({_serverDirectory}), and writing there is " +
+                "only for staging a build for update_self, which is off. " +
+                $"Set {_options.ServerDirectorySetting} to allow it (or {_options.ArbitraryWriteSetting} to " +
+                $"allow writing anywhere), or choose a path under {_options.ArtifactDirectory}.");
         }
 
         // Checked in memory before any disk write, so a chunk corrupted on a lossy link is rejected at

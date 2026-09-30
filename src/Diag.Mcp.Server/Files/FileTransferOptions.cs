@@ -10,6 +10,12 @@ namespace Diag.Mcp.Server.Files;
 /// <param name="AllowArbitraryRead">Whether <c>get_file</c> may read outside the owned directories.</param>
 /// <param name="ArbitraryWriteSetting">The setting a refusal names, e.g. "WINDIAG_ALLOW_ARBITRARY_WRITE=1".</param>
 /// <param name="ArbitraryReadSetting">The setting a refusal names, e.g. "WINDIAG_ALLOW_ARBITRARY_READ=1".</param>
+/// <param name="ServerDirectoryWritable">
+/// Whether <c>put_file</c> may write into the server's own directory without arbitrary write. It
+/// defaults to true because that is how windiag has always staged a build for <c>update_self</c>; a
+/// server whose binary is a root service's -- LinuxDiag -- ties it to its self-update grant instead.
+/// </param>
+/// <param name="ServerDirectorySetting">The setting a refusal names, e.g. "LINUXDIAG_ALLOW_SELF_UPDATE=1".</param>
 /// <remarks>
 /// There is no read-only flag here: a read-only server does not register <c>put_file</c> at all, so a
 /// flag the receiver would never read has no place on it.
@@ -19,4 +25,6 @@ public sealed record FileTransferOptions(
     bool AllowArbitraryWrite,
     bool AllowArbitraryRead,
     string ArbitraryWriteSetting,
-    string ArbitraryReadSetting);
+    string ArbitraryReadSetting,
+    bool ServerDirectoryWritable = true,
+    string? ServerDirectorySetting = null);

@@ -56,4 +56,29 @@ public sealed class ToolRegistrationTests
             ToolSnapshotGuard.RepositoryFile("tests", "LinuxDiag.Mcp.Tests", "Fixtures", "tools-list.golden.json"),
             "LINUXDIAG_UPDATE_TOOL_SNAPSHOT");
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Put_file_may_write_into_the_server_directory_only_with_the_self_update_grant(bool selfUpdate)
+    {
+        // /opt/linuxdiag holds a root service's binary. Writing there is staging a build for update_self,
+        // so it follows that grant -- and the refusal names the grant's variable as --help spells it.
+        using var provider = Provider(Options(selfUpdate: selfUpdate));
+
+        var files = provider.GetRequiredService<Diag.Mcp.Server.Files.FileTransferOptions>();
+
+        Assert.Equal(selfUpdate, files.ServerDirectoryWritable);
+        Assert.Equal("LINUXDIAG_ALLOW_SELF_UPDATE=1", files.ServerDirectorySetting);
+        Assert.Contains(files.ServerDirectorySetting!, ServerBuilder.HelpText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Every_c_library_import_loads_it_by_its_system_name()
+    {
+        var checkedImports = NativeImportGuard.AssertEveryImportUsesTheSystemResolver(
+            typeof(ServerBuilder).Assembly, typeof(Diag.Mcp.Server.Files.FileTransferOptions).Assembly);
+
+        Assert.True(checkedImports > 0, "The sweep found no P/Invoke; it would pass vacuously.");
+    }
 }

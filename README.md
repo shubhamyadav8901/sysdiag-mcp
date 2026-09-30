@@ -332,7 +332,11 @@ Add it to the relay's `~/.windiag-targets.json` like any target:
 { "as": "build-01", "target": "build-01", "token": "…" }
 ```
 
-Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `update_self`. The staged
+Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `update_self`, so both
+need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). Unlike windiag,
+`put_file` does not write into the server's own directory without it: that directory holds a root
+service's binary, and staging a build is the only reason to write there. The artifact directory stays
+writable either way, and arbitrary write lifts the restriction too. The staged
 file must be an x86-64 Linux executable. The swap runs from a helper started with `systemd-run`, because
 a child of the service would be killed along with it before it could swap anything.
 
@@ -721,7 +725,8 @@ level through an ordinary tool call. The token is the whole boundary.
 
 ## Configuration
 
-The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`. `LinuxDiag.Mcp --help` lists them.
+The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`
+and `put_file` writes into the server's own directory only with `LINUXDIAG_ALLOW_SELF_UPDATE`. `LinuxDiag.Mcp --help` lists them.
 
 | Variable | Default | Meaning |
 |---|---|---|

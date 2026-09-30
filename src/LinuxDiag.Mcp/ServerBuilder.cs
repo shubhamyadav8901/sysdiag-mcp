@@ -35,13 +35,17 @@ public static class ServerBuilder
         /var/lib/linuxdiag (0700) and /etc/systemd/system/<n>.service, then enables and starts it.
         --token-stdin reads the token from standard input, keeping it out of sudo's log and ps.
 
+        put_file writes freely only under the artifact directory. Into the server's own directory
+        (/opt/linuxdiag) it needs --allow-self-update, since staging a build is the only reason to.
+
         Configuration (environment):
           LINUXDIAG_HTTP_BIND                    address to serve on when --http has none
           LINUXDIAG_TOKEN                        bearer token; generated and printed once when unset
           LINUXDIAG_READ_ONLY=1                  register no tool that changes the machine
-          LINUXDIAG_ALLOW_SELF_UPDATE=1          register update_self
+          LINUXDIAG_ALLOW_SELF_UPDATE=1          register update_self, and let put_file write into the
+                                                 server's own directory to stage a build for it
           LINUXDIAG_ALLOW_COMMAND_EXECUTION=1    register run_command
-          LINUXDIAG_ALLOW_ARBITRARY_WRITE=1      let put_file write outside the server's directories
+          LINUXDIAG_ALLOW_ARBITRARY_WRITE=1      let put_file write anywhere, the server's own directory included
           LINUXDIAG_ALLOW_ARBITRARY_READ=1       let get_file read outside the server's directories
           LINUXDIAG_ARTIFACT_DIR                 default /var/lib/linuxdiag
           LINUXDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS  default 120 (1..3600)
@@ -67,9 +71,13 @@ public static class ServerBuilder
 
         TryAddDiagnostics(services);
 
+        // /opt/linuxdiag holds a root service's binary, so put_file writes there only to stage a build
+        // for update_self, and only with that grant.
         var files = new FileTransferOptions(
             options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
-            "LINUXDIAG_ALLOW_ARBITRARY_WRITE=1", "LINUXDIAG_ALLOW_ARBITRARY_READ=1");
+            "LINUXDIAG_ALLOW_ARBITRARY_WRITE=1", "LINUXDIAG_ALLOW_ARBITRARY_READ=1",
+            ServerDirectoryWritable: options.AllowSelfUpdate,
+            ServerDirectorySetting: "LINUXDIAG_ALLOW_SELF_UPDATE=1");
         var update = new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout);
 
         var mcp = services.AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _)

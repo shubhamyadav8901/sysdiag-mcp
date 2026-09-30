@@ -25,12 +25,28 @@ internal static class FileScope
     /// directory -- a symlink on Linux, a junction on Windows -- carry a write or a read anywhere the
     /// link pointed, while every path in the request still looked owned.
     /// </remarks>
-    public static WriteScope Of(string fullPath, FileTransferOptions options)
+    public static WriteScope Of(string fullPath, FileTransferOptions options) =>
+        Of(fullPath, options, ServerDirectory);
+
+    internal static WriteScope Of(string fullPath, FileTransferOptions options, string serverDirectory) =>
+        Classify(fullPath, options, serverDirectory).Scope;
+
+    /// <summary>
+    /// The scope, and whether the path lands in the server's own directory rather than the artifact
+    /// directory -- from one resolution, so the two answers are about the same real path.
+    /// </summary>
+    /// <remarks>
+    /// The server directory is resolved the same way as the path, so a link cannot get around the
+    /// comparison from either side. An artifact directory nested inside the server directory is still
+    /// the artifact directory: it is owned in its own right, and an input dropped there stages nothing.
+    /// </remarks>
+    internal static (WriteScope Scope, bool InServerDirectoryOnly) Classify(
+        string fullPath, FileTransferOptions options, string serverDirectory)
     {
         var real = RealPath(fullPath);
-        return IsUnder(real, RealPath(ServerDirectory)) || IsUnder(real, RealPath(options.ArtifactDirectory))
-            ? WriteScope.WinDiag
-            : WriteScope.Arbitrary;
+        var inServer = IsUnder(real, RealPath(serverDirectory));
+        var inArtifacts = IsUnder(real, RealPath(options.ArtifactDirectory));
+        return (inServer || inArtifacts ? WriteScope.WinDiag : WriteScope.Arbitrary, inServer && !inArtifacts);
     }
 
     /// <summary>How many links one resolution may follow before it is called a loop: the kernel's own limit.</summary>

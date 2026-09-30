@@ -160,4 +160,19 @@ public sealed class ToolRegistrationTests
         // capture_dump and the control tools follow.
         Assert.DoesNotContain("put_file", ToolNames(Options(readOnly: true)));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Put_file_may_write_into_the_server_directory_whatever_the_self_update_grant(bool selfUpdate)
+    {
+        // windiag has always let put_file stage into its own folder -- that is how a build reaches
+        // update_self without SMB -- and the Linux server's gate on it must not reach this one.
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders());
+        ServerBuilder.ConfigureServices(services, Options(allowSelfUpdate: selfUpdate));
+        using var provider = services.BuildServiceProvider();
+
+        Assert.True(provider.GetRequiredService<Diag.Mcp.Server.Files.FileTransferOptions>().ServerDirectoryWritable);
+    }
 }

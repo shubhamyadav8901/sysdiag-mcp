@@ -22,6 +22,9 @@ internal static class LinuxNoFollow
     private const int ELOOP = 40;
     private const int OwnerReadWrite = 0b110_000_000; // 0600, applied only when the file is created
 
+    // Before the first call binds open(2), so libc is never looked for beside the server.
+    static LinuxNoFollow() => SystemLibrary.RegisterFor(typeof(LinuxNoFollow).Assembly);
+
     public static bool Supported => RuntimeInformation.ProcessArchitecture == Architecture.X64;
 
     public static FileStream OpenForAppend(string path)
@@ -43,7 +46,8 @@ internal static class LinuxNoFollow
     }
 
     // open(2) is variadic in C. On x86-64 a variadic int travels exactly as a fixed one does, which is
-    // what makes this declaration sound there -- and another reason it is x86-64 only.
-    [DllImport("libc", SetLastError = true)]
+    // what makes this declaration sound there -- and another reason it is x86-64 only. "libc" is the
+    // name SystemLibrary resolves by its soname, through the system loader alone; see there for why.
+    [DllImport(SystemLibrary.C, SetLastError = true)]
     private static extern int open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, int mode);
 }
