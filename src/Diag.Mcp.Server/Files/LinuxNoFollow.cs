@@ -42,6 +42,11 @@ internal static class LinuxNoFollow
             throw new IOException(Marshal.GetPInvokeErrorMessage(errno), errno);
         }
 
+        // A FileStream over this descriptor still appends, although it thinks it writes at an offset of its
+        // own: on Unix it writes with pwrite at the position it tracks, starting from 0, and Linux ignores
+        // pwrite's offset on an O_APPEND descriptor and writes at the end of the file (pwrite(2), BUGS).
+        // The cost is that the stream's Position no longer matches where the bytes went, so a caller
+        // must only Write to it -- never Seek, and never read Position as the file's length.
         return new FileStream(new SafeFileHandle(fd, ownsHandle: true), FileAccess.Write);
     }
 
