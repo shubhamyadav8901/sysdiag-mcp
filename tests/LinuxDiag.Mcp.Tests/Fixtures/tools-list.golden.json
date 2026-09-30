@@ -367,6 +367,286 @@
     }
   },
   {
+    "name": "effective_access",
+    "title": "Why is this access denied",
+    "description": "Explain whether an account or a running process can read, write and execute a file or directory, and which rule decides: owner, group or other bits, a POSIX ACL entry and its mask, CAP_DAC_OVERRIDE, a read-only or noexec mount, an immutable file, or a directory on the way it cannot search. Give account (a user name or uid; groups from the account database) or processId (that process\u0027s credentials as they are now). Also shows the ACL, default ACL, file capabilities and mount, and the kernel\u0027s own answer for the server\u0027s credentials, which exposes AppArmor, SELinux and filesystem-specific denials when the subject is the server itself. AppArmor and SELinux policy is not evaluated for anyone else.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path of the file or directory",
+          "type": "string"
+        },
+        "account": {
+          "description": "The account to evaluate: a user name or numeric uid. Give this or processId.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "A running process whose uid, groups and capabilities to evaluate. Give this or account.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "report": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "resolvedPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "group": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "acl": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "defaultAcl": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fileCapabilities": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "immutable": {
+              "type": "boolean"
+            },
+            "appendOnly": {
+              "type": "boolean"
+            },
+            "mountPoint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mountOptions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "subject": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "userId": {
+                  "type": "integer"
+                },
+                "userName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "groups": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "dacOverride": {
+                  "type": "boolean"
+                },
+                "dacReadSearch": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "description",
+                "userId",
+                "userName",
+                "groups",
+                "dacOverride",
+                "dacReadSearch"
+              ]
+            },
+            "read": {
+              "type": "object",
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "allowed",
+                "reason"
+              ]
+            },
+            "write": {
+              "type": "object",
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "allowed",
+                "reason"
+              ]
+            },
+            "execute": {
+              "type": "object",
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "allowed",
+                "reason"
+              ]
+            },
+            "traversal": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "canSearch": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "canSearch",
+                  "reason"
+                ]
+              }
+            },
+            "blockedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "probe": {
+              "type": "object",
+              "properties": {
+                "userId": {
+                  "type": "integer"
+                },
+                "read": {
+                  "type": "boolean"
+                },
+                "write": {
+                  "type": "boolean"
+                },
+                "execute": {
+                  "type": "boolean"
+                },
+                "sameSubject": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "userId",
+                "read",
+                "write",
+                "execute",
+                "sameSubject"
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "path",
+            "resolvedPath",
+            "kind",
+            "owner",
+            "group",
+            "mode",
+            "acl",
+            "defaultAcl",
+            "fileCapabilities",
+            "immutable",
+            "appendOnly",
+            "mountPoint",
+            "mountOptions",
+            "subject",
+            "read",
+            "write",
+            "execute",
+            "traversal",
+            "blockedAt",
+            "probe",
+            "notes"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "report"
+      ]
+    },
+    "annotations": {
+      "title": "Why is this access denied",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "event_log_tail",
     "title": "Recent journal records",
     "description": "Read recent records from the systemd journal, newest first, filtered by age, severity, unit, provider (SYSLOG_IDENTIFIER) and raw journal matches. Defaults to the last hour at critical, error and warning. Use it to find out what the machine complained about around the time of a failure, or why a service refused to start - pass its unit. Without root, or membership of the systemd-journal or adm group, only this account\u0027s own records are visible, and the result says so.",

@@ -78,6 +78,10 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "systemctl list-unit-files and show, crontabs, rc.local, profile.d, ld.so.preload, and the dpkg database",
                 "systemctl",
                 "cannot read users' crontabs or unreadable home directories, so those entries are silently absent"),
+            ["effective_access"] = new(
+                "statx, POSIX ACLs and file capabilities from extended attributes, /proc/self/mountinfo, faccessat",
+                null,
+                "cannot evaluate a path behind a directory the server's own account cannot search"),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

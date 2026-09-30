@@ -17,6 +17,18 @@ public readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, u
     public bool IsRegular => (Mode & 0xF000) == 0x8000;
 }
 
+/// <param name="Mode">st_mode: file type, permission bits, and setuid/setgid/sticky.</param>
+/// <param name="Immutable">chattr +i: nobody, root included, may write, rename or delete it.</param>
+/// <param name="AppendOnly">chattr +a: writes may only append.</param>
+public readonly record struct FileStatus(uint UserId, uint GroupId, ushort Mode, bool Immutable, bool AppendOnly)
+{
+    public bool IsDirectory => (Mode & 0xF000) == 0x4000;
+
+    public bool IsRegular => (Mode & 0xF000) == 0x8000;
+}
+
+public sealed record AccountEntry(string Name, uint UserId, uint GroupId, string Home);
+
 /// <summary>A C-library call's failure, with its errno for a caller that maps it to words.</summary>
 public sealed class ErrnoException : Exception, IDiagnosticException
 {
@@ -46,6 +58,21 @@ internal static class LibC
     private const int ENOTDIR = 20;
     private const int AtFdCwd = -100;
     private const uint StatxBasicStats = 0x7ff;
+    private const int EBADF = 9;
+    private const int ETXTBSY = 26;
+    private const int EROFS = 30;
+    private const int ERANGE = 34;
+    private const int ENODATA = 61;
+    private const int ENOTSUP = 95;
+    private const int AtEaccess = 0x200;
+    private const ulong StatxAttrImmutable = 0x10;
+    private const ulong StatxAttrAppend = 0x20;
+    private const int PasswdSize = 48;
+    private const int GroupSize = 32;
+
+    public const int ROk = 4;
+    public const int WOk = 2;
+    public const int XOk = 1;
 
     // AT_STATX_DONT_SYNC: answer from cached attributes. A sync would block without limit on a hard-mounted
     // NFS file whose server has gone, or a hung FUSE daemon -- and update_self waits for every in-flight call.
@@ -80,6 +107,23 @@ internal static class LibC
         };
     }
 
+    /// <summary>statx into the buffer: false when nothing is at the path, a throw for anything else.</summary>
+    private static bool Statx(string path, Span<byte> buffer)
+    {
+        if (statx(AtFdCwd, path, AtStatxDontSync, StatxBasicStats, ref MemoryMarshal.GetReference(buffer)) == 0)
+        {
+            return true;
+        }
+
+        var errno = Marshal.GetLastPInvokeError();
+        return errno switch
+        {
+            ENOENT or ESRCH or ENOTDIR => false,
+            EACCES or EPERM => throw new UnauthorizedAccessException($"Permission denied reading '{path}'."),
+            _ => throw new IOException(Marshal.GetPInvokeErrorMessage(errno), errno),
+        };
+    }
+
     /// <summary>The device and inode a path resolves to, links followed, or null when nothing is there.</summary>
     /// <remarks>
     /// <para>statx rather than stat: its struct is the kernel's own, identical on every architecture, so the
@@ -90,15 +134,9 @@ internal static class LibC
     public static FileIdentity? Identify(string path)
     {
         Span<byte> buffer = stackalloc byte[256];
-        if (statx(AtFdCwd, path, AtStatxDontSync, StatxBasicStats, ref MemoryMarshal.GetReference(buffer)) != 0)
+        if (!Statx(path, buffer))
         {
-            var errno = Marshal.GetLastPInvokeError();
-            return errno switch
-            {
-                ENOENT or ESRCH or ENOTDIR => null,
-                EACCES or EPERM => throw new UnauthorizedAccessException($"Permission denied reading '{path}'."),
-                _ => throw new IOException(Marshal.GetPInvokeErrorMessage(errno), errno),
-            };
+            return null;
         }
 
         return new FileIdentity(
@@ -107,6 +145,182 @@ internal static class LibC
             BinaryPrimitives.ReadUInt64LittleEndian(buffer[32..]),
             BinaryPrimitives.ReadUInt16LittleEndian(buffer[28..]));
     }
+
+    /// <summary>Owner, group, mode and the immutable and append-only attributes, links followed; null when nothing is there.</summary>
+    public static FileStatus? Status(string path)
+    {
+        Span<byte> buffer = stackalloc byte[256];
+        if (!Statx(path, buffer))
+        {
+            return null;
+        }
+
+        // stx_attributes at 8, masked by stx_attributes_mask at 56: a filesystem that cannot report an attribute leaves its bit clear.
+        var attributes = BinaryPrimitives.ReadUInt64LittleEndian(buffer[8..]) & BinaryPrimitives.ReadUInt64LittleEndian(buffer[56..]);
+        return new FileStatus(
+            BinaryPrimitives.ReadUInt32LittleEndian(buffer[20..]),
+            BinaryPrimitives.ReadUInt32LittleEndian(buffer[24..]),
+            BinaryPrimitives.ReadUInt16LittleEndian(buffer[28..]),
+            (attributes & StatxAttrImmutable) != 0,
+            (attributes & StatxAttrAppend) != 0);
+    }
+
+    /// <summary>An extended attribute's value, or null when the file has none by that name or the filesystem has no xattrs.</summary>
+    public static byte[]? GetXattr(string path, string name)
+    {
+        // The value can grow between the size query and the read; ERANGE then means ask again.
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var size = getxattr(path, name, null, 0);
+            if (size < 0)
+            {
+                return NoXattr(path, Marshal.GetLastPInvokeError());
+            }
+
+            var value = new byte[size];
+            var read = getxattr(path, name, value, size);
+            if (read >= 0)
+            {
+                return value[..(int)read];
+            }
+
+            var errno = Marshal.GetLastPInvokeError();
+            if (errno != ERANGE)
+            {
+                return NoXattr(path, errno);
+            }
+        }
+
+        throw new IOException($"The extended attribute {name} on '{path}' kept changing size.");
+    }
+
+    /// <summary>The kernel's own answer for this process's effective credentials: LSMs, mounts and attributes included.</summary>
+    /// <remarks>faccessat, never an open: opening a FIFO blocks, and opening a watchdog device arms it.</remarks>
+    public static bool Access(string path, int mode)
+    {
+        if (faccessat(AtFdCwd, path, mode, AtEaccess) == 0)
+        {
+            return true;
+        }
+
+        var errno = Marshal.GetLastPInvokeError();
+        return errno switch
+        {
+            EACCES or EPERM or EROFS or ETXTBSY => false,
+            _ => throw new IOException(Marshal.GetPInvokeErrorMessage(errno), errno),
+        };
+    }
+
+    public static AccountEntry? UserByName(string name) =>
+        LookUp(PasswdSize, (record, buffer, size) =>
+        {
+            var error = getpwnam_r(name, record, buffer, size, out var result);
+            return (error, result);
+        }, ReadPasswd);
+
+    public static AccountEntry? UserById(uint uid) =>
+        LookUp(PasswdSize, (record, buffer, size) =>
+        {
+            var error = getpwuid_r(uid, record, buffer, size, out var result);
+            return (error, result);
+        }, ReadPasswd);
+
+    public static string? GroupName(uint gid) =>
+        LookUp(GroupSize, (record, buffer, size) =>
+        {
+            var error = getgrgid_r(gid, record, buffer, size, out var result);
+            return (error, result);
+        }, record => Marshal.PtrToStringUTF8(Marshal.ReadIntPtr(record, 0)) ?? string.Empty);
+
+    /// <summary>Every group the account belongs to, its primary group included, as the account database says.</summary>
+    public static IReadOnlyList<uint> GroupsOf(string user, uint primaryGroup)
+    {
+        for (var capacity = 64; ; )
+        {
+            var groups = new uint[capacity];
+            var count = capacity;
+            if (getgrouplist(user, primaryGroup, groups, ref count) >= 0)
+            {
+                return groups[..count];
+            }
+
+            if (count <= capacity)
+            {
+                throw new IOException($"getgrouplist failed for '{user}'.");
+            }
+
+            capacity = count;
+        }
+    }
+
+    /// <summary>A reentrant account lookup, the buffer grown until the record fits.</summary>
+    /// <remarks>The _r forms: getpwnam's static record is overwritten by any other thread's lookup.</remarks>
+    private static T? LookUp<T>(int recordSize, Func<nint, nint, nint, (int Error, nint Result)> call, Func<nint, T> read)
+        where T : class
+    {
+        for (var size = 1024; ; size *= 4)
+        {
+            var record = Marshal.AllocHGlobal(recordSize);
+            var buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                var (error, result) = call(record, buffer, size);
+                if (result != 0)
+                {
+                    return read(record);
+                }
+
+                // Not found is a null result -- reported by some NSS modules as one of these errors instead.
+                if (error is 0 or ENOENT or ESRCH or EBADF or EPERM)
+                {
+                    return null;
+                }
+
+                if (error != ERANGE || size >= 1 << 20)
+                {
+                    throw new ErrnoException("account lookup", error);
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+                Marshal.FreeHGlobal(record);
+            }
+        }
+    }
+
+    // struct passwd on x86-64: name 0, passwd 8, uid 16, gid 20, gecos 24, dir 32, shell 40.
+    private static AccountEntry ReadPasswd(nint record) => new(
+        Marshal.PtrToStringUTF8(Marshal.ReadIntPtr(record, 0)) ?? string.Empty,
+        unchecked((uint)Marshal.ReadInt32(record, 16)),
+        unchecked((uint)Marshal.ReadInt32(record, 20)),
+        Marshal.PtrToStringUTF8(Marshal.ReadIntPtr(record, 32)) ?? "/");
+
+    private static byte[]? NoXattr(string path, int errno) => errno switch
+    {
+        ENODATA or ENOTSUP => null,
+        EACCES or EPERM => throw new UnauthorizedAccessException($"Permission denied reading the attributes of '{path}'."),
+        _ => throw new IOException(Marshal.GetPInvokeErrorMessage(errno), errno),
+    };
+
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern nint getxattr(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, byte[]? value, nint size);
+
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern int faccessat(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int mode, int flags);
+
+    [DllImport(SystemLibrary.C)]
+    private static extern int getpwnam_r([MarshalAs(UnmanagedType.LPUTF8Str)] string name, nint record, nint buffer, nint size, out nint result);
+
+    [DllImport(SystemLibrary.C)]
+    private static extern int getpwuid_r(uint uid, nint record, nint buffer, nint size, out nint result);
+
+    [DllImport(SystemLibrary.C)]
+    private static extern int getgrgid_r(uint gid, nint record, nint buffer, nint size, out nint result);
+
+    [DllImport(SystemLibrary.C)]
+    private static extern int getgrouplist([MarshalAs(UnmanagedType.LPUTF8Str)] string user, uint group, uint[] groups, ref int count);
 
     /// <summary>The path with every link resolved, or null when some part of it does not exist.</summary>
     public static string? RealPath(string path)

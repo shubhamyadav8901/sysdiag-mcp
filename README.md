@@ -34,6 +34,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `path_handle_search` | Sysinternals `handle` | Handle search across every process (files by default; all object types on request) |
 | `process_handles` | Sysinternals `handle -p` | Everything one process holds open — files, keys, sections, mutants, tokens |
 | `autostart_audit` | Sysinternals `autorunsc` | What runs without anybody starting it, and who signed it |
+| `effective_access` | statx, the `system.posix_acl_*` and `security.capability` xattrs, mountinfo, `faccessat` | For an `account` or a `processId`: read, write and execute with the rule that decides, and the first directory on the way it cannot search. AppArmor and SELinux are seen only through the server's own kernel check |
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |

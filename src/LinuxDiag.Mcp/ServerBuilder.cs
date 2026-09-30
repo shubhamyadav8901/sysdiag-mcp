@@ -3,6 +3,7 @@ using Diag.Mcp.Server.Files;
 using Diag.Mcp.Server.SelfUpdate;
 using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics;
+using LinuxDiag.Mcp.Diagnostics.Access;
 using LinuxDiag.Mcp.Diagnostics.Autostart;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
 using LinuxDiag.Mcp.Diagnostics.Commands;
@@ -103,7 +104,8 @@ public static class ServerBuilder
             .WithTools<ServiceTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<EventLogTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<SignatureTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<AutostartTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<AutostartTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<AccessTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -164,6 +166,8 @@ public static class ServerBuilder
         services.TryAddSingleton<SignatureTools>();
         services.TryAddSingleton<IAutostartInspector, LinuxAutostartInspector>();
         services.TryAddSingleton<AutostartTools>();
+        services.TryAddSingleton<IAccessInspector, LinuxAccessInspector>();
+        services.TryAddSingleton<AccessTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
         services.TryAddSingleton<CommandTools>();
