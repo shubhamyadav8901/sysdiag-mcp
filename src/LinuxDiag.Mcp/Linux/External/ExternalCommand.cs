@@ -29,8 +29,11 @@ public sealed class ExternalCommandException : Exception, IDiagnosticException
 public static class ExternalArgument
 {
     /// <remarks>
-    /// Arguments are passed as a list, so there is no shell to inject into -- but a value that starts with '-'
-    /// is still read by the program as an option, and a control character has no place in any name.
+    /// <para>Arguments are passed as a list, so there is no shell to inject into -- but a value that starts with '-'
+    /// is still read by the program as an option, and a control character has no place in any name.</para>
+    /// <para>Necessary, not sufficient: a positional argument also needs the program's own rules. systemctl expands
+    /// glob characters in unit names and journalctl reads FIELD=value and '+' as matches, so a value bound for one
+    /// goes through <see cref="Parsers.ServiceNames"/> or <see cref="Parsers.JournalQuery.Match"/> as well.</para>
     /// </remarks>
     public static string Check(string? value, string parameterName)
     {

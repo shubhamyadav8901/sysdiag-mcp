@@ -48,7 +48,7 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
             ["path_handle_search"] = new(
                 "/proc/<pid>/fd and maps across every process, and statx identity for a full path",
                 null,
-                "returns a partial list, silently omitting files held by processes owned by other users"),
+                "cannot search processes owned by other users; the result counts them and says it is partial"),
             ["who_locks_path"] = new(
                 "statx identity against every /proc/<pid>/fd, fdinfo lock lines and /proc/locks",
                 null,

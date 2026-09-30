@@ -142,6 +142,18 @@ public sealed class SignatureTests : IDisposable
     }
 
     [Fact]
+    public void A_local_diversion_is_named_as_one()
+    {
+        // dpkg records an administrator's own diversion with ":" where a package name would be.
+        var summary = SignatureTools.Render(new SignatureQueryResult(
+            [new FileSignature("/usr/bin/x", PackageVerdict.Valid, "ok", null, "pkg", "1", false, ":", 1, DateTimeOffset.UnixEpoch, "AB")],
+            [], null));
+
+        Assert.Contains("(a local diversion)", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("diverted by :", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_summary_names_the_verdict_package_and_hash_and_says_when_there_is_no_dpkg()
     {
         var summary = SignatureTools.Render(new SignatureQueryResult(

@@ -72,7 +72,8 @@ public sealed class SignatureTools(ISignatureInspector signatures)
 
                 if (file.DivertedBy is { } divertedBy)
                 {
-                    builder.Append(" (diverted by ").Append(RenderLimits.Printable(divertedBy)).Append(')');
+                    // dpkg writes ":" for a diversion an administrator made with dpkg-divert --local.
+                    builder.Append(divertedBy == ":" ? " (a local diversion)" : $" (diverted by {RenderLimits.Printable(divertedBy)})");
                 }
 
                 builder.AppendLine();

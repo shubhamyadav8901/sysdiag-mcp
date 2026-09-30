@@ -312,13 +312,13 @@ tools follow.
 | `who_locks_path` | `statx` identity, `fdinfo` `lock:` lines, `/proc/locks` | flock, POSIX, OFD locks and leases, waiters included; `Exhaustive` only as root |
 | `network_owners` | `/proc/<pid>/net/{tcp,tcp6,udp,udp6}` per network namespace | Every owner of a shared socket; container sockets included |
 | `named_pipes` | `/proc/<pid>/net/unix` per network namespace, FIFOs among open files | Named and abstract (`@`) unix sockets, listening state, holders |
-| `process_control` | `pidfd_open` + `pidfd_send_signal` | Writable servers only. `terminate` is SIGTERM plus a 10 s wait; `kill` is SIGKILL |
+| `process_control` | `pidfd_open` + `pidfd_send_signal` | Writable servers only. `terminate` is SIGTERM plus a 10 s wait; `kill` is SIGKILL. The name you pass must match exactly (case-sensitive; a path compared whole). PID 1, kernel threads, zombies, this server, and the daemons a machine needs (journald, logind, udevd, dbus, networking, resolver, polkit, sshd, VPN daemons) are refused for everything but `resume` |
 
 Every tool here reads another user's processes only as root; run unprivileged, each says its answer is
 partial instead of presenting it as complete. The Docker socket is asked one fixed read-only question,
 `GET /containers/json`, within 5 seconds - a hung daemon never hangs a tool. `process_control` needs Linux
 5.3 or later for its pidfd; on an older kernel (RHEL 8 ships 4.18) it refuses with that explanation rather
-than risk signalling a reused PID. `path_handle_search`, `who_locks_path` and `named_pipes` need glibc 2.28
+than risk signalling a reused PID. `process_handles`, `path_handle_search`, `who_locks_path` and `named_pipes` need glibc 2.28
 or later, which every distribution .NET 9 supports has.
 
 #### Services, logs and host configuration
@@ -326,13 +326,13 @@ or later, which every distribution .NET 9 supports has.
 | Tool | Answers from | Notes |
 |---|---|---|
 | `service_config` | `systemctl show` | Unit file, drop-ins, main PID, restart count, result, dependencies both ways; a close name is offered when the unit does not exist |
-| `service_control` | `systemctl start/stop/restart` | Writable server only. Services only; bus, journal, login, network, resolver, SSH and polkit units are refused, as is the server's own unit (use `update_self`). Waits at most 75 s, then reports "still running" |
+| `service_control` | `systemctl start/stop/restart` | Writable server only. Services only, never a pattern. Stopping or restarting a unit the machine needs (journald, logind, udevd, networking, resolver, dbus, polkit, SSH, VPN tunnels such as `tailscaled` and `wg-quick@`), this server's own unit (use `update_self`), or a unit whose stop would take one of those down is refused; starting them is allowed. A service that powers off, reboots or suspends the machine is refused for every action. Waits at most 75 s, then reports "still running" |
 | `event_log_tail` | `journalctl -o json` | `unit`, `minutes`, `levels`, `provider` (the syslog identifier), `match` (`FIELD=value`), `maxEvents` |
 | `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database - integrity, not provenance |
 | `autostart_audit` | enabled units, users' units, cron, rc.local, profile.d, ld.so.preload | `unpackagedOnly` checks the unit, its drop-ins, the program and an interpreter's script against their packages |
 | `effective_access` | statx, ACL and capability xattrs, mountinfo, `faccessat` | For an `account` or a `processId`: each right with the rule that decides, and the first directory it cannot search |
 
-These tools run `systemctl` and `journalctl` from the system directories only, with a fixed `PATH`, `LC_ALL=C.UTF-8` and no pager, and never pass a caller's value where it could be read as an option. A host without dpkg (a non-Debian distribution) still gets SHA-256 from `file_signatures`, and `capabilities` says the package check is unavailable.
+These tools run `systemctl` and `journalctl` from the system directories only, with a fixed `PATH`, `LC_ALL=C.UTF-8` and no pager, and never pass a caller's value where it could be read as an option. A host without dpkg (a non-Debian distribution) still gets SHA-256 from `file_signatures`, and `capabilities` reports it Degraded, naming the missing database.
 
 Publish it, then install it over SSH:
 
@@ -796,6 +796,8 @@ silently defaulting, because the flag removes capability.
 Diagnostics go to **stderr only**. stdout carries the MCP protocol and nothing else; a test asserts it.
 
 ## Behaviour worth knowing
+
+**A LinuxDiag walk of /proc can wait behind a process stuck in the kernel.** Reading a process's command line or memory map takes a lock that a process blocked on a dead NFS server or a hung FUSE mount holds, and the read waits for it; there is no per-process timeout. If a `process_list` or `path_handle_search` call hangs on such a host, that is the cause - the tool call's own timeout still ends it.
 
 **`who_locks_path` is fast and unelevated, but not exhaustive.** Restart Manager was built so
 installers could avoid reboots, and reports only processes it could restart. It misses many services,
