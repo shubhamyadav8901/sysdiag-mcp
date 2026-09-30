@@ -7,7 +7,8 @@ namespace LinuxDiag.Mcp.Tools;
 
 /// <summary>Structured result of <c>who_locks_path</c>.</summary>
 public sealed record WhoLocksPathResult(
-    string Summary, string Path, IReadOnlyList<LockHolder> Holders, bool Exhaustive, IReadOnlyList<string> Limitations);
+    string Summary, string Path, IReadOnlyList<LockHolder> Holders, bool Exhaustive, IReadOnlyList<string> Limitations,
+    int TotalMatched, bool Truncated);
 
 [McpServerToolType]
 public sealed class LockTools(ILockInspector locks)
@@ -39,7 +40,9 @@ public sealed class LockTools(ILockInspector locks)
         }
 
         var query = locks.Query(Path.GetFullPath(path), cancellationToken);
-        return new WhoLocksPathResult(RenderLockSummary(query), query.Path, query.Holders, query.Exhaustive, query.Limitations);
+        return new WhoLocksPathResult(
+            RenderLockSummary(query), query.Path, query.Holders, query.Exhaustive, query.Limitations,
+            query.TotalMatched, query.Truncated);
     }
 
     internal static string RenderLockSummary(LockQuery query)
@@ -64,9 +67,9 @@ public sealed class LockTools(ILockInspector locks)
             return builder.ToString();
         }
 
-        builder.Append(query.Holders.Count).Append(query.Holders.Count == 1 ? " holder of " : " holders of ")
+        builder.Append(query.TotalMatched).Append(query.TotalMatched == 1 ? " holder of " : " holders of ")
             .Append(query.Path).AppendLine(":");
-        foreach (var holder in query.Holders)
+        foreach (var holder in query.Holders.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(holder.ProcessName).Append(" (PID ").Append(holder.ProcessId).Append("): ")
                 .Append(holder.Kind);
@@ -92,6 +95,13 @@ public sealed class LockTools(ILockInspector locks)
             }
 
             builder.AppendLine();
+        }
+
+        RenderLimits.NoteElision(builder, query.Holders.Count, "returned holders");
+        if (query.Truncated)
+        {
+            builder.Append("Showing the first ").Append(query.Holders.Count).Append(" of ").Append(query.TotalMatched)
+                .AppendLine("; raise LINUXDIAG_MAX_RESULTS to see the rest.");
         }
 
         if (!query.Exhaustive)

@@ -20,14 +20,14 @@ public sealed class LockTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
-    private static LinuxLockInspector Locks() => new(new LinuxProcessTable(), new LinuxPrivilegeProbe());
+    private static LinuxLockInspector Locks() => new(new LinuxProcessTable(), new LinuxPrivilegeProbe(), Options);
 
     private static LinuxHandleInspector Handles() => new(new LinuxProcessTable(), new LinuxPrivilegeProbe(), Options);
 
     [Fact]
     public void A_missing_path_says_so_instead_of_reporting_no_holders()
     {
-        var summary = LockTools.RenderLockSummary(new LockQuery("/nope", false, [], false, []));
+        var summary = LockTools.RenderLockSummary(new LockQuery("/nope", false, [], false, [], 0, false));
 
         Assert.Contains("/nope does not exist", summary, StringComparison.Ordinal);
     }
@@ -39,7 +39,7 @@ public sealed class LockTests : IDisposable
         [
             new LockHolder(10, "agent", LockHolderKind.Flock, "write", false, false, null, false),
             new LockHolder(11, "installer", LockHolderKind.Flock, "write", true, true, null, true),
-        ], false, ["Not running as root."]));
+        ], false, ["Not running as root."], 2, false));
 
         Assert.Contains("named by /proc/locks only", summary, StringComparison.Ordinal);
         Assert.Contains("do not act on this PID", summary, StringComparison.Ordinal);
@@ -71,11 +71,31 @@ public sealed class LockTests : IDisposable
         var foreign = LinuxLockInspector.Unlisted(
             ProcLocks.ParseLine("3: FLOCK  ADVISORY  WRITE 0 00:3d:642 0 EOF"), LockHolderKind.Flock, _ => "x");
 
-        var summary = LockTools.RenderLockSummary(new LockQuery("/x", true, [ofd, foreign], false, []));
+        var summary = LockTools.RenderLockSummary(new LockQuery("/x", true, [ofd, foreign], false, [], 2, false));
 
         Assert.Contains("names no process", summary, StringComparison.Ordinal);
         Assert.Contains("another PID namespace", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("do not act on this PID", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Holders_past_the_cap_are_truncated_and_prose_past_the_render_limit_says_so()
+    {
+        // Review Focus 5: who_locks_path on / or on libc names one holder per process.
+        var holders = Enumerable.Range(1, 500)
+            .Select(i => new LockHolder(i, "worker", LockHolderKind.RootDirectory, null, false, true, null, true))
+            .ToList();
+
+        var capped = LinuxLockInspector.Finish("/", holders, exhaustive: true, [], maxResults: 300);
+        var full = LinuxLockInspector.Finish("/", holders, exhaustive: true, [], maxResults: 1000);
+
+        Assert.Equal(300, capped.Holders.Count);
+        Assert.Equal(500, capped.TotalMatched);
+        Assert.True(capped.Truncated);
+        Assert.Contains("LINUXDIAG_MAX_RESULTS", LockTools.RenderLockSummary(capped), StringComparison.Ordinal);
+        var summary = LockTools.RenderLockSummary(full);
+        Assert.Contains("Summary lists the first 200 of 500", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("PID 201)", summary, StringComparison.Ordinal);
     }
 
     [LinuxFact]

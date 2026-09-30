@@ -25,9 +25,12 @@ public sealed class LinuxPipeInspector(IProcessTable processes, LinuxDiagOptions
 
         // Unnamed socket pairs are left out: they have no name to connect to, so they cannot be the thing a
         // client fails to reach. Abstract names ('@') are names, and kept.
+        var skipped = 0;
         foreach (var (ns, text) in NetworkNamespaces.Read(table, "unix"))
         {
-            foreach (var group in UnixSockets.Parse(text).Where(s => s.Path is not null).GroupBy(s => (s.Path!, s.Type)))
+            var (sockets, unreadable) = UnixSockets.ParseLenient(text);
+            skipped += unreadable;
+            foreach (var group in sockets.Where(s => s.Path is not null).GroupBy(s => (s.Path!, s.Type)))
             {
                 var owners = group.SelectMany(s => holders.GetValueOrDefault(s.Inode) ?? []).DistinctBy(o => o.ProcessId).ToList();
                 pipes.Add(new NamedPipe(
@@ -58,9 +61,18 @@ public sealed class LinuxPipeInspector(IProcessTable processes, LinuxDiagOptions
             .ThenBy(p => p.Name, StringComparer.Ordinal)
             .ToList();
 
-        IReadOnlyList<string> limitations = walk.UnreadableProcesses > 0
-            ? [$"{walk.UnreadableProcesses} processes could not be read, so sockets and FIFOs they hold are listed without them; run the server as root."]
-            : [];
+        var limitations = new List<string>();
+        if (walk.UnreadableProcesses > 0)
+        {
+            limitations.Add($"{walk.UnreadableProcesses} processes could not be read, so sockets and FIFOs they hold " +
+                            "are listed without them; run the server as root.");
+        }
+
+        if (skipped > 0)
+        {
+            limitations.Add($"{skipped} lines of /proc/net/unix could not be read - a socket name holding a newline " +
+                            "splits its line - and were left out.");
+        }
         return new NamedPipeList(matched.Take(options.MaxResults).ToList(), matched.Count, matched.Count > options.MaxResults, limitations);
     }
 }

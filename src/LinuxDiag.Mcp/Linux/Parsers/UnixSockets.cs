@@ -52,6 +52,33 @@ public static class UnixSockets
         return entries;
     }
 
+    /// <summary>Every line that parses, and how many did not.</summary>
+    /// <remarks>
+    /// The kernel prints a socket's name raw, and any local user can bind an abstract name holding a newline:
+    /// its tail becomes a line of its own. Strict parsing would let that one socket fail the whole tool.
+    /// </remarks>
+    public static (IReadOnlyList<UnixSocketEntry> Entries, int Skipped) ParseLenient(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var entries = new List<UnixSocketEntry>();
+        var skipped = 0;
+        foreach (var line in lines.Skip(1))
+        {
+            try
+            {
+                entries.AddRange(Parse(lines[0] + "\n" + line));
+            }
+            catch (FormatException)
+            {
+                skipped++;
+            }
+        }
+
+        return (entries, skipped);
+    }
+
     public static string KindName(int type) => type switch
     {
         1 => "UnixStream",

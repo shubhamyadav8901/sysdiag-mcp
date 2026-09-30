@@ -41,6 +41,20 @@ public sealed class PipeTests : IDisposable
     }
 
     [Fact]
+    public void A_socket_name_holding_a_newline_is_skipped_and_counted_instead_of_failing_the_list()
+    {
+        // The kernel prints a socket's name raw, and any local user can bind an abstract name with a newline
+        // in it: the tail becomes a line of its own. It must not take the whole tool down.
+        var (entries, skipped) = UnixSockets.ParseLenient(
+            "Num       RefCount Protocol Flags    Type St Inode Path\n" +
+            "0000000000000000: 00000002 00000000 00010000 0001 01 777 @x\ny\n" +
+            "0000000000000000: 00000002 00000000 00010000 0001 01 778 /run/app.sock\n");
+
+        Assert.Equal(["@x", "/run/app.sock"], entries.Select(e => e.Path));
+        Assert.Equal(1, skipped);
+    }
+
+    [Fact]
     public void Every_captured_distro_parses()
     {
         foreach (var distro in ProcParserTests.Distros())

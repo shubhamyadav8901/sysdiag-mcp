@@ -1688,6 +1688,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1695,7 +1701,9 @@
         "path",
         "holders",
         "exhaustive",
-        "limitations"
+        "limitations",
+        "totalMatched",
+        "truncated"
       ]
     },
     "annotations": {

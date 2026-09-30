@@ -28,8 +28,10 @@ public sealed record LockHolder(
     int ProcessId, string ProcessName, LockHolderKind Kind, string? Access, bool Waiting, bool Confirmed,
     DateTimeOffset? StartedAt, bool StillRunning);
 
+/// <param name="TotalMatched">Every holder found; Holders stops at the result cap.</param>
 public sealed record LockQuery(
-    string Path, bool PathExists, IReadOnlyList<LockHolder> Holders, bool Exhaustive, IReadOnlyList<string> Limitations);
+    string Path, bool PathExists, IReadOnlyList<LockHolder> Holders, bool Exhaustive, IReadOnlyList<string> Limitations,
+    int TotalMatched, bool Truncated);
 
 public interface ILockInspector
 {

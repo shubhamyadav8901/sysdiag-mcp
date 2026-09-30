@@ -1,4 +1,5 @@
 using System.Globalization;
+using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics.Processes;
 using LinuxDiag.Mcp.Linux.Native;
 using LinuxDiag.Mcp.Linux.Parsers;
@@ -6,7 +7,8 @@ using LinuxDiag.Mcp.Linux.Proc;
 
 namespace LinuxDiag.Mcp.Diagnostics.Handles;
 
-public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe privileges) : ILockInspector
+public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe privileges, LinuxDiagOptions options)
+    : ILockInspector
 {
     /// <summary>The init PID namespace's inode: a fixed kernel constant (PROC_PID_INIT_INO).</summary>
     private const string InitialPidNamespace = "pid:[4026531836]";
@@ -38,7 +40,7 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
 
         if (identity is not { } target)
         {
-            return new LockQuery(fullPath, false, [], false, []);
+            return new LockQuery(fullPath, false, [], false, [], 0, false);
         }
 
         var table = processes.Read(cancellationToken);
@@ -122,8 +124,20 @@ public sealed class LinuxLockInspector(IProcessTable processes, IPrivilegeProbe 
                 "entries were matched by inode alone and may belong to another file with the same inode number.");
         }
 
+        return Finish(fullPath, holders, exhaustive, limitations, options.MaxResults);
+    }
+
+    /// <summary>Holders in order, waiters last, capped at the result limit.</summary>
+    /// <remarks>
+    /// Capped like every other list: asked about <c>/</c> or a shared library, every process on the machine is a
+    /// holder, and an uncapped answer is a result of tens of thousands of rows and a summary to match.
+    /// </remarks>
+    internal static LockQuery Finish(
+        string path, List<LockHolder> holders, bool exhaustive, List<string> limitations, int maxResults)
+    {
         var ordered = holders.OrderBy(h => h.Waiting).ThenBy(h => h.ProcessId).ToList();
-        return new LockQuery(fullPath, true, ordered, exhaustive, limitations);
+        return new LockQuery(
+            path, true, ordered.Take(maxResults).ToList(), exhaustive, limitations, ordered.Count, ordered.Count > maxResults);
     }
 
     /// <summary>Waiters, and locks no open file confirmed, from /proc/locks: whether a device number disagreed, and lines skipped.</summary>
