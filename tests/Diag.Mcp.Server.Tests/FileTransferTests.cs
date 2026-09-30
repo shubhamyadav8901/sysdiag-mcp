@@ -52,17 +52,74 @@ public sealed class FileReceiverTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_outsideDir, "planted.bin")));
     }
 
+    [UnixFact]
+    public void A_link_loop_through_a_parent_component_is_refused_and_the_process_survives()
+    {
+        // 'loop' points at a path that runs back through 'loop' itself. Following the final target
+        // alone never sees the cycle -- the loop is in a parent component -- so a resolver that
+        // recursed on each target recursed until the stack overflowed and took the whole process down.
+        Directory.CreateSymbolicLink(Path.Combine(_artifactDir, "loop"), Path.Combine("loop", "next"));
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+            new FileWriteRequest(Path.Combine(_artifactDir, "loop", "planted.bin"), [1]), CancellationToken.None));
+
+        Assert.Contains("could not be resolved", ex.Message, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_link_whose_target_climbs_with_dotdot_is_judged_where_the_kernel_lands()
+    {
+        // 'hop' points into the outside directory's child, and 'climb' is 'hop/..'. Collapsed as spelled,
+        // 'hop/..' is the artifact directory itself and looks owned; the kernel follows 'hop' first and
+        // climbs from there, so 'climb' really is the outside directory. The write must be judged by
+        // that, and refused without the grant.
+        var child = Directory.CreateDirectory(Path.Combine(_outsideDir, "child")).FullName;
+        Directory.CreateSymbolicLink(Path.Combine(_artifactDir, "hop"), child);
+        Directory.CreateSymbolicLink(Path.Combine(_artifactDir, "climb"), Path.Combine("hop", ".."));
+
+        var ex = Assert.Throws<FileTransferException>(() => Receiver().Receive(
+            new FileWriteRequest(Path.Combine(_artifactDir, "climb", "planted.bin"), [1]), CancellationToken.None));
+
+        Assert.Contains("arbitrary write", ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(_outsideDir, "planted.bin")));
+    }
+
+    private static void MakeJunction(string junction, string target)
+    {
+        // A junction needs no privilege to create, unlike a symlink.
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{junction}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false })!;
+        mklink.WaitForExit();
+        Assert.Equal(0, mklink.ExitCode);
+    }
+
+    [WindowsFact]
+    public void A_path_through_a_junction_resolves_to_the_ordinary_path_of_its_target()
+    {
+        // The walk splices the junction's absolute target in and carries on from its root, so the real
+        // path is the target's ordinary spelling -- the form the owned directories are compared in.
+        var junction = Path.Combine(_artifactDir, "escape");
+        MakeJunction(junction, _outsideDir);
+
+        try
+        {
+            Assert.Equal(
+                Path.Combine(_outsideDir, "planted.bin"),
+                FileScope.RealPath(Path.Combine(junction, "planted.bin")),
+                ignoreCase: true);
+        }
+        finally
+        {
+            Directory.Delete(junction);
+        }
+    }
+
     [WindowsFact]
     public void A_junction_inside_an_owned_directory_does_not_widen_write_scope()
     {
-        // The Windows form of the same escape. A junction needs no privilege to create, unlike a symlink.
+        // The Windows form of the same escape.
         var junction = Path.Combine(_artifactDir, "escape");
-        using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                   "cmd.exe", $"/c mklink /J \"{junction}\" \"{_outsideDir}\"") { CreateNoWindow = true, UseShellExecute = false })!)
-        {
-            mklink.WaitForExit();
-            Assert.Equal(0, mklink.ExitCode);
-        }
+        MakeJunction(junction, _outsideDir);
 
         try
         {

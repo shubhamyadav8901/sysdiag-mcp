@@ -33,11 +33,28 @@ internal static class FileScope
             : WriteScope.Arbitrary;
     }
 
+    /// <summary>How many links one resolution may follow before it is called a loop: the kernel's own limit.</summary>
+    internal const int MaxLinkHops = 40;
+
     /// <summary>The path with every link in every existing component resolved, like realpath(3).</summary>
     /// <remarks>
+    /// <para>
+    /// Walked one component at a time, the way the kernel walks it. A link's target is spliced into
+    /// the components still to come, and a <c>..</c> climbs from the directory resolved so far, never
+    /// from the spelling. Collapsing a target's <c>..</c> as spelled -- which is what
+    /// <c>ResolveLinkTarget</c> and <c>GetFullPath</c> do -- judged <c>hop/..</c> as the directory
+    /// holding <c>hop</c>, while the kernel went through <c>hop</c> first and landed somewhere else.
+    /// </para>
+    /// <para>
+    /// Iterative, with a hop budget, rather than recursing on each target: a loop through a parent
+    /// component is invisible to <c>ResolveLinkTarget</c>, and the recursion it caused ran until the
+    /// stack overflowed and took the whole server down. Every failure here -- a loop, an unreadable
+    /// link -- is the refusal the caller sees.
+    /// </para>
+    /// <para>
     /// Components that do not exist yet -- the file about to be written, a directory about to be made --
-    /// are kept as spelled, since there is nothing there to be a link. A link loop surfaces as the
-    /// refusal the caller sees, not as an unreadable error.
+    /// are kept as spelled, since there is nothing there to be a link.
+    /// </para>
     /// </remarks>
     internal static string RealPath(string fullPath)
     {
@@ -48,29 +65,78 @@ internal static class FileScope
         }
 
         var current = root;
-        var parts = fullPath[root.Length..].Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        var pending = new Stack<string>();
+        PushComponents(pending, fullPath[root.Length..]);
+        var hops = 0;
 
-        foreach (var part in parts)
+        while (pending.Count > 0)
         {
+            var part = pending.Pop();
+            if (part == ".")
+            {
+                continue;
+            }
+
+            if (part == "..")
+            {
+                // The parent of a root is the root, as it is to the kernel.
+                current = Path.GetDirectoryName(current) ?? current;
+                continue;
+            }
+
             var next = Path.Combine(current, part);
-            FileSystemInfo info = Directory.Exists(next) ? new DirectoryInfo(next) : new FileInfo(next);
-
-            FileSystemInfo? target;
-            try
+            var target = LinkTargetOf(next, fullPath);
+            if (target is null)
             {
-                target = info.LinkTarget is null ? null : info.ResolveLinkTarget(returnFinalTarget: true);
-            }
-            catch (IOException ex)
-            {
-                throw new FileTransferException($"'{fullPath}' could not be resolved: {ex.Message}");
+                current = next;
+                continue;
             }
 
-            // The final target's own parents may be links too, so it is resolved again from the top.
-            current = target is null ? next : RealPath(Path.GetFullPath(target.FullName));
+            if (++hops > MaxLinkHops)
+            {
+                throw new FileTransferException(
+                    $"'{fullPath}' could not be resolved: it passes through more than {MaxLinkHops} links, " +
+                    "which is a link loop.");
+            }
+
+            // An absolute target starts again from its own root; a relative one carries on from the
+            // directory holding the link, which is where the walk already is.
+            var targetRoot = Path.GetPathRoot(target);
+            if (!string.IsNullOrEmpty(targetRoot))
+            {
+                current = Path.GetPathRoot(Path.GetFullPath(targetRoot, current))!;
+            }
+
+            PushComponents(pending, target[(targetRoot?.Length ?? 0)..]);
         }
 
         return current;
+    }
+
+    /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>
+    private static string? LinkTargetOf(string path, string fullPath)
+    {
+        try
+        {
+            FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+            return info.LinkTarget;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // An unreadable link cannot be judged, so it is refused rather than let through as spelled.
+            throw new FileTransferException($"'{fullPath}' could not be resolved: {ex.Message}");
+        }
+    }
+
+    /// <summary>Pushes the components of <paramref name="relative"/> so that the first one is popped first.</summary>
+    private static void PushComponents(Stack<string> pending, string relative)
+    {
+        var parts = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        for (var i = parts.Length - 1; i >= 0; i--)
+        {
+            pending.Push(parts[i]);
+        }
     }
 
     /// <summary>Names the owned directories, for an error message that says where a path *would* be allowed.</summary>
