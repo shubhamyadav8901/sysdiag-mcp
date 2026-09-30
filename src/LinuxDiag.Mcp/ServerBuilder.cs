@@ -5,6 +5,7 @@ using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics;
 using LinuxDiag.Mcp.Diagnostics.Capabilities;
 using LinuxDiag.Mcp.Diagnostics.Commands;
+using LinuxDiag.Mcp.Diagnostics.Containers;
 using LinuxDiag.Mcp.Diagnostics.Processes;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
 using LinuxDiag.Mcp.Diagnostics.SystemInfo;
@@ -82,7 +83,8 @@ public static class ServerBuilder
         var update = new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout);
 
         var mcp = services.AddDiagServer(new DiagServerSettings(options.ReadOnly, files, update), out _)
-            .WithTools<SystemTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<SystemTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<ContainerTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -109,6 +111,8 @@ public static class ServerBuilder
         services.TryAddSingleton<ICapabilityReporter, CapabilityReporter>();
         services.TryAddSingleton<ISystemInspector, LinuxSystemInspector>();
         services.TryAddSingleton<IProcessTable, LinuxProcessTable>();
+        services.TryAddSingleton<IContainerInspector, LinuxContainerInspector>();
+        services.TryAddSingleton<ContainerTools>();
         services.TryAddSingleton<SystemTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();

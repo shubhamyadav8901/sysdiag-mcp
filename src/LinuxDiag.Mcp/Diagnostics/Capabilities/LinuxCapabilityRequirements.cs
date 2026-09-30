@@ -1,3 +1,5 @@
+using LinuxDiag.Mcp.Diagnostics.Containers;
+
 namespace LinuxDiag.Mcp.Diagnostics.Capabilities;
 
 /// <summary>What each of this server's tools needs in order to answer completely.</summary>
@@ -23,6 +25,11 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "can only read what the current account already can"),
             ["system_overview"] = new("/proc, /etc/os-release and statvfs per mount", null, null),
             ["run_command"] = new("/bin/sh -c, /bin/bash -c, or a direct exec", null, null),
+            ["container_list"] = new(
+                "Docker Engine API on /var/run/docker.sock; containerd task state under /run/containerd",
+                null,
+                "cannot reach the Docker socket or containerd's task state unless the account is root or in the docker group",
+                AnyOfPaths: [DockerEngineClient.DefaultSocket, ContainerdTasks.StateRoot]),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

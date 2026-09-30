@@ -14,14 +14,23 @@ public sealed class CapabilityReporter : ICapabilityReporter
     private readonly IReadOnlyDictionary<string, CapabilityRequirement> _requirements;
     private readonly IExecutableResolver _resolver;
     private readonly IPrivilegeProbe _privileges;
+    private readonly Func<string, bool> _pathExists;
 
     public CapabilityReporter(
         ICapabilityRequirements requirements, IExecutableResolver resolver, IPrivilegeProbe privileges)
+        : this(requirements, resolver, privileges, path => File.Exists(path) || Directory.Exists(path))
+    {
+    }
+
+    internal CapabilityReporter(
+        ICapabilityRequirements requirements, IExecutableResolver resolver, IPrivilegeProbe privileges,
+        Func<string, bool> pathExists)
     {
         ArgumentNullException.ThrowIfNull(requirements);
         _requirements = requirements.Requirements;
         _resolver = resolver;
         _privileges = privileges;
+        _pathExists = pathExists;
     }
 
     public IReadOnlyList<ToolCapability> Describe()
@@ -54,6 +63,16 @@ public sealed class CapabilityReporter : ICapabilityReporter
             }
 
             resolvedPath = resolution.Path;
+        }
+
+        if (requirement.AnyOfPaths is { Count: > 0 } paths && !paths.Any(_pathExists))
+        {
+            return new ToolCapability(
+                tool,
+                requirement.Backing,
+                CapabilityStatus.Degraded,
+                $"None of {string.Join(", ", paths)} exists on this machine, so this tool has nothing to ask " +
+                "and will return an empty answer.");
         }
 
         if (requirement.RequiresElevation && !_privileges.IsElevated)

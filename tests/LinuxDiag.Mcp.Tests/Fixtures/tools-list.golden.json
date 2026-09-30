@@ -63,6 +63,121 @@
     }
   },
   {
+    "name": "container_list",
+    "title": "Containers on this host",
+    "description": "List the containers on this host - Docker\u0027s, and containerd\u0027s including Kubernetes pods - with each one\u0027s name, image, state and main PID as the host numbers it. Use it to go from a container you know by name to the host processes behind it; process_list goes the other way, tagging every process with its container. Docker is asked through its Engine API socket and containerd through its task state on disk. A runtime this account cannot reach is named in Limitations, so an empty list is never mistaken for \u0027no containers\u0027.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFilter": {
+          "description": "Only containers whose name, image, pod or id contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "runtime": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "image": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mainProcessId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "processIds": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "podName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "podNamespace": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sandbox": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "runtime",
+              "id",
+              "name",
+              "image",
+              "state",
+              "mainProcessId",
+              "processIds",
+              "podName",
+              "podNamespace",
+              "sandbox"
+            ]
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "containers",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Containers on this host",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "get_file",
     "title": "Read a file back off the host",
     "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",

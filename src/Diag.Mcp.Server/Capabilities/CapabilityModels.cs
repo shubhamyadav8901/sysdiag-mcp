@@ -61,11 +61,17 @@ public interface IPrivilegeProbe
 /// matters: <c>Degraded</c> tells the caller to distrust an empty result, <c>Unavailable</c> tells
 /// them not to bother calling.
 /// </param>
+/// <param name="AnyOfPaths">
+/// Sockets or directories the tool reads, any one of which is enough. When none exists the tool still
+/// runs but has nothing to ask, so it is Degraded and names them -- an empty container list on a host
+/// with no runtime must not read as "no containers".
+/// </param>
 public sealed record CapabilityRequirement(
     string Backing,
     string? RequiredExecutable,
     string? ElevationNote,
-    bool RequiresElevation = false);
+    bool RequiresElevation = false,
+    IReadOnlyList<string>? AnyOfPaths = null);
 
 /// <summary>A server's table of what each of its tools needs, keyed by tool name.</summary>
 public interface ICapabilityRequirements
