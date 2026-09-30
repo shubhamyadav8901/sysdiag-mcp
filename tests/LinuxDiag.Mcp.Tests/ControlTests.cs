@@ -88,6 +88,37 @@ public sealed class ControlTests
         }
     }
 
+    [LinuxFact]
+    public void A_zombie_is_refused_because_no_signal_reaches_it()
+    {
+        // bash starts a child and then becomes sleep, which never reaps it: the child stays a zombie.
+        using var parent = Process.Start(new ProcessStartInfo("bash", ["-c", "sleep 0 & exec sleep 30"]))!;
+        try
+        {
+            var children = $"/proc/{parent.Id}/task/{parent.Id}/children";
+            int? zombie = null;
+            var watch = Stopwatch.StartNew();
+            while (zombie is null && watch.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                zombie = File.ReadAllText(children).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(int.Parse)
+                    .Cast<int?>()
+                    .FirstOrDefault(pid => File.ReadAllText($"/proc/{pid}/stat").Split(") ")[1].StartsWith('Z'));
+                Thread.Sleep(50);
+            }
+
+            Assert.NotNull(zombie);
+            var ex = Assert.Throws<ProcessControlException>(() =>
+                Controller().Control(zombie!.Value, "sleep", ProcessAction.Terminate, CancellationToken.None));
+
+            Assert.Contains("zombie", ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            parent.Kill();
+        }
+    }
+
     [Fact]
     public void Pid_1_this_server_and_a_non_positive_pid_are_refused_before_anything_is_opened()
     {

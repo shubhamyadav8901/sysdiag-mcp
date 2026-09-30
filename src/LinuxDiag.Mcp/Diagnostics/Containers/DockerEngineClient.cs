@@ -24,6 +24,9 @@ public sealed class DockerEngineClient
     {
     }
 
+    /// <summary>How long one question to the daemon may take before it is reported as hung.</summary>
+    internal TimeSpan Budget => _timeout;
+
     internal DockerEngineClient(string socketPath, TimeSpan timeout)
     {
         _socketPath = socketPath;

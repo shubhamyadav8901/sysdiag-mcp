@@ -134,6 +134,58 @@ public sealed class ContainerTests
         }
     }
 
+    [Fact]
+    public void The_docker_socket_is_given_five_seconds_by_default()
+    {
+        // The README promises it; update_self waits for in-flight calls, so the bound is what keeps a hung dockerd
+        // from stalling a deploy.
+        Assert.Equal(TimeSpan.FromSeconds(5), new DockerEngineClient().Budget);
+    }
+
+    [LinuxFact]
+    public async Task A_redirect_is_not_followed_and_a_proxy_is_never_used()
+    {
+        // A 3xx would be a second request to a root-equivalent socket, and a proxy from the environment must not
+        // change what is sent: the request line stays origin-form, never "GET http://docker/...".
+        var path = Path.Combine(Path.GetTempPath(), $"ld-redirect-{Guid.NewGuid():N}.sock");
+        using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(path));
+        listener.Listen();
+        var previous = HttpClient.DefaultProxy;
+        HttpClient.DefaultProxy = new System.Net.WebProxy("http://127.0.0.1:9");
+        try
+        {
+            var served = Task.Run(async () =>
+            {
+                using var connection = await listener.AcceptAsync();
+                var buffer = new byte[4096];
+                var request = new System.Text.StringBuilder();
+                while (!request.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
+                {
+                    var read = await connection.ReceiveAsync(buffer, SocketFlags.None);
+                    if (read == 0) break;
+                    request.Append(System.Text.Encoding.ASCII.GetString(buffer, 0, read));
+                }
+
+                await connection.SendAsync(System.Text.Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 307 Temporary Redirect\r\nLocation: /somewhere/else\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"), SocketFlags.None);
+                return request.ToString().Split("\r\n")[0];
+            });
+
+            var (containers, limitation) = await new DockerEngineClient(path, TimeSpan.FromSeconds(5))
+                .ListAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal("GET " + DockerEngineClient.ListRequest + " HTTP/1.1", await served.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Empty(containers);
+            Assert.Contains("answered 307", limitation, StringComparison.Ordinal);
+        }
+        finally
+        {
+            HttpClient.DefaultProxy = previous;
+            File.Delete(path);
+        }
+    }
+
     [LinuxFact]
     public async Task A_daemon_that_accepts_and_never_answers_is_a_limitation_within_the_budget_not_a_hang()
     {

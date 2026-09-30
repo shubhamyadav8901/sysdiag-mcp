@@ -56,6 +56,27 @@ public sealed class ExternalCommandTests
     }
 
     [LinuxFact]
+    public async Task Output_past_the_cap_on_standard_error_alone_is_an_error_too()
+    {
+        var ex = await Assert.ThrowsAsync<ExternalCommandException>(() =>
+            new LinuxExternalCommand(maxOutputChars: 10_000).RunAsync("sh", ["-c", "yes >&2"], TimeSpan.FromSeconds(5), CancellationToken.None));
+
+        Assert.Contains("more than", ex.Message, StringComparison.Ordinal);
+    }
+
+    [LinuxFact]
+    public async Task A_caller_that_cancels_gets_a_cancellation_not_a_timeout()
+    {
+        // The two mean different things to a caller: a timeout is the program's fault, a cancellation is theirs.
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new LinuxExternalCommand().RunAsync("sleep", ["30"], TimeSpan.FromSeconds(20), cancel.Token));
+
+        Assert.IsNotType<ExternalCommandException>(ex);
+    }
+
+    [LinuxFact]
     public async Task Output_past_the_cap_is_an_error_not_a_truncated_answer()
     {
         var ex = await Assert.ThrowsAsync<ExternalCommandException>(() =>
