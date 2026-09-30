@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text;
+using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics.Containers;
 using LinuxDiag.Mcp.Diagnostics.Processes;
 using ModelContextProtocol.Server;
@@ -7,10 +8,11 @@ using ModelContextProtocol.Server;
 namespace LinuxDiag.Mcp.Tools;
 
 /// <summary>Structured result of <c>container_list</c>.</summary>
-public sealed record ContainerListResult(string Summary, IReadOnlyList<ContainerInfo> Containers, IReadOnlyList<string> Limitations);
+public sealed record ContainerListResult(
+    string Summary, IReadOnlyList<ContainerInfo> Containers, int TotalMatched, bool Truncated, IReadOnlyList<string> Limitations);
 
 [McpServerToolType]
-public sealed class ContainerTools(IProcessTable processes, IContainerInspector containers)
+public sealed class ContainerTools(IProcessTable processes, IContainerInspector containers, LinuxDiagOptions options)
 {
     [McpServerTool(
         Name = "container_list",
@@ -32,8 +34,17 @@ public sealed class ContainerTools(IProcessTable processes, IContainerInspector 
         CancellationToken cancellationToken = default)
     {
         var catalog = await containers.ListAsync(processes.Read(cancellationToken), cancellationToken).ConfigureAwait(false);
-        var matched = catalog.Containers.Where(c => Matches(c, nameFilter)).ToList();
-        return new ContainerListResult(RenderContainers(matched, catalog.Limitations, nameFilter), matched, catalog.Limitations);
+        return Build(catalog.Containers, catalog.Limitations, nameFilter, options.MaxResults);
+    }
+
+    /// <summary>The matching containers, capped at the row limit like every other list, with the full count kept.</summary>
+    internal static ContainerListResult Build(
+        IReadOnlyList<ContainerInfo> all, IReadOnlyList<string> limitations, string? nameFilter, int maxResults)
+    {
+        var matched = all.Where(c => Matches(c, nameFilter)).ToList();
+        var rows = matched.Take(maxResults).ToList();
+        return new ContainerListResult(
+            RenderContainers(rows, limitations, nameFilter, matched.Count), rows, matched.Count, matched.Count > rows.Count, limitations);
     }
 
     internal static bool Matches(ContainerInfo container, string? filter) =>
@@ -44,12 +55,13 @@ public sealed class ContainerTools(IProcessTable processes, IContainerInspector 
     internal static string ShortId(string id) => id.Length > 12 ? id[..12] : id;
 
     internal static string RenderContainers(
-        IReadOnlyList<ContainerInfo> containers, IReadOnlyList<string> limitations, string? nameFilter)
+        IReadOnlyList<ContainerInfo> containers, IReadOnlyList<string> limitations, string? nameFilter, int? totalMatched = null)
     {
+        var total = totalMatched ?? containers.Count;
         var builder = new StringBuilder();
         foreach (var limitation in limitations)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         if (containers.Count == 0)
@@ -57,7 +69,7 @@ public sealed class ContainerTools(IProcessTable processes, IContainerInspector 
             builder.Append("No container");
             if (!string.IsNullOrWhiteSpace(nameFilter))
             {
-                builder.Append(" matching '").Append(nameFilter).Append('\'');
+                builder.Append(" matching '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
             }
 
             builder.Append(" was found.");
@@ -69,19 +81,19 @@ public sealed class ContainerTools(IProcessTable processes, IContainerInspector 
             return builder.ToString().TrimEnd();
         }
 
-        builder.Append(containers.Count).Append(containers.Count == 1 ? " container" : " containers").AppendLine(":");
+        builder.Append(total).Append(total == 1 ? " container" : " containers").AppendLine(":");
         foreach (var container in containers.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(container.Name ?? ShortId(container.Id))
-                .Append(" (").Append(container.Runtime).Append(' ').Append(ShortId(container.Id)).Append(')');
+            builder.Append("- ").Append(RenderLimits.Printable(container.Name ?? ShortId(container.Id)))
+                .Append(" (").Append(RenderLimits.Printable(container.Runtime)).Append(' ').Append(RenderLimits.Printable(ShortId(container.Id))).Append(')');
             if (container.Image is not null)
             {
-                builder.Append(", image ").Append(container.Image);
+                builder.Append(", image ").Append(RenderLimits.Printable(container.Image));
             }
 
             if (container.State is not null)
             {
-                builder.Append(", ").Append(container.State);
+                builder.Append(", ").Append(RenderLimits.Printable(container.State));
             }
 
             if (container.MainProcessId is { } pid)
@@ -101,7 +113,7 @@ public sealed class ContainerTools(IProcessTable processes, IContainerInspector 
 
             if (container.PodName is not null)
             {
-                builder.Append(", pod ").Append(container.PodNamespace).Append('/').Append(container.PodName);
+                builder.Append(", pod ").Append(RenderLimits.Printable(container.PodNamespace)).Append('/').Append(RenderLimits.Printable(container.PodName));
             }
 
             if (container.Sandbox)
@@ -113,6 +125,12 @@ public sealed class ContainerTools(IProcessTable processes, IContainerInspector 
         }
 
         RenderLimits.NoteElision(builder, containers.Count, "containers");
+        if (total > containers.Count)
+        {
+            builder.Append("Showing the first ").Append(containers.Count).Append(" of ").Append(total)
+                .Append("; narrow with nameFilter or raise LINUXDIAG_MAX_RESULTS.");
+        }
+
         return builder.ToString().TrimEnd();
     }
 }

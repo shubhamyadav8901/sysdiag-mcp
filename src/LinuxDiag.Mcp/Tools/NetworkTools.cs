@@ -45,7 +45,7 @@ public sealed class NetworkTools(INetworkInspector network)
         var builder = new StringBuilder();
         foreach (var limitation in result.Limitations)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         if (result.Endpoints.Count == 0)
@@ -74,19 +74,19 @@ public sealed class NetworkTools(INetworkInspector network)
         foreach (var endpoint in result.Endpoints.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(endpoint.Protocol.ToString().ToUpperInvariant()).Append(' ')
-                .Append(Format(endpoint.LocalAddress, endpoint.LocalPort));
+                .Append(RenderLimits.Printable(Format(endpoint.LocalAddress, endpoint.LocalPort)));
             if (endpoint.RemoteAddress is not null)
             {
-                builder.Append(" -> ").Append(Format(endpoint.RemoteAddress, endpoint.RemotePort ?? 0));
+                builder.Append(" -> ").Append(RenderLimits.Printable(Format(endpoint.RemoteAddress, endpoint.RemotePort ?? 0)));
             }
 
             if (endpoint.State is not null)
             {
-                builder.Append(" [").Append(endpoint.State).Append(']');
+                builder.Append(" [").Append(RenderLimits.Printable(endpoint.State)).Append(']');
             }
 
             builder.Append(endpoint.Owners.Count == 0 ? " owner unknown" : " owned by ")
-                .Append(string.Join(", ", endpoint.Owners.Take(3).Select(o => $"{o.ProcessName} (PID {o.ProcessId})")));
+                .Append(RenderLimits.Printable(string.Join(", ", endpoint.Owners.Take(3).Select(o => $"{o.ProcessName} (PID {o.ProcessId})"))));
             if (endpoint.Owners.Count > 3)
             {
                 builder.Append(" and ").Append(endpoint.Owners.Count - 3).Append(" more");
@@ -94,13 +94,13 @@ public sealed class NetworkTools(INetworkInspector network)
 
             if (endpoint.Owners.FirstOrDefault(o => o.Container is not null)?.Container is { } container)
             {
-                builder.Append(" [").Append(container.Runtime).Append(' ')
-                    .Append(container.Name ?? ContainerTools.ShortId(container.Id)).Append(']');
+                builder.Append(" [").Append(RenderLimits.Printable(container.Runtime)).Append(' ')
+                    .Append(RenderLimits.Printable(container.Name ?? ContainerTools.ShortId(container.Id))).Append(']');
             }
 
             if (endpoint.NetworkNamespace != result.HostNetworkNamespace)
             {
-                builder.Append(" [netns ").Append(endpoint.NetworkNamespace).Append(']');
+                builder.Append(" [netns ").Append(RenderLimits.Printable(endpoint.NetworkNamespace)).Append(']');
             }
 
             builder.AppendLine();

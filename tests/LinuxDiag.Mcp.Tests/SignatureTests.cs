@@ -125,6 +125,23 @@ public sealed class SignatureTests : IDisposable
     }
 
     [Fact]
+    public void More_paths_than_one_call_takes_are_refused_and_a_long_summary_is_elided()
+    {
+        var paths = Enumerable.Range(0, LinuxSignatureInspector.MaxPaths + 1).Select(i => $"/tmp/f{i}").ToArray();
+        var files = Enumerable.Range(0, RenderLimits.MaxRenderedRows + 5)
+            .Select(i => new FileSignature($"/f{i}", PackageVerdict.Unpackaged, "No installed package owns this file.", null,
+                null, null, false, null, 1, DateTimeOffset.UnixEpoch, "AB"))
+            .ToList();
+
+        var ex = Assert.Throws<ArgumentException>(() => new LinuxSignatureInspector(new DpkgDatabaseSource()).Inspect(paths));
+        var summary = SignatureTools.Render(new SignatureQueryResult(files, [], null));
+
+        Assert.Contains($"at most {LinuxSignatureInspector.MaxPaths}", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain($"/f{RenderLimits.MaxRenderedRows + 1}", summary, StringComparison.Ordinal);
+        Assert.Contains("structured content", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_summary_names_the_verdict_package_and_hash_and_says_when_there_is_no_dpkg()
     {
         var summary = SignatureTools.Render(new SignatureQueryResult(

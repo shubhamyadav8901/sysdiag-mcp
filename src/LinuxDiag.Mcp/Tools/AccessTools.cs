@@ -42,37 +42,37 @@ public sealed class AccessTools(IAccessInspector access)
         static string YesNo(bool value) => value ? "yes" : "no";
 
         var builder = new StringBuilder();
-        builder.Append(report.Subject.Description).Append(" on ").Append(report.Path).Append(" (").Append(report.Kind).AppendLine(")");
+        builder.Append(RenderLimits.Printable(report.Subject.Description)).Append(" on ").Append(RenderLimits.Printable(report.Path)).Append(" (").Append(RenderLimits.Printable(report.Kind)).AppendLine(")");
         if (report.ResolvedPath is { } resolved)
         {
-            builder.Append("  resolves to ").AppendLine(resolved);
+            builder.Append("  resolves to ").AppendLine(RenderLimits.Printable(resolved));
         }
 
-        builder.Append("Read:    ").Append(Verdict(report.Read.Allowed)).Append(" - ").AppendLine(report.Read.Reason);
-        builder.Append("Write:   ").Append(Verdict(report.Write.Allowed)).Append(" - ").AppendLine(report.Write.Reason);
-        builder.Append("Execute: ").Append(Verdict(report.Execute.Allowed)).Append(" - ").AppendLine(report.Execute.Reason);
+        builder.Append("Read:    ").Append(Verdict(report.Read.Allowed)).Append(" - ").AppendLine(RenderLimits.Printable(report.Read.Reason));
+        builder.Append("Write:   ").Append(Verdict(report.Write.Allowed)).Append(" - ").AppendLine(RenderLimits.Printable(report.Write.Reason));
+        builder.Append("Execute: ").Append(Verdict(report.Execute.Allowed)).Append(" - ").AppendLine(RenderLimits.Printable(report.Execute.Reason));
         if (report.BlockedAt is { } blockedAt)
         {
-            builder.Append("BLOCKED at ").Append(blockedAt).Append(": ")
-                .AppendLine(report.Traversal.First(s => s.Path == blockedAt).Reason);
+            builder.Append("BLOCKED at ").Append(RenderLimits.Printable(blockedAt)).Append(": ")
+                .AppendLine(RenderLimits.Printable(report.Traversal.First(s => s.Path == blockedAt).Reason));
         }
 
-        builder.Append("Owner ").Append(report.Owner).Append(", group ").Append(report.Group).Append(", mode ").AppendLine(report.Mode);
+        builder.Append("Owner ").Append(RenderLimits.Printable(report.Owner)).Append(", group ").Append(RenderLimits.Printable(report.Group)).Append(", mode ").AppendLine(RenderLimits.Printable(report.Mode));
         if (report.Immutable) builder.AppendLine("Immutable (chattr +i).");
-        if (report.Acl.Count > 0) builder.Append("ACL: ").AppendLine(string.Join(", ", report.Acl));
-        if (report.DefaultAcl.Count > 0) builder.Append("Default ACL: ").AppendLine(string.Join(", ", report.DefaultAcl));
-        if (report.FileCapabilities is { } capabilities) builder.Append("Capabilities when executed: ").AppendLine(capabilities);
+        if (report.Acl.Count > 0) builder.Append("ACL: ").AppendLine(RenderLimits.Printable(string.Join(", ", report.Acl)));
+        if (report.DefaultAcl.Count > 0) builder.Append("Default ACL: ").AppendLine(RenderLimits.Printable(string.Join(", ", report.DefaultAcl)));
+        if (report.FileCapabilities is { } capabilities) builder.Append("Capabilities when executed: ").AppendLine(RenderLimits.Printable(capabilities));
         if (report.MountPoint is { } mountPoint)
         {
-            builder.Append("Mount: ").Append(mountPoint).Append(' ').AppendLine(string.Join(',', report.MountOptions));
+            builder.Append("Mount: ").Append(RenderLimits.Printable(mountPoint)).Append(' ').AppendLine(RenderLimits.Printable(string.Join(',', report.MountOptions)));
         }
 
-        builder.Append("Path: ").AppendLine(string.Join(", ", report.Traversal.Select(s => $"{s.Path} {(s.CanSearch ? "ok" : "BLOCKED")}")));
+        builder.Append("Path: ").AppendLine(RenderLimits.Printable(string.Join(", ", report.Traversal.Select(s => $"{s.Path} {(s.CanSearch ? "ok" : "BLOCKED")}"))));
         builder.Append("Server's own kernel check (uid ").Append(report.Probe.UserId).Append("): read ").Append(YesNo(report.Probe.Read))
             .Append(", write ").Append(YesNo(report.Probe.Write)).Append(", execute ").AppendLine(YesNo(report.Probe.Execute));
         foreach (var note in report.Notes)
         {
-            builder.Append("Note: ").AppendLine(note);
+            builder.Append("Note: ").AppendLine(RenderLimits.Printable(note));
         }
 
         return builder.ToString().TrimEnd();

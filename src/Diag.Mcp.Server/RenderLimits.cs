@@ -49,5 +49,44 @@ public static class RenderLimits
                + $", … and {Format(items.Count - MaxJoinedItems)} more (all in the structured content)";
     }
 
+    /// <summary>Text another account chose, made safe to write into a summary.</summary>
+    /// <remarks>
+    /// Command lines, process and file names, unit descriptions and log messages belong to whoever wrote them.
+    /// A newline in one would start a line of the summary that an agent reads as the server's own words, an ESC
+    /// could drive a terminal, and a bidirectional override reorders what is shown. Each is written as an escape
+    /// instead (\n, \u001b); the structured content keeps the original.
+    /// </remarks>
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(text))]
+    public static string? Printable(string? text)
+    {
+        if (text is null || !text.Any(NeedsEscape))
+        {
+            return text;
+        }
+
+        var builder = new StringBuilder(text.Length + 16);
+        foreach (var c in text)
+        {
+            if (!NeedsEscape(c))
+            {
+                builder.Append(c);
+                continue;
+            }
+
+            builder.Append(c switch
+            {
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                _ => "\\u" + ((int)c).ToString("x4", CultureInfo.InvariantCulture),
+            });
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool NeedsEscape(char c) =>
+        char.IsControl(c) || c is (>= '\u202a' and <= '\u202e') or (>= '\u2066' and <= '\u2069') or '\u200e' or '\u200f' or '\u061c';
+
     private static string Format(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
 }

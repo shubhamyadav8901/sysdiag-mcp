@@ -39,7 +39,7 @@ public sealed class PipeTools(IPipeInspector pipes)
         var builder = new StringBuilder();
         foreach (var limitation in result.Limitations)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         if (result.Pipes.Count == 0)
@@ -47,7 +47,7 @@ public sealed class PipeTools(IPipeInspector pipes)
             builder.Append("No named socket or FIFO matched");
             if (!string.IsNullOrWhiteSpace(nameFilter))
             {
-                builder.Append(" '").Append(nameFilter).Append('\'');
+                builder.Append(" '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
             }
 
             return builder.Append('.').ToString();
@@ -57,7 +57,7 @@ public sealed class PipeTools(IPipeInspector pipes)
             .AppendLine(":");
         foreach (var pipe in result.Pipes.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(pipe.Name).Append(" (").Append(pipe.Kind);
+            builder.Append("- ").Append(RenderLimits.Printable(pipe.Name)).Append(" (").Append(RenderLimits.Printable(pipe.Kind));
             if (pipe.Listening)
             {
                 builder.Append(", listening");
@@ -70,7 +70,7 @@ public sealed class PipeTools(IPipeInspector pipes)
 
             builder.Append(')');
             builder.Append(pipe.Owners.Count == 0 ? " holder unknown" : " held by ")
-                .Append(string.Join(", ", pipe.Owners.Take(3).Select(o => $"{o.ProcessName} (PID {o.ProcessId})")));
+                .Append(RenderLimits.Printable(string.Join(", ", pipe.Owners.Take(3).Select(o => $"{o.ProcessName} (PID {o.ProcessId})"))));
             if (pipe.Owners.Count > 3)
             {
                 builder.Append(" and ").Append(pipe.Owners.Count - 3).Append(" more");

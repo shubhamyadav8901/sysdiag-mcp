@@ -46,7 +46,7 @@ public sealed class EventLogTools(IJournalInspector journal)
         var builder = new StringBuilder();
         foreach (var limitation in result.Limitations)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         var where = result.Unit is null ? "the journal" : $"the journal for '{result.Unit}'";
@@ -54,10 +54,10 @@ public sealed class EventLogTools(IJournalInspector journal)
         {
             if (result.Candidates.Count > 0)
             {
-                builder.Append("No unit named '").Append(result.Unit).AppendLine("' exists. Did you mean one of these?");
+                builder.Append("No unit named '").Append(RenderLimits.Printable(result.Unit)).AppendLine("' exists. Did you mean one of these?");
                 foreach (var candidate in result.Candidates)
                 {
-                    builder.Append("- ").AppendLine(candidate);
+                    builder.Append("- ").AppendLine(RenderLimits.Printable(candidate));
                 }
 
                 return builder.ToString().TrimEnd();
@@ -67,24 +67,24 @@ public sealed class EventLogTools(IJournalInspector journal)
             {
                 // A level set with a gap is fetched as its range and filtered: the newest records in the range were
                 // all at other levels, which says nothing about older ones.
-                return builder.Append("The newest records in ").Append(where).Append(" in the last ").Append(result.Minutes)
+                return builder.Append("The newest records in ").Append(RenderLimits.Printable(where)).Append(" in the last ").Append(result.Minutes)
                     .Append(" minutes were all outside the requested levels, so older matching records may exist. ")
                     .Append("Narrow the window, raise maxEvents, or ask for a contiguous set of levels.").ToString();
             }
 
-            return builder.Append("No matching records in ").Append(where).Append(" in the last ").Append(result.Minutes)
+            return builder.Append("No matching records in ").Append(RenderLimits.Printable(where)).Append(" in the last ").Append(result.Minutes)
                 .Append(" minutes. Widen the window, relax the severity filter, or check the unit name.").ToString();
         }
 
         builder.Append(result.Events.Count).Append(result.Events.Count == 1 ? " record" : " records").Append(" in ")
-            .Append(where).Append(" over the last ").Append(result.Minutes).AppendLine(" minutes, newest first:");
+            .Append(RenderLimits.Printable(where)).Append(" over the last ").Append(result.Minutes).AppendLine(" minutes, newest first:");
         foreach (var entry in result.Events.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(entry.TimeCreated.ToString("u", CultureInfo.InvariantCulture))
-                .Append(" [").Append(entry.Level).Append("] ").Append(entry.Provider);
+                .Append(" [").Append(RenderLimits.Printable(entry.Level)).Append("] ").Append(RenderLimits.Printable(entry.Provider));
             if (entry.Unit is { } unit)
             {
-                builder.Append(" (").Append(unit).Append(')');
+                builder.Append(" (").Append(RenderLimits.Printable(unit)).Append(')');
             }
 
             if (entry.ProcessId is { } pid)
@@ -94,7 +94,7 @@ public sealed class EventLogTools(IJournalInspector journal)
 
             builder.AppendLine();
             var first = entry.Message?.Split('\n')[0] ?? "(no message text)";
-            builder.Append("    ").AppendLine(first.Length <= 300 ? first : first[..300] + "...");
+            builder.Append("    ").AppendLine(RenderLimits.Printable(first.Length <= 300 ? first : first[..300] + "..."));
         }
 
         RenderLimits.NoteElision(builder, result.Events.Count, "returned records");

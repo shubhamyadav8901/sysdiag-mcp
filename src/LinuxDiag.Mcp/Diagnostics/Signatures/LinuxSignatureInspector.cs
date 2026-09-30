@@ -5,12 +5,21 @@ namespace LinuxDiag.Mcp.Diagnostics.Signatures;
 
 public sealed class LinuxSignatureInspector(IPackageDatabaseSource packages) : ISignatureInspector
 {
+    /// <summary>Paths one call hashes: each is read in full, so the bound is on the work a single call can start.</summary>
+    public const int MaxPaths = 1000;
+
     public SignatureQueryResult Inspect(IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
         if (paths.Count == 0)
         {
             throw new ArgumentException("Provide at least one file path.", nameof(paths));
+        }
+
+        if (paths.Count > MaxPaths)
+        {
+            throw new ArgumentException(
+                $"{paths.Count:N0} paths is more than one call hashes; pass at most {MaxPaths} and call again for the rest.", nameof(paths));
         }
 
         var database = packages.Open();

@@ -36,9 +36,9 @@ public sealed class SystemTools(ISystemInspector system)
     {
         var builder = new StringBuilder();
 
-        builder.Append(overview.MachineName).Append(" - ").Append(overview.OperatingSystem)
-            .Append(" (").Append(overview.Architecture).Append(", ").Append(overview.Kernel).AppendLine(")");
-        builder.Append("Running as ").Append(overview.UserName)
+        builder.Append(RenderLimits.Printable(overview.MachineName)).Append(" - ").Append(RenderLimits.Printable(overview.OperatingSystem))
+            .Append(" (").Append(RenderLimits.Printable(overview.Architecture)).Append(", ").Append(RenderLimits.Printable(overview.Kernel)).AppendLine(")");
+        builder.Append("Running as ").Append(RenderLimits.Printable(overview.UserName))
             .Append(overview.Elevated ? " (root)" : " (NOT root)").AppendLine();
         builder.Append("Up ").Append(TextFormat.Uptime(overview.Uptime))
             .Append(", booted ").Append(overview.BootTime.ToString("u", CultureInfo.InvariantCulture)).AppendLine();
@@ -48,8 +48,8 @@ public sealed class SystemTools(ISystemInspector system)
 
         foreach (var fs in overview.Filesystems)
         {
-            builder.Append("- ").Append(fs.MountPoint).Append(" (").Append(fs.Device).Append(' ')
-                .Append(fs.FileSystem).Append(fs.ReadOnly ? ", read-only" : string.Empty).Append("): ");
+            builder.Append("- ").Append(RenderLimits.Printable(fs.MountPoint)).Append(" (").Append(RenderLimits.Printable(fs.Device)).Append(' ')
+                .Append(RenderLimits.Printable(fs.FileSystem)).Append(fs.ReadOnly ? ", read-only" : string.Empty).Append("): ");
 
             if (fs.TotalBytes == 0)
             {

@@ -32,6 +32,21 @@ public sealed class ContainerTests
             "/", container, innermost, "net:[1]", "mnt:[1]");
 
     [Fact]
+    public void Containers_past_the_row_cap_are_counted_and_the_summary_says_how_to_see_the_rest()
+    {
+        var all = Enumerable.Range(1, 3)
+            .Select(i => new ContainerInfo("docker", $"id{i}", $"c{i}", "busybox", "running", i, [i], null, null, false))
+            .ToList();
+
+        var result = ContainerTools.Build(all, [], null, maxResults: 2);
+
+        Assert.Equal(2, result.Containers.Count);
+        Assert.Equal(3, result.TotalMatched);
+        Assert.True(result.Truncated);
+        Assert.Contains("LINUXDIAG_MAX_RESULTS", result.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Docker_list_gives_id_name_image_and_state()
     {
         var container = Assert.Single(DockerContainers.Parse(DockerJson));

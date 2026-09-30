@@ -78,13 +78,13 @@ public sealed class HandleTools(IHandleInspector handles)
         {
             if (search.ProcessScoped)
             {
-                builder.Append(search.Query).Append(search.IncludedAllObjectTypes
+                builder.Append(RenderLimits.Printable(search.Query)).Append(search.IncludedAllObjectTypes
                     ? " holds no open descriptors at all, which for a live process is unusual enough to suspect it has exited. Check process_list."
                     : " has no open or mapped files. Call again with includeAllObjectTypes=true to see its sockets, pipes and other descriptors.");
             }
             else
             {
-                builder.Append("No open or mapped file matched '").Append(search.Query).Append("'.");
+                builder.Append("No open or mapped file matched '").Append(RenderLimits.Printable(search.Query)).Append("'.");
                 if (!search.IncludedAllObjectTypes)
                 {
                     builder.Append(" Call again with includeAllObjectTypes=true to also search sockets, pipes and anonymous inodes.");
@@ -95,19 +95,19 @@ public sealed class HandleTools(IHandleInspector handles)
         }
 
         builder.Append(search.TotalMatched).Append(search.TotalMatched == 1 ? " handle matches '" : " handles match '")
-            .Append(search.Query).AppendLine("':");
+            .Append(RenderLimits.Printable(search.Query)).AppendLine("':");
         foreach (var entry in search.Entries.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(entry.ProcessName).Append(" (PID ").Append(entry.ProcessId).Append(") ")
-                .Append(entry.Type).Append(' ').Append(entry.HandleValue).Append(": ").Append(entry.Name);
+            builder.Append("- ").Append(RenderLimits.Printable(entry.ProcessName)).Append(" (PID ").Append(entry.ProcessId).Append(") ")
+                .Append(RenderLimits.Printable(entry.Type)).Append(' ').Append(RenderLimits.Printable(entry.HandleValue)).Append(": ").Append(RenderLimits.Printable(entry.Name));
             if (entry.Access is not null)
             {
-                builder.Append(" [").Append(entry.Access).Append(']');
+                builder.Append(" [").Append(RenderLimits.Printable(entry.Access)).Append(']');
             }
 
             if (entry.User is not null)
             {
-                builder.Append(" [").Append(entry.User).Append(']');
+                builder.Append(" [").Append(RenderLimits.Printable(entry.User)).Append(']');
             }
 
             if (entry.OtherMountNamespace)

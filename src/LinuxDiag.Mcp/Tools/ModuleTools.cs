@@ -37,16 +37,16 @@ public sealed class ModuleTools(IModuleInspector modules)
     {
         var builder = new StringBuilder();
         builder.Append(result.TotalMatched).Append(result.TotalMatched == 1 ? " mapped file" : " mapped files")
-            .Append(" in ").Append(result.ProcessName).Append(" (PID ").Append(result.ProcessId).Append(')');
+            .Append(" in ").Append(RenderLimits.Printable(result.ProcessName)).Append(" (PID ").Append(result.ProcessId).Append(')');
         if (!string.IsNullOrWhiteSpace(nameFilter))
         {
-            builder.Append(" matching '").Append(nameFilter).Append('\'');
+            builder.Append(" matching '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
         }
 
         builder.AppendLine(":");
         foreach (var module in result.Modules.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(module.Name).Append("  ").Append(module.Path);
+            builder.Append("- ").Append(RenderLimits.Printable(module.Name)).Append("  ").Append(RenderLimits.Printable(module.Path));
             if (module.Deleted)
             {
                 builder.Append("  [DELETED: replaced on disk since it was mapped]");

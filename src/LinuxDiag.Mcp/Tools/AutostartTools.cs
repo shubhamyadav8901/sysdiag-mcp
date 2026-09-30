@@ -53,7 +53,7 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
 
         foreach (var limitation in result.Limitations)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         var preloads = result.Entries.Count(e => e.Category == "preload");
@@ -68,10 +68,10 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
             builder.Append("Nothing configured to start automatically matched");
             if (!string.IsNullOrWhiteSpace(nameFilter))
             {
-                builder.Append(" '").Append(nameFilter).Append('\'');
+                builder.Append(" '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
             }
 
-            return builder.Append(" in categories ").Append(categories).Append('.').ToString();
+            return builder.Append(" in categories ").Append(RenderLimits.Printable(categories)).Append('.').ToString();
         }
 
         builder.Append(result.TotalMatched).Append(result.TotalMatched == 1 ? " entry" : " entries").AppendLine(":");
@@ -81,27 +81,27 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
             if (entry.Category != category)
             {
                 category = entry.Category;
-                builder.Append('[').Append(category).AppendLine("]");
+                builder.Append('[').Append(RenderLimits.Printable(category)).AppendLine("]");
             }
 
-            builder.Append("- ").Append(entry.Entry);
+            builder.Append("- ").Append(RenderLimits.Printable(entry.Entry));
             if (!entry.Enabled)
             {
                 builder.Append(" (disabled)");
             }
 
-            builder.Append("  ").Append(entry.ImagePath ?? "(no program recorded)");
+            builder.Append("  ").Append(RenderLimits.Printable(entry.ImagePath ?? "(no program recorded)"));
             if (entry.ImageMissing) builder.Append("  [FILE NOT FOUND]");
             // The program's package is named whenever it has one: a foreign drop-in or a changed binary is not
             // "not from a package", and the '!' lines below say which file failed.
-            if (entry.Package is { } package) builder.Append("  ").Append(package);
+            if (entry.Package is { } package) builder.Append("  ").Append(RenderLimits.Printable(package));
             if (entry.Packaged == false) builder.Append(entry.Package is null ? "  [NOT FROM A PACKAGE]" : "  [FILES DO NOT MATCH THE PACKAGE]");
-            if (entry.Profile is { } profile) builder.Append("  (").Append(profile).Append(')');
+            if (entry.Profile is { } profile) builder.Append("  (").Append(RenderLimits.Printable(profile)).Append(')');
             builder.AppendLine();
-            builder.Append("    ").AppendLine(entry.Location);
+            builder.Append("    ").AppendLine(RenderLimits.Printable(entry.Location));
             foreach (var finding in entry.PackageFindings)
             {
-                builder.Append("    ! ").AppendLine(finding);
+                builder.Append("    ! ").AppendLine(RenderLimits.Printable(finding));
             }
         }
 

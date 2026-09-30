@@ -50,17 +50,17 @@ public sealed class LockTools(ILockInspector locks)
         var builder = new StringBuilder();
         foreach (var limitation in query.Limitations)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         if (!query.PathExists)
         {
-            return builder.Append(query.Path).Append(" does not exist, so nothing can hold it. Check the path.").ToString();
+            return builder.Append(RenderLimits.Printable(query.Path)).Append(" does not exist, so nothing can hold it. Check the path.").ToString();
         }
 
         if (query.Holders.Count == 0)
         {
-            builder.Append("No process holds ").Append(query.Path).Append(" open or locked.");
+            builder.Append("No process holds ").Append(RenderLimits.Printable(query.Path)).Append(" open or locked.");
             builder.Append(query.Exhaustive
                 ? " This is exhaustive: every process was checked."
                 : " This is not exhaustive; see the warnings above.");
@@ -68,14 +68,14 @@ public sealed class LockTools(ILockInspector locks)
         }
 
         builder.Append(query.TotalMatched).Append(query.TotalMatched == 1 ? " holder of " : " holders of ")
-            .Append(query.Path).AppendLine(":");
+            .Append(RenderLimits.Printable(query.Path)).AppendLine(":");
         foreach (var holder in query.Holders.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(holder.ProcessName).Append(" (PID ").Append(holder.ProcessId).Append("): ")
+            builder.Append("- ").Append(RenderLimits.Printable(holder.ProcessName)).Append(" (PID ").Append(holder.ProcessId).Append("): ")
                 .Append(holder.Kind);
             if (holder.Access is not null)
             {
-                builder.Append(' ').Append(holder.Access);
+                builder.Append(' ').Append(RenderLimits.Printable(holder.Access));
             }
 
             if (holder.Waiting)

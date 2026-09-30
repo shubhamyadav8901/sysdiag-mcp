@@ -40,26 +40,26 @@ public sealed class ServiceTools(IServiceInspector services)
         var text = new StringBuilder();
         if (result.Service is not { } service)
         {
-            text.Append("No service named '").Append(result.Query).Append("' exists.");
+            text.Append("No service named '").Append(RenderLimits.Printable(result.Query)).Append("' exists.");
             if (result.Candidates.Count > 0)
             {
                 text.AppendLine(" Did you mean one of these?");
                 foreach (var candidate in result.Candidates)
                 {
-                    text.Append("- ").AppendLine(candidate);
+                    text.Append("- ").AppendLine(RenderLimits.Printable(candidate));
                 }
             }
 
             return text.ToString().TrimEnd();
         }
 
-        text.Append(service.ServiceName);
+        text.Append(RenderLimits.Printable(service.ServiceName));
         if (service.DisplayName is { } display)
         {
-            text.Append(" (").Append(display).Append(')');
+            text.Append(" (").Append(RenderLimits.Printable(display)).Append(')');
         }
 
-        text.Append(" - ").Append(service.Status).Append(", start type ").AppendLine(service.StartType);
+        text.Append(" - ").Append(RenderLimits.Printable(service.Status)).Append(", start type ").AppendLine(RenderLimits.Printable(service.StartType));
         if (service.StartType == "masked" || service.LoadState == "masked")
         {
             text.AppendLine("NOTE: this service is MASKED and cannot be started until it is unmasked.");
@@ -67,33 +67,33 @@ public sealed class ServiceTools(IServiceInspector services)
         else if (service.StartType.StartsWith("enabled", StringComparison.Ordinal) &&
                  (service.Status.StartsWith("inactive", StringComparison.Ordinal) || service.Status.StartsWith("failed", StringComparison.Ordinal)))
         {
-            text.Append("NOTE: enabled to start at boot but is currently ").Append(service.Status.Split(' ')[0])
-                .Append(" - check event_log_tail with unit='").Append(service.ServiceName).AppendLine("' for why.");
+            text.Append("NOTE: enabled to start at boot but is currently ").Append(RenderLimits.Printable(service.Status.Split(' ')[0]))
+                .Append(" - check event_log_tail with unit='").Append(RenderLimits.Printable(service.ServiceName)).AppendLine("' for why.");
         }
 
         if (service.Result is { } resultText && resultText != "success")
         {
-            text.Append("Last result: ").AppendLine(resultText);
+            text.Append("Last result: ").AppendLine(RenderLimits.Printable(resultText));
         }
 
         if (service.RestartCount > 0)
         {
             text.Append("Restarted ").Append(service.RestartCount).Append(" times by systemd (Restart=")
-                .Append(service.Restart).AppendLine(").");
+                .Append(RenderLimits.Printable(service.Restart)).AppendLine(").");
         }
 
-        text.Append("Runs as: ").AppendLine(service.Account);
-        text.Append("Type: ").AppendLine(service.ServiceType);
-        text.Append("Command: ").AppendLine(service.ImagePath ?? "(none)");
+        text.Append("Runs as: ").AppendLine(RenderLimits.Printable(service.Account));
+        text.Append("Type: ").AppendLine(RenderLimits.Printable(service.ServiceType));
+        text.Append("Command: ").AppendLine(RenderLimits.Printable(service.ImagePath ?? "(none)"));
         if (service.MainProcessId is { } pid)
         {
             text.Append("Main PID: ").Append(pid).AppendLine();
         }
 
-        text.Append("Unit file: ").AppendLine(service.FragmentPath ?? "(none)");
+        text.Append("Unit file: ").AppendLine(RenderLimits.Printable(service.FragmentPath ?? "(none)"));
         if (service.DropIns.Count > 0)
         {
-            text.Append("Drop-ins: ").AppendLine(string.Join(", ", service.DropIns));
+            text.Append("Drop-ins: ").AppendLine(RenderLimits.Printable(string.Join(", ", service.DropIns)));
         }
 
         if (service.ActiveSince is { } since)
@@ -106,14 +106,14 @@ public sealed class ServiceTools(IServiceInspector services)
             text.Append("Last exit status: ").Append(exit).AppendLine();
         }
 
-        text.Append("Depends on: ").AppendLine(service.DependsOn.Count == 0 ? "(none)" : string.Join(", ", service.DependsOn));
+        text.Append("Depends on: ").AppendLine(RenderLimits.Printable(service.DependsOn.Count == 0 ? "(none)" : string.Join(", ", service.DependsOn)));
         if (service.WeakDependsOn.Count > 0)
         {
-            text.Append("Wants (runs without them): ").AppendLine(string.Join(", ", service.WeakDependsOn));
+            text.Append("Wants (runs without them): ").AppendLine(RenderLimits.Printable(string.Join(", ", service.WeakDependsOn)));
         }
 
-        text.Append("Stops with it: ").AppendLine(service.DependedOnBy.Count == 0 ? "(none)" : string.Join(", ", service.DependedOnBy));
-        text.Append("Wanted by (keep running if it stops): ").Append(service.WantedBy.Count == 0 ? "(none)" : string.Join(", ", service.WantedBy));
+        text.Append("Stops with it: ").AppendLine(RenderLimits.Printable(service.DependedOnBy.Count == 0 ? "(none)" : string.Join(", ", service.DependedOnBy)));
+        text.Append("Wanted by (keep running if it stops): ").Append(RenderLimits.Printable(service.WantedBy.Count == 0 ? "(none)" : string.Join(", ", service.WantedBy)));
         return text.ToString();
     }
 }

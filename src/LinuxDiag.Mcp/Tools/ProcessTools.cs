@@ -96,7 +96,7 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
         var builder = new StringBuilder();
         if (limitation is not null)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         if (rows.Count == 0)
@@ -109,7 +109,7 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
 
             if (!string.IsNullOrWhiteSpace(nameFilter))
             {
-                builder.Append(" '").Append(nameFilter).Append('\'');
+                builder.Append(" '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
             }
 
             return builder.Append('.').ToString();
@@ -118,7 +118,7 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
         builder.Append(totalMatched).Append(totalMatched == 1 ? " process" : " processes").AppendLine(":");
         foreach (var process in rows.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(process.Name).Append(" (PID ").Append(process.ProcessId);
+            builder.Append("- ").Append(RenderLimits.Printable(process.Name)).Append(" (PID ").Append(process.ProcessId);
             if (process.ParentProcessId is { } parent)
             {
                 builder.Append(", parent ").Append(parent);
@@ -133,8 +133,8 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
 
             if (process.Container is { } container)
             {
-                builder.Append(" [").Append(container.Runtime).Append(' ')
-                    .Append(container.Name ?? ContainerTools.ShortId(container.Id));
+                builder.Append(" [").Append(RenderLimits.Printable(container.Runtime)).Append(' ')
+                    .Append(RenderLimits.Printable(container.Name ?? ContainerTools.ShortId(container.Id)));
                 if (container.ProcessIdInContainer is { } inner)
                 {
                     builder.Append(", PID ").Append(inner).Append(" inside");
@@ -146,7 +146,7 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
             builder.AppendLine();
             if (process.CommandLine is { } commandLine)
             {
-                builder.Append("    ").AppendLine(commandLine.Length <= 400 ? commandLine : commandLine[..400] + "...");
+                builder.Append("    ").AppendLine(RenderLimits.Printable(commandLine.Length <= 400 ? commandLine : commandLine[..400] + "..."));
             }
         }
 

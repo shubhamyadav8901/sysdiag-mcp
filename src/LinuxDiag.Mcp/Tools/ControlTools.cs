@@ -77,19 +77,19 @@ public sealed class ControlTools(IProcessController controller, IServiceControll
 
     internal static string RenderService(ServiceControlResult result)
     {
-        var builder = new StringBuilder(result.ServiceName);
+        var builder = new StringBuilder(RenderLimits.Printable(result.ServiceName));
         if (result.DisplayName is { } display)
         {
-            builder.Append(" (").Append(display).Append(')');
+            builder.Append(" (").Append(RenderLimits.Printable(display)).Append(')');
         }
 
-        builder.AppendLine().AppendLine(result.Detail);
+        builder.AppendLine().AppendLine(RenderLimits.Printable(result.Detail));
         if (result.DependentServicesStopped.Count > 0)
         {
             builder.AppendLine().AppendLine("Dependent services stopped:");
             foreach (var dependent in result.DependentServicesStopped)
             {
-                builder.Append("- ").AppendLine(dependent);
+                builder.Append("- ").AppendLine(RenderLimits.Printable(dependent));
             }
 
             builder.Append("Start these again individually if they are needed.");
@@ -111,8 +111,8 @@ public sealed class ControlTools(IProcessController controller, IServiceControll
     internal static string Render(ProcessControlResult result)
     {
         var builder = new StringBuilder();
-        builder.Append(result.Action).Append(' ').Append(result.ProcessName).Append(" (PID ").Append(result.ProcessId).AppendLine("):");
-        builder.AppendLine(result.Detail);
+        builder.Append(result.Action).Append(' ').Append(RenderLimits.Printable(result.ProcessName)).Append(" (PID ").Append(result.ProcessId).AppendLine("):");
+        builder.AppendLine(RenderLimits.Printable(result.Detail));
         if (result.Action == ProcessAction.Suspend)
         {
             builder.Append("Remember to resume it - a process left stopped is indistinguishable from one that is hung.");

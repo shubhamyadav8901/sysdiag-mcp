@@ -345,6 +345,12 @@
             ]
           }
         },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
         "limitations": {
           "type": "array",
           "items": {
@@ -355,6 +361,8 @@
       "required": [
         "summary",
         "containers",
+        "totalMatched",
+        "truncated",
         "limitations"
       ]
     },

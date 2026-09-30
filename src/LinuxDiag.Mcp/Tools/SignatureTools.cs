@@ -39,30 +39,30 @@ public sealed class SignatureTools(ISignatureInspector signatures)
         var builder = new StringBuilder();
         if (result.Limitation is { } limitation)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         foreach (var missing in result.NotFound)
         {
-            builder.Append("NOT FOUND: ").AppendLine(missing);
+            builder.Append("NOT FOUND: ").AppendLine(RenderLimits.Printable(missing));
         }
 
-        foreach (var file in result.Files)
+        foreach (var file in result.Files.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append(file.Path);
+            builder.Append(RenderLimits.Printable(file.Path));
             if (file.ResolvedPath is { } resolved)
             {
-                builder.Append(" -> ").Append(resolved);
+                builder.Append(" -> ").Append(RenderLimits.Printable(resolved));
             }
 
             builder.AppendLine();
-            builder.Append("  ").Append(file.Verdict.ToString().ToUpperInvariant()).Append(" - ").AppendLine(file.Detail);
+            builder.Append("  ").Append(file.Verdict.ToString().ToUpperInvariant()).Append(" - ").AppendLine(RenderLimits.Printable(file.Detail));
             if (file.Package is { } package)
             {
-                builder.Append("  Package: ").Append(package);
+                builder.Append("  Package: ").Append(RenderLimits.Printable(package));
                 if (file.PackageVersion is { } version)
                 {
-                    builder.Append(' ').Append(version);
+                    builder.Append(' ').Append(RenderLimits.Printable(version));
                 }
 
                 if (file.Conffile)
@@ -72,7 +72,7 @@ public sealed class SignatureTools(ISignatureInspector signatures)
 
                 if (file.DivertedBy is { } divertedBy)
                 {
-                    builder.Append(" (diverted by ").Append(divertedBy).Append(')');
+                    builder.Append(" (diverted by ").Append(RenderLimits.Printable(divertedBy)).Append(')');
                 }
 
                 builder.AppendLine();
@@ -80,9 +80,10 @@ public sealed class SignatureTools(ISignatureInspector signatures)
 
             builder.Append("  ").Append(file.SizeBytes.ToString("N0", CultureInfo.InvariantCulture)).Append(" bytes, modified ")
                 .AppendLine(file.LastWriteTime.ToString("u", CultureInfo.InvariantCulture));
-            builder.Append("  SHA-256: ").AppendLine(file.Sha256);
+            builder.Append("  SHA-256: ").AppendLine(RenderLimits.Printable(file.Sha256));
         }
 
+        RenderLimits.NoteElision(builder, result.Files.Count, "files");
         return builder.ToString().TrimEnd();
     }
 }
