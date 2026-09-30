@@ -1,0 +1,37 @@
+Package: cron
+Status: install ok installed
+Priority: important
+Section: admin
+Installed-Size: 249
+Maintainer: Georges Khaznadar <georgesk@debian.org>
+Architecture: amd64
+Multi-Arch: foreign
+Version: 3.0pl1-197
+Replaces: bcron, cronie, systemd-cron
+Provides: cron-daemon
+Depends: libc6 (>= 2.34), libpam0g (>= 0.99.7.1), libselinux1 (>= 3.1~), sensible-utils, libpam-runtime
+Pre-Depends: init-system-helpers (>= 1.54~), cron-daemon-common
+Recommends: default-mta | mail-transport-agent
+Suggests: anacron, logrotate, checksecurity, supercat, bat
+Conflicts: bcron, cronie, systemd-cron
+Conffiles:
+ /etc/default/cron c3a7b773d9234e1948c5885753bb7c05
+ /etc/init.d/cron af02c6044a6166137218843d7556e2fd
+ /etc/pam.d/cron 11e788a7f7cd5477b10da2c7fd5ecdf0
+ /etc/supercat/spcrc-crontab f4a36df1ac8298dc249f712026bafff8
+ /etc/supercat/spcrc-crontab-light ed8b59882050d7de508a1eab088734e9
+Description: process scheduling daemon
+ The cron daemon is a background process that runs particular programs at
+ particular times (for example, every minute, day, week, or month), as
+ specified in a crontab. By default, users may also create crontabs of
+ their own so that processes are run on their behalf.
+ .
+ Output from the commands is usually mailed to the system administrator
+ (or to the user in question); you should probably install a mail system
+ as well so that you can receive these messages.
+ .
+ This cron package does not provide any system maintenance tasks. Basic
+ periodic maintenance tasks are provided by other packages, such
+ as checksecurity.
+Homepage: https://ftp.isc.org/isc/cron/
+

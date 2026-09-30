@@ -33,6 +33,26 @@ flock -x "$lockfile" sh -c '
   done' _ "$out" "$lockfile"
 rm -f "$lockfile"
 
+systemctl show --timestamp=utc -p Id,Names,Description,LoadState,ActiveState,SubState,UnitFileState,Type,FragmentPath,DropInPaths,ExecStart,MainPID,User,Restart,NRestarts,Result,Requires,Wants,RequiredBy,WantedBy,ActiveEnterTimestamp,ExecMainStatus \
+  systemd-journald.service cron.service > "$out/systemctl-show"
+
+# A journal entry this script writes itself, so the fixture carries nothing else from this machine's logs.
+tag="ld-capture-$$"
+logger -t "$tag" -p user.err "fixture entry with a tab	and unicode é"
+sleep 1
+journalctl -o json --no-pager -r -n 1 -t "$tag" \
+  --output-fields=__REALTIME_TIMESTAMP,PRIORITY,SYSLOG_IDENTIFIER,_COMM,_SYSTEMD_UNIT,_PID,MESSAGE > "$out/journal.json"
+
+cp /var/lib/dpkg/info/coreutils.list "$out/dpkg-coreutils.list"
+cp /var/lib/dpkg/info/coreutils.md5sums "$out/dpkg-coreutils.md5sums"
+cp /var/lib/dpkg/diversions "$out/dpkg-diversions"
+awk '/^Package: cron$/,/^$/' /var/lib/dpkg/status > "$out/dpkg-status-cron"
+cp /etc/crontab "$out/crontab"
+cat /proc/self/mountinfo > "$out/pid-mountinfo"
+if command -v python3 >/dev/null && getcap /usr/bin/ping 2>/dev/null | grep -q cap_; then
+  python3 -c 'import os,sys; sys.stdout.write(os.getxattr("/usr/bin/ping","security.capability").hex())' > "$out/xattr-capability-ping.hex"
+fi
+
 if docker info >/dev/null 2>&1; then
   cid="$(docker run -d busybox sleep 60)"
   pid="$(docker inspect -f '{{.State.Pid}}' "$cid")"

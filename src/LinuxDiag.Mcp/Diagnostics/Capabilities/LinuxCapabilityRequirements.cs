@@ -62,6 +62,7 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "signals through a pidfd (pidfd_open, pidfd_send_signal); Linux 5.3 or later",
                 null,
                 "can only signal processes owned by the current user"),
+            ["service_config"] = new("systemctl show", "systemctl", null),
             ["update_self"] = new("staged-build swap through a systemd-run helper (setsid when not a service)", null, null, RequiresElevation: true),
         };
 }

@@ -321,6 +321,12 @@ partial instead of presenting it as complete. The Docker socket is asked one fix
 than risk signalling a reused PID. `path_handle_search`, `who_locks_path` and `named_pipes` need glibc 2.28
 or later, which every distribution .NET 9 supports has.
 
+#### Services, logs, packages and permissions
+
+| Tool | Answers from | Notes |
+|---|---|---|
+| `service_config` | `systemctl show` | State and configuration, unit file and drop-ins, restarts, both dependency directions; near matches for a wrong name |
+
 Publish it, then install it over SSH:
 
 ```

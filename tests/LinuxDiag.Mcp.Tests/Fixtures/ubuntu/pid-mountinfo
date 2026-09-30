@@ -1,0 +1,34 @@
+75 80 0:29 / /usr/lib/modules/6.6.87.2-microsoft-standard-WSL2 rw,nosuid,nodev,noatime - overlay none rw,lowerdir=/modules,upperdir=/lib/modules/6.6.87.2-microsoft-standard-WSL2/rw/upper,workdir=/lib/modules/6.6.87.2-microsoft-standard-WSL2/rw/work,uuid=on
+76 80 0:32 / /mnt/wsl rw,relatime shared:1 - tmpfs none rw
+77 80 0:34 / /usr/lib/wsl/drivers ro,nosuid,nodev,noatime - 9p drivers ro,aname=drivers;fmask=222;dmask=222,cache=5,access=client,msize=65536,trans=fd,rfd=8,wfd=8
+80 65 8:48 / / rw,relatime - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+81 80 0:38 / /mnt/wslg rw,relatime shared:2 - tmpfs none rw
+82 81 8:48 / /mnt/wslg/distro ro,relatime shared:3 - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+108 80 0:55 / /usr/lib/wsl/lib rw,nosuid,nodev,noatime - overlay none rw,lowerdir=/gpu_lib_packaged:/gpu_lib_inbox,upperdir=/gpu_lib/rw/upper,workdir=/gpu_lib/rw/work,uuid=on
+109 80 0:2 /init /init ro - rootfs rootfs rw,size=8041888k,nr_inodes=2010472
+110 80 0:5 / /dev rw,nosuid,relatime shared:14 - devtmpfs none rw,size=8041888k,nr_inodes=2010472,mode=755
+111 80 0:22 / /sys rw,nosuid,nodev,noexec,noatime shared:15 - sysfs sysfs rw
+112 80 0:59 / /proc rw,nosuid,nodev,noexec,noatime shared:16 - proc proc rw
+113 110 0:60 / /dev/pts rw,nosuid,noexec,noatime shared:17 - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+114 80 0:61 / /run rw,nosuid,nodev shared:18 - tmpfs none rw,mode=755
+115 114 0:62 / /run/lock rw,nosuid,nodev,noexec,noatime shared:19 - tmpfs none rw
+116 114 0:63 / /run/shm rw,nosuid,nodev,noatime shared:20 - tmpfs none rw
+117 110 0:63 / /dev/shm rw,nosuid,nodev,noatime shared:20 - tmpfs none rw
+118 114 0:64 / /run/user rw,nosuid,nodev,noexec,noatime shared:21 - tmpfs none rw,mode=755
+119 112 0:33 / /proc/sys/fs/binfmt_misc rw,relatime shared:22 - binfmt_misc binfmt_misc rw
+120 111 0:23 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:23 - cgroup2 cgroup2 rw,nsdelegate
+125 81 0:40 /etc/versions.txt /mnt/wslg/versions.txt rw,relatime shared:24 - overlay none rw,lowerdir=/systemvhd,upperdir=/system/rw/upper,workdir=/system/rw/work,uuid=on
+127 81 0:40 /usr/share/doc /mnt/wslg/doc rw,relatime shared:25 - overlay none rw,lowerdir=/systemvhd,upperdir=/system/rw/upper,workdir=/system/rw/work,uuid=on
+129 80 0:38 /.X11-unix /tmp/.X11-unix ro,relatime shared:2 - tmpfs none rw
+130 80 0:68 / /mnt/c rw,noatime - 9p C:\134 rw,aname=drvfs;path=C:\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=5,access=client,msize=65536,trans=fd,rfd=6,wfd=6
+131 80 0:69 / /mnt/d rw,noatime - 9p D:\134 rw,aname=drvfs;path=D:\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=5,access=client,msize=65536,trans=fd,rfd=6,wfd=6
+132 118 0:38 /run/user /run/user rw,relatime shared:2 - tmpfs none rw
+133 110 0:70 / /dev/hugepages rw,nosuid,nodev,relatime shared:26 - hugetlbfs hugetlbfs rw,pagesize=2M
+134 110 0:37 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:27 - mqueue mqueue rw
+135 111 0:7 / /sys/kernel/debug rw,nosuid,nodev,noexec,relatime shared:28 - debugfs debugfs rw
+136 111 0:12 / /sys/kernel/tracing rw,nosuid,nodev,noexec,relatime shared:29 - tracefs tracefs rw
+137 111 0:71 / /sys/fs/fuse/connections rw,nosuid,nodev,noexec,relatime shared:30 - fusectl fusectl rw
+138 111 0:72 / /sys/kernel/config rw,nosuid,nodev,noexec,relatime shared:31 - configfs configfs rw
+234 80 8:48 /var/lib/docker /var/lib/docker rw,relatime shared:289 - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+251 132 0:82 / /run/user/1000 rw,nosuid,nodev,relatime shared:322 - tmpfs tmpfs rw,size=1609384k,nr_inodes=402346,mode=700,uid=1000,gid=1000
+253 81 0:82 / /mnt/wslg/run/user/1000 rw,nosuid,nodev,relatime shared:322 - tmpfs tmpfs rw,size=1609384k,nr_inodes=402346,mode=700,uid=1000,gid=1000

@@ -1375,6 +1375,172 @@
     }
   },
   {
+    "name": "service_config",
+    "title": "Service configuration and state",
+    "description": "Show a systemd service\u0027s state and configuration: whether it is enabled to start at boot and what it is doing now, its last result and restart count, the account it runs as, its command line, its main PID, the unit file and any drop-ins that change it, and its dependencies in both directions. Accepts \u0027cron\u0027 or \u0027cron.service\u0027. Use it for \u0027the service did not start\u0027, \u0027it keeps restarting\u0027, \u0027it runs as the wrong account\u0027, or to work out what else stops if this one is stopped. If the name does not match, near matches by name or description are suggested.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Service name, for example \u0027cron\u0027 or \u0027ssh.service\u0027",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "service": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "serviceName": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "startType": {
+              "type": "string"
+            },
+            "serviceType": {
+              "type": "string"
+            },
+            "imagePath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "account": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dependsOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dependedOnBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "loadState": {
+              "type": "string"
+            },
+            "mainProcessId": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "restart": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restartCount": {
+              "type": "integer"
+            },
+            "result": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fragmentPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dropIns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "lastExitStatus": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "activeSince": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "serviceName",
+            "displayName",
+            "status",
+            "startType",
+            "serviceType",
+            "imagePath",
+            "account",
+            "dependsOn",
+            "dependedOnBy",
+            "loadState",
+            "mainProcessId",
+            "restart",
+            "restartCount",
+            "result",
+            "fragmentPath",
+            "dropIns",
+            "lastExitStatus",
+            "activeSince"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "service",
+        "candidates"
+      ]
+    },
+    "annotations": {
+      "title": "Service configuration and state",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "system_overview",
     "title": "System overview",
     "description": "Describe the machine: distribution and kernel, architecture, uptime and boot time, processor count, memory, mounted filesystems with free space, the account the server runs as, and whether it is root. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full disk, a very recent reboot, exhausted memory) before you go looking for something subtler.",

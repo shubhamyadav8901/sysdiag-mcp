@@ -1,0 +1,45 @@
+Type=notify
+Restart=always
+MainPID=44
+Result=success
+NRestarts=0
+ExecMainStatus=0
+ExecStart={ path=/usr/lib/systemd/systemd-journald ; argv[]=/usr/lib/systemd/systemd-journald ; ignore_errors=no ; start_time=[Wed 2026-09-30 18:28:15 UTC] ; stop_time=[n/a] ; pid=44 ; code=(null) ; status=0/0 }
+User=
+Id=systemd-journald.service
+Names=systemd-journald.service
+Requires=systemd-journald.socket system.slice
+Wants=systemd-journald.socket systemd-journald-dev-log.socket
+RequiredBy=
+WantedBy=sysinit.target initrd-switch-root.target systemd-journal-flush.service
+Description=Journal Service
+LoadState=loaded
+ActiveState=active
+SubState=running
+FragmentPath=/usr/lib/systemd/system/systemd-journald.service
+DropInPaths=/usr/lib/systemd/system/systemd-journald.service.d/nice.conf
+UnitFileState=static
+ActiveEnterTimestamp=Wed 2026-09-30 18:28:15 UTC
+
+Type=simple
+Restart=on-failure
+MainPID=172
+Result=success
+NRestarts=0
+ExecMainStatus=0
+ExecStart={ path=/usr/sbin/cron ; argv[]=/usr/sbin/cron -f -P $EXTRA_OPTS ; ignore_errors=no ; start_time=[Wed 2026-09-30 18:28:16 UTC] ; stop_time=[n/a] ; pid=172 ; code=(null) ; status=0/0 }
+User=
+Id=cron.service
+Names=cron.service
+Requires=sysinit.target system.slice
+Wants=
+RequiredBy=
+WantedBy=multi-user.target
+Description=Regular background program processing daemon
+LoadState=loaded
+ActiveState=active
+SubState=running
+FragmentPath=/usr/lib/systemd/system/cron.service
+DropInPaths=
+UnitFileState=enabled
+ActiveEnterTimestamp=Wed 2026-09-30 18:28:16 UTC

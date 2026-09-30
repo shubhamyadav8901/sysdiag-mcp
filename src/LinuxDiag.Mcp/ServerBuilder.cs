@@ -11,7 +11,9 @@ using LinuxDiag.Mcp.Diagnostics.Handles;
 using LinuxDiag.Mcp.Diagnostics.Network;
 using LinuxDiag.Mcp.Diagnostics.Processes;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
+using LinuxDiag.Mcp.Diagnostics.Services;
 using LinuxDiag.Mcp.Diagnostics.SystemInfo;
+using LinuxDiag.Mcp.Linux.External;
 using LinuxDiag.Mcp.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -93,7 +95,8 @@ public static class ServerBuilder
             .WithTools<HandleTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<LockTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<NetworkTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<PipeTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<PipeTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<ServiceTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps, pinned by GatedToolGuard.
@@ -143,6 +146,9 @@ public static class ServerBuilder
         services.TryAddSingleton<IProcessController, LinuxProcessController>();
         services.TryAddSingleton<ControlTools>();
         services.TryAddSingleton<SystemTools>();
+        services.TryAddSingleton<IExternalCommand, LinuxExternalCommand>();
+        services.TryAddSingleton<IServiceInspector, LinuxServiceInspector>();
+        services.TryAddSingleton<ServiceTools>();
         services.TryAddSingleton<IShellSet, LinuxShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
         services.TryAddSingleton<CommandTools>();
