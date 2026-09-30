@@ -69,10 +69,13 @@ release fixed something that had been silently wrong, it says what the wrong ans
   `put_file /tmp/x` with `/tmp/x` linking into the artifact directory used to pass as owned while it
   created `/tmp/x`, and now needs the arbitrary grant. Reads, appends and Windows writes follow the
   link and are judged at its target.
-  On Linux a path through a link on procfs -- `/proc/<pid>/root`, `cwd`, `fd/N` -- is never owned and
-  needs the arbitrary grant. What `readlink` prints for those is not where the kernel goes: through a
-  container's `root`, `put_file /proc/<pid>/root/var/lib/linuxdiag/x` was judged owned while a link
-  inside the container could carry the write anywhere on the host. With the grant it works as before.
+  On Linux a path through any link on procfs is never owned and needs the arbitrary grant. That is the
+  magic links -- `/proc/<pid>/root`, `cwd`, `fd/N` -- and the ordinary ones with them: `/proc/self`,
+  `/proc/thread-self`, and `/dev/fd/*` and `/dev/stdin`, which lead there. What `readlink` prints for
+  a magic link is not where the kernel goes: through a container's `root`,
+  `put_file /proc/<pid>/root/var/lib/linuxdiag/x` was judged owned while a link inside the container
+  could carry the write anywhere on the host. With the grant it works as before. An artifact directory
+  configured through such a link is refused on every call, since what it owns cannot be judged.
 - **`push_file` of an empty file now works.** The relay sends a zero-byte file as one call with no
   content, which the server refused as "contentBase64 is empty", so an empty file could not be pushed
   at all. Empty content is now an empty file; *missing* content (`null`) is still refused, since with

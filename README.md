@@ -345,7 +345,10 @@ everything under `/opt/linuxdiag`, the `netcoredeps` folder the binary loads lib
 needs the grant. Arbitrary write lifts the restriction too. A path is judged where the write
 really lands: links among its parent directories are followed, but a link as the final name is replaced
 where it sits rather than written through, so `put_file /tmp/x` is a write to `/tmp` even when
-`/tmp/x` links into `/var/lib/linuxdiag`. The staged
+`/tmp/x` links into `/var/lib/linuxdiag`. A path through any link on procfs -- `/proc/<pid>/root`,
+`cwd`, `fd/N`, and `/proc/self` or `/dev/fd` on the way there -- is never owned and needs the
+arbitrary grant: the kernel does not follow those links by the name `readlink` prints, so where the
+bytes land cannot be judged. The staged
 file must be an x86-64 Linux executable. The swap runs from a helper started with `systemd-run`, because
 a child of the service would be killed along with it before it could swap anything.
 

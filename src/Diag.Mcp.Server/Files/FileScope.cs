@@ -60,10 +60,26 @@ internal static class FileScope
             return (WriteScope.Arbitrary, false);
         }
 
-        var server = RealPath(serverDirectory);
-        var artifacts = RealPath(options.ArtifactDirectory);
+        var server = OwnedDirectory(serverDirectory);
+        var artifacts = OwnedDirectory(options.ArtifactDirectory);
         var inServer = IsUnder(real, server);
         return (inServer || IsUnder(real, artifacts) ? WriteScope.WinDiag : WriteScope.Arbitrary, inServer);
+    }
+
+    /// <summary>The real path of an owned directory, refused when it cannot be judged.</summary>
+    /// <remarks>
+    /// Where a request path crossing a magic link is merely unowned, an owned directory crossing one fails
+    /// closed. Kept as spelled, it would quietly own nothing -- and for the server directory "not in it"
+    /// is the permissive answer, which let an artifact directory inside it skip the self-update gate.
+    /// </remarks>
+    private static string OwnedDirectory(string directory)
+    {
+        var (real, crossesMagicLink) = Walk(directory);
+        return crossesMagicLink
+            ? throw new FileTransferException(
+                $"The owned directory '{directory}' cannot be judged: it passes through a link on procfs, " +
+                "whose target the kernel does not follow by name. Configure it by its real path.")
+            : real;
     }
 
     /// <summary>The real path an operation on <paramref name="fullPath"/> touches.</summary>

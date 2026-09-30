@@ -41,6 +41,30 @@ public sealed class ProcMagicLinkScopeTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_root, "x.bin")));
     }
 
+    // /proc/self is itself an ordinary link on procfs, so a path through it is caught there and never
+    // reaches root. These spell the pid out, so the first link met is the magic one the fix is about.
+    [LinuxFact]
+    [UnsupportedOSPlatform("windows")]
+    public void A_write_through_a_numbered_proc_root_link_needs_arbitrary_write() =>
+        RefusedWithoutArbitraryWrite($"/proc/{Environment.ProcessId}/root");
+
+    [LinuxFact]
+    [UnsupportedOSPlatform("windows")]
+    public void A_write_through_a_threads_proc_root_link_needs_arbitrary_write() =>
+        RefusedWithoutArbitraryWrite($"/proc/{Environment.ProcessId}/task/{Environment.ProcessId}/root");
+
+    [UnsupportedOSPlatform("windows")]
+    private void RefusedWithoutArbitraryWrite(string magicRoot)
+    {
+        var receiver = new FileReceiver(Options(arbitrary: false), NullLogger<FileReceiver>.Instance);
+
+        var ex = Assert.Throws<FileTransferException>(() =>
+            receiver.Receive(new FileWriteRequest(magicRoot + Path.Combine(_root, "n.bin"), [1]), CancellationToken.None));
+
+        Assert.Contains("W=1", ex.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(_root, "n.bin")));
+    }
+
     [LinuxFact]
     [UnsupportedOSPlatform("windows")]
     public void A_read_through_a_proc_root_link_needs_arbitrary_read()
@@ -82,6 +106,14 @@ public sealed class ProcMagicLinkScopeTests : IDisposable
         Assert.Throws<FileTransferException>(() =>
             receiver.Receive(new FileWriteRequest(ThroughProcRoot("w.bin"), [1]), CancellationToken.None));
         Assert.False(File.Exists(Path.Combine(_root, "w.bin")));
+
+        // Even a path that never goes near the link: an owned directory that cannot be judged fails
+        // closed, rather than quietly owning nothing and letting "not in the server directory" -- the
+        // permissive answer for the self-update gate -- through.
+        var elsewhere = Directory.CreateDirectory(Path.Combine(_root, "plain")).FullName;
+        var ex = Assert.Throws<FileTransferException>(() =>
+            receiver.Receive(new FileWriteRequest(Path.Combine(elsewhere, "v.bin"), [1]), CancellationToken.None));
+        Assert.Contains("cannot be judged", ex.Message, StringComparison.Ordinal);
     }
 
     [LinuxFact]
