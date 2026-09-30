@@ -20,6 +20,20 @@ public sealed class PipeTests : IDisposable
     }
 
     [Fact]
+    public void Processes_whose_network_namespace_could_not_be_read_are_named_as_a_limitation()
+    {
+        // named_pipes said nothing when it could not read some processes' network namespaces; network_owners did.
+        ProcessRecord Record(int pid, bool kernel, string? netns) => new(
+            pid, 1, "p", "S", kernel, 0, DateTimeOffset.UnixEpoch, 0, 1, 1000, null, null, false, "/", null, null, netns, null);
+
+        var hidden = NetworkNamespaces.HiddenLimitation(new ProcessTable([Record(10, false, null), Record(11, true, null), Record(12, false, "net:[1]")], 0));
+        var none = NetworkNamespaces.HiddenLimitation(new ProcessTable([Record(12, false, "net:[1]")], 0));
+
+        Assert.StartsWith("The network namespace of 1 processes", hidden, StringComparison.Ordinal);
+        Assert.Null(none);
+    }
+
+    [Fact]
     public void A_socket_name_keeps_the_spaces_that_are_part_of_it()
     {
         // The kernel writes one space after the inode and then the name as bound; a name may begin or end with spaces.

@@ -43,6 +43,33 @@ public sealed class ServiceConfigTests
     }
 
     [Fact]
+    public void A_unit_whose_file_failed_to_load_says_so_with_systemds_reason()
+    {
+        // Final review of plan 3: a unit file with a bad setting showed as merely "inactive (dead)".
+        var broken = LinuxServiceInspector.ToInfo(SystemctlShow.Parse(
+            CronShow.Replace("LoadState=loaded", "LoadState=bad-setting", StringComparison.Ordinal) +
+            "LoadError=org.freedesktop.systemd1.BadUnitSetting \"Unit cron.service has a bad unit file setting.\"\n")[0]);
+
+        var summary = ServiceTools.Render(new ServiceQueryResult("cron", broken, []));
+
+        Assert.Contains("could not be loaded (bad-setting)", summary, StringComparison.Ordinal);
+        Assert.Contains("has a bad unit file setting", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_systemd_tools_need_systemd_running_and_say_so_through_capabilities()
+    {
+        var table = new LinuxDiag.Mcp.Diagnostics.Capabilities.LinuxCapabilityRequirements().Requirements;
+
+        foreach (var tool in new[] { "service_config", "service_control", "autostart_audit" })
+        {
+            Assert.Contains("/run/systemd/system", table[tool].AnyOfPaths!);
+        }
+
+        Assert.Contains("/run/systemd/journal", table["event_log_tail"].AnyOfPaths!);
+    }
+
+    [Fact]
     public void A_show_block_parses_whatever_order_systemd_prints_it_in_and_blocks_split_on_blank_lines()
     {
         var units = SystemctlShow.Parse(CronShow + "\nId=systemd-journald.service\nLoadState=loaded\n");

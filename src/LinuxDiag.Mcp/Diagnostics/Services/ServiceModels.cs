@@ -8,13 +8,14 @@ namespace LinuxDiag.Mcp.Diagnostics.Services;
 /// <param name="DependsOn">Requires=, BindsTo= and Requisite=: units it cannot run without.</param>
 /// <param name="DependedOnBy">RequiredBy=, BoundBy=, RequisiteOf= and ConsistsOf=: units that stop when it stops.</param>
 /// <param name="WeakDependsOn">Wants=: units it pulls in but runs without.</param>
+/// <param name="LoadError">Why the unit file could not be loaded, as systemd put it; null when it loaded.</param>
 /// <param name="WantedBy">WantedBy=: units that pull it in but keep running when it stops.</param>
 public sealed record ServiceInfo(
     string ServiceName, string? DisplayName, string Status, string StartType, string ServiceType, string? ImagePath,
     string? Account, IReadOnlyList<string> DependsOn, IReadOnlyList<string> DependedOnBy, string LoadState,
     int? MainProcessId, string? Restart, int RestartCount, string? Result, string? FragmentPath,
     IReadOnlyList<string> DropIns, int? LastExitStatus, DateTimeOffset? ActiveSince, IReadOnlyList<string> WeakDependsOn,
-    IReadOnlyList<string> WantedBy);
+    IReadOnlyList<string> WantedBy, string? LoadError);
 
 public sealed record ServiceQueryResult(string Query, ServiceInfo? Service, IReadOnlyList<string> Candidates);
 

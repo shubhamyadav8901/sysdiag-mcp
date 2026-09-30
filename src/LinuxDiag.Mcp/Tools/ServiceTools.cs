@@ -60,6 +60,13 @@ public sealed class ServiceTools(IServiceInspector services)
         }
 
         text.Append(" - ").Append(RenderLimits.Printable(service.Status)).Append(", start type ").AppendLine(RenderLimits.Printable(service.StartType));
+        if (service.LoadState is not ("loaded" or "masked"))
+        {
+            // A unit file with a bad setting is "inactive (dead)" too; the reason it never started is here, not in the journal.
+            text.Append("NOTE: the unit file could not be loaded (").Append(RenderLimits.Printable(service.LoadState)).Append("): ")
+                .AppendLine(RenderLimits.Printable(service.LoadError ?? "systemd gave no reason"));
+        }
+
         if (service.StartType == "masked" || service.LoadState == "masked")
         {
             text.AppendLine("NOTE: this service is MASKED and cannot be started until it is unmasked.");

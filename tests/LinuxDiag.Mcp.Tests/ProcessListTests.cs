@@ -17,6 +17,25 @@ public sealed class ProcessListTests
             cmdline, denied, "/", container, innermost, "net:[1]", "mnt:[1]");
 
     [Fact]
+    public void A_proc_mounted_to_hide_other_users_is_detected_and_said()
+    {
+        // Final review of plan 2: under hidepid=invisible other users' processes are simply absent, and nothing
+        // counted them as unreadable -- the list looked complete.
+        static IReadOnlyList<MountInfoEntry> Proc(string options) =>
+            MountInfo.Parse($"22 1 0:5 / /proc rw,nosuid shared:1 - proc proc {options}\n");
+
+        Assert.True(ProcMount.HidesOtherUsers(Proc("rw,hidepid=invisible")));
+        Assert.True(ProcMount.HidesOtherUsers(Proc("rw,hidepid=2")));
+        Assert.True(ProcMount.HidesOtherUsers(Proc("rw,hidepid=ptraceable")));
+        Assert.False(ProcMount.HidesOtherUsers(Proc("rw,hidepid=noaccess")));
+        Assert.False(ProcMount.HidesOtherUsers(Proc("rw")));
+
+        var result = ProcessTools.Build(new ProcessTable([], 0, 0, OthersHidden: true), new([], []), null, null, 100);
+
+        Assert.Contains("hidepid", result.Limitation, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void One_process_that_fails_with_an_unexpected_io_error_is_counted_not_fatal()
     {
         // Final review of plan 2: a single EIO from one live process failed the whole walk.

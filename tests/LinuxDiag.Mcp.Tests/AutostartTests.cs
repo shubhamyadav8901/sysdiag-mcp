@@ -13,6 +13,19 @@ public sealed class AutostartTests
     private static readonly LinuxDiagOptions Options = LinuxDiagOptions.FromEnvironment(new System.Collections.Hashtable());
 
     [Fact]
+    public void A_unit_a_systemd_generator_wrote_at_boot_is_not_a_package_finding()
+    {
+        // Generators write units under /run/systemd/generator* on every boot; no package ever owns those files,
+        // so calling them unpackaged buried the real findings.
+        var entry = new AutostartEntry("services", "/run/systemd/generator/wslg.service", "wslg.service", true, null, null,
+            "/bin/mount", null, null, ["/run/systemd/generator.late/wslg.service.d/x.conf"], null, null, [], false);
+
+        var verified = LinuxAutostartInspector.Verify(entry, path => path == "/bin/mount" ? new PackageFile("mount", "2.39", "m", false, null) : null, path => "m");
+
+        Assert.True(verified.Packaged, string.Join("; ", verified.PackageFindings));
+    }
+
+    [Fact]
     public void A_system_crontab_gives_schedule_user_and_command_and_skips_comments_and_variables()
     {
         // Captured from WSL Ubuntu's /etc/crontab, plus an @reboot line and a user-format line.

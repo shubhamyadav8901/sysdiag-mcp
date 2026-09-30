@@ -46,11 +46,9 @@ public sealed class LinuxNetworkInspector(IProcessTable processes, IContainerIns
                             "are listed without an owner; run the server as root.");
         }
 
-        var hidden = table.Processes.Count(p => !p.KernelThread && p.NetworkNamespace is null);
-        if (hidden > 0)
+        if (NetworkNamespaces.HiddenLimitation(table) is { } hidden)
         {
-            limitations.Add($"The network namespace of {hidden} processes could not be read, so sockets in a " +
-                            "namespace only they are in are not listed; run the server as root.");
+            limitations.Add(hidden);
         }
 
         var host = table.Processes.FirstOrDefault(p => p.ProcessId == Environment.ProcessId)?.NetworkNamespace;

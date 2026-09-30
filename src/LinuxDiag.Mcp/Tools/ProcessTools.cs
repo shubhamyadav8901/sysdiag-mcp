@@ -80,6 +80,12 @@ public sealed class ProcessTools(IProcessTable processes, IContainerInspector co
                             "executable path and namespaces are null. Run the server as root.");
         }
 
+        if (table.OthersHidden)
+        {
+            limitations.Add("/proc is mounted with hidepid, so other users' processes are invisible to this account and are " +
+                            "not listed at all. Run the server as root.");
+        }
+
         var limitation = limitations.Count == 0 ? null : string.Join(" ", limitations);
         var redacted = matched.Count(p => p.Record.CommandLineDenied);
         var truncated = matched.Count > maxResults;

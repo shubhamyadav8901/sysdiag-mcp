@@ -12,6 +12,8 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
 {
     public IReadOnlyDictionary<string, CapabilityRequirement> Requirements => Table;
 
+    private const string SystemdRunning = "/run/systemd/system";
+
     private static readonly IReadOnlyDictionary<string, CapabilityRequirement> Table =
         new Dictionary<string, CapabilityRequirement>(StringComparer.Ordinal)
         {
@@ -63,12 +65,15 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
                 "signals through a pidfd (pidfd_open, pidfd_send_signal); Linux 5.3 or later",
                 null,
                 "can only signal processes owned by the current user"),
-            ["service_config"] = new("systemctl show", "systemctl", null),
-            ["service_control"] = new("systemctl start/stop/restart", "systemctl", null, RequiresElevation: true),
+            // /run/systemd/system exists only while systemd is PID 1: a container or a WSL without systemd has
+            // systemctl installed and nothing for it to talk to.
+            ["service_config"] = new("systemctl show", "systemctl", null, AnyOfPaths: [SystemdRunning]),
+            ["service_control"] = new("systemctl start/stop/restart", "systemctl", null, RequiresElevation: true, AnyOfPaths: [SystemdRunning]),
             ["event_log_tail"] = new(
                 "journalctl -o json",
                 "journalctl",
-                "sees only this account's own records unless it is root or in the systemd-journal or adm group"),
+                "sees only this account's own records unless it is root or in the systemd-journal or adm group",
+                AnyOfPaths: ["/run/systemd/journal"]),
             ["file_signatures"] = new(
                 "SHA-256, and ownership and checksums from the dpkg database",
                 null,
@@ -77,7 +82,8 @@ public sealed class LinuxCapabilityRequirements : ICapabilityRequirements
             ["autostart_audit"] = new(
                 "systemctl list-unit-files and show, crontabs, rc.local, profile.d, ld.so.preload, and the dpkg database",
                 "systemctl",
-                "cannot read users' crontabs or unreadable home directories, so those entries are silently absent"),
+                "cannot read users' crontabs or unreadable home directories; the result says which are missing",
+                AnyOfPaths: [SystemdRunning]),
             ["effective_access"] = new(
                 "statx, POSIX ACLs and file capabilities from extended attributes, /proc/self/mountinfo, faccessat",
                 null,

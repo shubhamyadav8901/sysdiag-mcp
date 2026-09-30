@@ -54,7 +54,8 @@ public sealed class LinuxHandleInspector(IProcessTable processes, IPrivilegeProb
         }
 
         entries.AddRange(Mapped(process, context));
-        return Capped($"PID {processId}", entries, table.Unreadable, includeAllObjectTypes, processScoped: true);
+        // Zero: this one process was read in full, and how many others could not be is not this answer's business.
+        return Capped($"PID {processId}", entries, 0, includeAllObjectTypes, processScoped: true);
     }
 
     internal static string NotRunning(int processId) =>

@@ -2271,6 +2271,12 @@
               "items": {
                 "type": "string"
               }
+            },
+            "loadError": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2293,7 +2299,8 @@
             "lastExitStatus",
             "activeSince",
             "weakDependsOn",
-            "wantedBy"
+            "wantedBy",
+            "loadError"
           ]
         },
         "candidates": {

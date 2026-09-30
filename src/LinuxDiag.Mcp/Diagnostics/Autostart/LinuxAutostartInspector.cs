@@ -104,7 +104,7 @@ public sealed class LinuxAutostartInspector(
             .Append(entry.ImageMissing ? null : entry.ImagePath)
             .Append(entry.ScriptPath)
             .OfType<string>()
-            .Where(f => f.StartsWith('/'))
+            .Where(f => f.StartsWith('/') && !Generated(f))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
@@ -148,6 +148,13 @@ public sealed class LinuxAutostartInspector(
 
         return (real is not null && real != path ? database.Owner(real) : null) ?? database.Owner(path);
     }
+
+    /// <summary>A unit or drop-in a systemd generator wrote at boot: no package owns those files, ever.</summary>
+    /// <remarks>/run/systemd/generator* is root-only tmpfs rewritten on every boot; the generator itself is the packaged file.</remarks>
+    private static bool Generated(string path) =>
+        path.StartsWith("/run/systemd/generator/", StringComparison.Ordinal) ||
+        path.StartsWith("/run/systemd/generator.early/", StringComparison.Ordinal) ||
+        path.StartsWith("/run/systemd/generator.late/", StringComparison.Ordinal);
 
     /// <summary>Hidden only when asked to, and only when every checked file matched its package.</summary>
     internal static bool Hidden(AutostartEntry entry, AutostartQuery query) =>

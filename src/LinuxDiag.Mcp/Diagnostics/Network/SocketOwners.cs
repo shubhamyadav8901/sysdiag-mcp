@@ -30,6 +30,17 @@ public static class SocketOwners
 
 public static class NetworkNamespaces
 {
+    /// <summary>The limitation to report when some processes' network namespaces could not be read, or null.</summary>
+    /// <remarks>Sockets in a namespace only those processes are in are then missing from the answer.</remarks>
+    internal static string? HiddenLimitation(ProcessTable table)
+    {
+        var hidden = table.Processes.Count(p => !p.KernelThread && p.NetworkNamespace is null);
+        return hidden == 0
+            ? null
+            : $"The network namespace of {hidden} processes could not be read, so sockets in a namespace only they are " +
+              "in are not listed; run the server as root.";
+    }
+
     /// <summary>One /proc/&lt;pid&gt;/net/&lt;file&gt; per network namespace, read through a process inside it.</summary>
     /// <remarks>
     /// A namespace is reached only through a process in it, so one with no process -- kept alive by a bind

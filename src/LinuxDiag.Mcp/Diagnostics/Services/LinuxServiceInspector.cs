@@ -12,7 +12,7 @@ public sealed class LinuxServiceInspector(IExternalCommand commands, LinuxDiagOp
         "Id", "Names", "Description", "LoadState", "ActiveState", "SubState", "UnitFileState", "Type", "FragmentPath",
         "DropInPaths", "ExecStart", "MainPID", "User", "Restart", "NRestarts", "Result", "Requires", "Wants", "RequiredBy",
         "WantedBy", "ActiveEnterTimestamp", "ExecMainStatus", "BindsTo", "Requisite", "RequisiteOf", "BoundBy", "ConsistsOf",
-        "DynamicUser",
+        "DynamicUser", "LoadError",
     ];
 
     public async Task<ServiceQueryResult> QueryAsync(string name, CancellationToken cancellationToken)
@@ -95,7 +95,8 @@ public sealed class LinuxServiceInspector(IExternalCommand commands, LinuxDiagOp
             Int(unit["ExecMainStatus"]),
             SystemctlShow.Timestamp(unit["ActiveEnterTimestamp"]),
             unit.List("Wants"),
-            unit.List("WantedBy"));
+            unit.List("WantedBy"),
+            NullIfEmpty(unit["LoadError"]));
     }
 
     /// <summary>User=, or for DynamicUser=yes without one the name systemd derives from the unit; root otherwise.</summary>

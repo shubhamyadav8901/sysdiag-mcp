@@ -18,7 +18,8 @@ public sealed record ProcessRecord(
 /// Processes listed whose executable, namespaces, status or cgroup were denied -- another user's, to a server
 /// not running as root. Those fields are null for them, and a result must say so rather than look complete.
 /// </param>
-public sealed record ProcessTable(IReadOnlyList<ProcessRecord> Processes, int Unreadable, int PartlyUnreadable = 0);
+/// <param name="OthersHidden">/proc is mounted with hidepid, so other users' processes are absent from this walk entirely.</param>
+public sealed record ProcessTable(IReadOnlyList<ProcessRecord> Processes, int Unreadable, int PartlyUnreadable = 0, bool OthersHidden = false);
 
 public interface IProcessTable
 {
@@ -36,7 +37,20 @@ public sealed class LinuxProcessTable : IProcessTable
     internal const int ClockTicksPerSecond = 100;
 
     public ProcessTable Read(CancellationToken cancellationToken) =>
-        Walk(ProcFiles.ProcessIds(), Collect, KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat)), cancellationToken);
+        Walk(ProcFiles.ProcessIds(), Collect, KernelStat.BootTime(ProcFiles.Read(ProcFiles.KernelStat)), cancellationToken)
+            with { OthersHidden = !Environment.IsPrivilegedProcess && HidesOtherUsers() };
+
+    private static bool HidesOtherUsers()
+    {
+        try
+        {
+            return ProcMount.HidesOtherUsers(MountInfo.Parse(ProcFiles.Read(MountInfo.SelfPath)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>One pass over the processes; a process that cannot be read is counted, never fatal to the rest.</summary>
     /// <remarks>
@@ -122,8 +136,10 @@ public sealed class LinuxProcessTable : IProcessTable
         var status = Optional(() => ProcFiles.ReadProcess(pid, "status"));
         var cgroup = Optional(() => ProcFiles.ReadProcess(pid, "cgroup"));
         var exe = kernel ? null : Optional(() => ProcFiles.ReadProcessLink(pid, "exe"));
-        var net = Optional(() => ProcFiles.ReadProcessLink(pid, "ns/net"));
-        var mnt = Optional(() => ProcFiles.ReadProcessLink(pid, "ns/mnt"));
+        // A kernel thread lives in the initial namespaces; reading its links as non-root is denied, and counting
+        // that denial called the answer partial for processes no namespace question is about.
+        var net = kernel ? null : Optional(() => ProcFiles.ReadProcessLink(pid, "ns/net"));
+        var mnt = kernel ? null : Optional(() => ProcFiles.ReadProcessLink(pid, "ns/mnt"));
         return new RawProcess(pid, stat, status, cmdline, cgroup, exe, net, mnt, denied, attributesDenied);
     }
 

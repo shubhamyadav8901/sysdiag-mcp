@@ -68,6 +68,11 @@ public sealed class LinuxPipeInspector(IProcessTable processes, LinuxDiagOptions
                             "are listed without them; run the server as root.");
         }
 
+        if (NetworkNamespaces.HiddenLimitation(table) is { } hidden)
+        {
+            limitations.Add(hidden);
+        }
+
         if (skipped > 0)
         {
             limitations.Add($"{skipped} lines of /proc/net/unix could not be read - a socket name holding a newline " +
