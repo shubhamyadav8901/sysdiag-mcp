@@ -13,12 +13,15 @@ namespace MacDiag.Mcp.Mac.Launchd;
 /// </remarks>
 public static class Plutil
 {
+    /// <summary>The program, named once: the capability table refers to it instead of spelling it again.</summary>
+    public const string Program = "plutil";
+
     public static async Task<PlistDictionary> ReadAsync(IExternalCommand commands, string plistPath, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commands);
         ArgumentException.ThrowIfNullOrWhiteSpace(plistPath);
 
-        var result = await commands.RunAsync("plutil", ["-convert", "xml1", "-o", "-", plistPath], timeout, cancellationToken).ConfigureAwait(false);
+        var result = await commands.RunAsync(Program, ["-convert", "xml1", "-o", "-", plistPath], timeout, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
             throw new ServiceQueryException($"plutil could not read {plistPath}: {result.StandardError.Trim()}");
@@ -37,7 +40,7 @@ public static class Plutil
     /// <summary>One plist's Label, or null when it has none or cannot be read.</summary>
     public static async Task<string?> LabelAsync(IExternalCommand commands, string plistPath, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var result = await commands.RunAsync("plutil", ["-extract", "Label", "raw", "-o", "-", plistPath], timeout, cancellationToken).ConfigureAwait(false);
+        var result = await commands.RunAsync(Program, ["-extract", "Label", "raw", "-o", "-", plistPath], timeout, cancellationToken).ConfigureAwait(false);
         return result.ExitCode == 0 && result.StandardOutput.Trim() is { Length: > 0 } label ? label : null;
     }
 }

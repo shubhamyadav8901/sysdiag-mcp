@@ -1,5 +1,195 @@
 [
   {
+    "name": "autostart_audit",
+    "title": "What starts on its own",
+    "description": "List what starts on its own on this Mac - launchd daemons and agents (system and every user\u0027s), cron, periodic scripts, login and logout hooks and authorization plugins - with the program each runs, when it runs, whether it is enabled, and whether another account could change it (the file, the program, the script an interpreter runs, or a directory above any of them). categories takes one or more of: all, daemons, agents, useragents, cron, periodic, loginhooks, authplugins. hideApple (default true) leaves out what comes from the sealed system volume, and, with signatures checked, Apple\u0027s own programs; a label is never trusted, since whoever writes a plist chooses it. verifySignatures checks each program with codesign; unsignedOnly returns only unsigned programs, scripts, missing programs and files another account could change - usually the fastest route to an answer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "categories": {
+          "description": "Comma-separated category names, or \u0027all\u0027. Defaults to all.",
+          "type": "string",
+          "default": "all"
+        },
+        "nameFilter": {
+          "description": "Only entries whose label, program, file, schedule or command contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "hideApple": {
+          "description": "Leave out what comes from the sealed system volume, and Apple-signed programs when signatures are checked. Defaults to true.",
+          "type": "boolean",
+          "default": true
+        },
+        "verifySignatures": {
+          "description": "Check each program\u0027s code signature and report who signed it.",
+          "type": "boolean",
+          "default": false
+        },
+        "unsignedOnly": {
+          "description": "Return only unsigned programs and scripts, missing programs, and entries another account could change. Implies verifySignatures.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "autostarts": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "entry": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "profile": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "imagePath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "launchString": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "scriptPath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "signed": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "signatureDetail": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "imageMissing": {
+                    "type": "boolean"
+                  },
+                  "writableByOthers": {
+                    "type": "boolean"
+                  },
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "category",
+                  "location",
+                  "entry",
+                  "enabled",
+                  "profile",
+                  "description",
+                  "imagePath",
+                  "launchString",
+                  "scriptPath",
+                  "signed",
+                  "signatureDetail",
+                  "imageMissing",
+                  "writableByOthers",
+                  "findings"
+                ]
+              }
+            },
+            "totalMatched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "signaturesVerified": {
+              "type": "boolean"
+            },
+            "unsignedCount": {
+              "type": "integer"
+            },
+            "missingImageCount": {
+              "type": "integer"
+            },
+            "writableByOthersCount": {
+              "type": "integer"
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "entries",
+            "totalMatched",
+            "truncated",
+            "elevated",
+            "signaturesVerified",
+            "unsignedCount",
+            "missingImageCount",
+            "writableByOthersCount",
+            "limitations"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "autostarts"
+      ]
+    },
+    "annotations": {
+      "title": "What starts on its own",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "capabilities",
     "title": "Server capabilities",
     "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing helper program, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
