@@ -18,6 +18,10 @@ sysctl -n hw.model hw.memsize kern.osrelease kern.boottime > "$out/sysctl"
 vm_stat > "$out/vm_stat"
 mount > "$out/mount"
 
+# lsof exits 1 when it finds nothing, which set -e would read as failure.
+lsof -n -P -w -F0pcuRfatdDsinPT -p $$ > "$out/lsof-p" || [ $? -eq 1 ]
+lsof -n -P -w -F0pcuRfatdDsinPT -i -Ts > "$out/lsof-i" || [ $? -eq 1 ]
+
 # Readable by the user who runs the tests next, though captured as root.
 chmod a+r "$out"/*
 ls -l "$out"

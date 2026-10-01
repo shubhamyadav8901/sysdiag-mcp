@@ -109,7 +109,7 @@ public sealed class SystemOverviewTests
     {
         var data = new TheoryData<string>();
         var directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured);
-        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount" }.Where(n => File.Exists(Path.Combine(directory, n))))
+        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i" }.Where(n => File.Exists(Path.Combine(directory, n))))
         {
             data.Add(name);
         }
@@ -149,6 +149,15 @@ public sealed class SystemOverviewTests
                 break;
             case "mount":
                 Assert.Contains(MountList.Parse(text), m => m.MountPoint == "/");
+                break;
+            case "lsof-p":
+                // Read raw: lsof's NUL-separated fields are not lines, and nothing in them is a comment.
+                Assert.Contains(Mac.Parsers.LsofFields.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured, name))),
+                    p => p.Files.Any(f => f.Descriptor == "txt"));
+                break;
+            case "lsof-i":
+                Assert.Contains(Mac.Parsers.LsofFields.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured, name))),
+                    p => p.Files.Any(f => f.Protocol is not null));
                 break;
         }
     }
