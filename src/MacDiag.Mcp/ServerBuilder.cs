@@ -5,6 +5,7 @@ using MacDiag.Mcp.Configuration;
 using MacDiag.Mcp.Diagnostics;
 using MacDiag.Mcp.Diagnostics.Capabilities;
 using MacDiag.Mcp.Diagnostics.Commands;
+using MacDiag.Mcp.Diagnostics.Control;
 using MacDiag.Mcp.Diagnostics.Handles;
 using MacDiag.Mcp.Diagnostics.Network;
 using MacDiag.Mcp.Diagnostics.Processes;
@@ -145,6 +146,7 @@ public static class ServerBuilder
         services.TryAddSingleton<IServiceInspector, MacServiceInspector>();
         services.TryAddSingleton<ServiceTools>();
         services.TryAddSingleton<IServiceController, MacServiceController>();
+        services.TryAddSingleton<IProcessController, MacProcessController>();
         services.TryAddSingleton<ControlTools>();
         services.TryAddSingleton<IStagedBuildInspector, MacStagedBuildInspector>();
         services.TryAddSingleton<IUpdateGuard, MachOUpdateGuard>();

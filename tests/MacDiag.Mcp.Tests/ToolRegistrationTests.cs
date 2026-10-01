@@ -39,14 +39,11 @@ public sealed class ToolRegistrationTests
         Assert.Equal(names.Distinct(StringComparer.Ordinal).Count(), names.Length);
     }
 
-    // GatedToolGuard is not called until plan 3: it requires process_control and service_control, which
-    // this server does not have yet. Until then run_command's gating is asserted directly.
     [Fact]
-    public void Run_command_is_registered_only_with_its_grant_and_never_on_a_read_only_server()
+    public void The_gated_tools_follow_their_grants()
     {
-        Assert.DoesNotContain("run_command", ToolNames(Options()));
-        Assert.Contains("run_command", ToolNames(Options(commands: true)));
-        Assert.DoesNotContain("run_command", ToolNames(Options(readOnly: true, commands: true)));
+        GatedToolGuard.AssertGatedToolsFollowTheirGrants(
+            (readOnly, selfUpdate, commands) => ToolNames(Options(readOnly, selfUpdate, commands)));
     }
 
     [Fact]

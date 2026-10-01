@@ -32,6 +32,7 @@ public sealed class MacCapabilityRequirements : ICapabilityRequirements
             ["named_pipes"] = new("unix sockets and FIFOs from a full lsof listing (-b)", "lsof", "cannot name the holders of sockets and FIFOs owned by other users"),
             ["service_config"] = new("launchctl print for runtime state (top-level keys only); the job's plist via plutil -convert xml1 -o - for configuration", "launchctl", null),
             ["service_control"] = new("launchctl bootstrap, kickstart and bootout in the system domain", "launchctl", null, RequiresElevation: true),
+            ["process_control"] = new("kill(1) after a ps name and start-time check, checked again just before the signal", "kill", "can only signal processes owned by the current user"),
             ["update_self"] = new("staged-build swap through a detached helper and launchctl kickstart (a relaunch when not a daemon), rolled back if the new build does not come up", null, null, RequiresElevation: true),
         };
 }

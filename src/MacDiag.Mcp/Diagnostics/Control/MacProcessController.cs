@@ -1,0 +1,238 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text.RegularExpressions;
+using MacDiag.Mcp.Configuration;
+using MacDiag.Mcp.Mac.Launchd;
+using MacDiag.Mcp.Mac.Parsers;
+using Microsoft.Extensions.Logging;
+
+namespace MacDiag.Mcp.Diagnostics.Control;
+
+/// <summary>Signals a process after checking it is the one the caller means, through /bin/kill.</summary>
+/// <remarks>
+/// <para>macOS has no pidfd, so a PID cannot be pinned between the check and the signal. The identity -- name and
+/// start time -- is read, checked, and read again immediately before kill; what remains is a window of milliseconds,
+/// stated in every result rather than hidden.</para>
+/// <para>/bin/kill rather than kill(2) by P/Invoke: the race is identical, and it keeps the native surface at plan 1's
+/// open, write and close. It also sidesteps signal numbers, which differ from Linux (SIGSTOP is 17 here).</para>
+/// <para>Protection is by the last segment of comm -- the executable -- never argv[0], which sshd rewrites and any
+/// process can set to anything.</para>
+/// </remarks>
+public sealed partial class MacProcessController(IExternalCommand commands, MacDiagOptions options, ILogger<MacProcessController> logger)
+    : IProcessController
+{
+    /// <summary>Processes refused by name: launchd itself, the kernel, logins, the display, logging, directory services, remote access.</summary>
+    /// <remarks>On-demand remote-access daemons have no main PID in launchctl list, so they are named here.</remarks>
+    internal static readonly HashSet<string> ProtectedNames = new(StringComparer.Ordinal)
+    {
+        "launchd", "kernel_task", "sshd", "sshd-session", "loginwindow", "WindowServer", "logd", "opendirectoryd", "screensharingd", "ARDAgent",
+    };
+
+    internal const string WindowNote =
+        "macOS has no pidfd: between the last check and the signal there is a window of milliseconds in which the PID could be reused.";
+
+    private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(1);
+    private readonly LaunchdProtection _protection = new(options);
+
+    internal TimeSpan ExitWait { get; init; } = TimeSpan.FromSeconds(10);
+
+    internal TimeSpan PollDelay { get; init; } = TimeSpan.FromMilliseconds(250);
+
+    internal Func<int> SelfPid { get; init; } = static () => Environment.ProcessId;
+
+    public async Task<ProcessControlResult> ControlAsync(
+        int processId, string expectedName, ProcessAction action, DateTimeOffset? expectedStartTime, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedName);
+        var expected = expectedName.Trim();
+        if (expected.EndsWith('/'))
+        {
+            throw new ArgumentException($"'{expectedName}' is a directory, not a process name.", nameof(expectedName));
+        }
+
+        if (processId == 1)
+        {
+            throw new ProcessControlException("PID 1 is launchd; signalling it would take down the whole Mac. Nothing was sent.");
+        }
+
+        if (processId == SelfPid())
+        {
+            throw new ProcessControlException("That PID is this server itself; use update_self to restart it. Nothing was sent.");
+        }
+
+        var identity = await IdentityAsync(processId, cancellationToken).ConfigureAwait(false)
+                       ?? throw new ProcessControlException($"No process with PID {processId} is running. Call process_list for a current one; PIDs are reused.");
+        var name = LastSegment(identity.Comm);
+        if (identity.Stat.Contains('Z', StringComparison.Ordinal))
+        {
+            throw new ProcessControlException($"PID {processId} ({name}) is a zombie: it has already exited and only waits for its parent. Nothing was sent.");
+        }
+
+        if (!NamesMatch(identity.Comm, identity.ArgvZero, expected))
+        {
+            throw new ProcessControlException(
+                $"PID {processId} is not '{expected}': it runs {identity.Comm} (argv[0] '{identity.ArgvZero}'). Nothing was sent.");
+        }
+
+        if (action != ProcessAction.Resume)
+        {
+            await RequireUnprotectedAsync(processId, name, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (expectedStartTime is { } wanted && (identity.Start is not { } started || (started - wanted).Duration() > StartTimeTolerance))
+        {
+            throw new ProcessControlException(
+                $"PID {processId} started at {identity.StartText}, not at the expected time: the PID has been reused. Nothing was sent.");
+        }
+
+        // The last look before the signal: a PID that changed hands since the checks above is refused.
+        var again = await CommAsync(processId, cancellationToken).ConfigureAwait(false);
+        if (again is null || again.StartText != identity.StartText || again.Command != identity.Comm)
+        {
+            throw new ProcessControlException($"PID {processId} changed hands while it was being checked. Nothing was sent.");
+        }
+
+        var detail = await SignalAsync(processId, name, action, identity.Stat, cancellationToken).ConfigureAwait(false);
+        return new ProcessControlResult(processId, name, identity.Start, action, $"{detail} {WindowNote}");
+    }
+
+    /// <summary>A plain name matches the executable's file name or argv[0]'s; a path matches the executable or argv[0] exactly.</summary>
+    internal static bool NamesMatch(string comm, string? argvZero, string expected) =>
+        expected.Contains('/', StringComparison.Ordinal)
+            ? (comm.StartsWith('/') && comm == expected) || argvZero == expected
+            : LastSegment(comm) == expected || (argvZero is not null && LastSegment(argvZero) == expected);
+
+    private async Task RequireUnprotectedAsync(int processId, string name, CancellationToken cancellationToken)
+    {
+        if (ProtectedNames.Contains(name))
+        {
+            throw new ProcessControlException($"PID {processId} is {name}, which this Mac needs to stay usable or reachable. Nothing was sent.");
+        }
+
+        // Fail closed: if the protected jobs cannot be listed, a protected daemon's PID cannot be told apart.
+        var list = await commands.RunAsync("launchctl", ["list"], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
+        if (list.ExitCode != 0)
+        {
+            throw new ProcessControlException(
+                $"The list of protected launchd jobs could not be read ({list.StandardError.Trim()}), so only resume is allowed. Nothing was sent.");
+        }
+
+        if (LaunchctlList.Parse(list.StandardOutput).FirstOrDefault(row => row.ProcessId == processId && _protection.Refusal(row.Label) is not null)
+            is { Label: { Length: > 0 } label })
+        {
+            throw new ProcessControlException($"PID {processId} is the main process of the protected launchd job '{label}'. Nothing was sent.");
+        }
+    }
+
+    private async Task<string> SignalAsync(int processId, string name, ProcessAction action, string stat, CancellationToken cancellationToken)
+    {
+        var signal = action switch
+        {
+            ProcessAction.Terminate => "TERM",
+            ProcessAction.Kill => "KILL",
+            ProcessAction.Suspend => "STOP",
+            _ => "CONT",
+        };
+        await KillAsync(processId, signal, cancellationToken).ConfigureAwait(false);
+        logger.LogWarning("process_control: sent {Signal} to {Name} (PID {ProcessId})", signal, name, processId);
+
+        if (action == ProcessAction.Terminate && stat.Contains('T', StringComparison.Ordinal))
+        {
+            // A stopped process cannot act on SIGTERM until it runs again; it may have exited already, which is fine.
+            await KillAsync(processId, "CONT", cancellationToken, toleratesGone: true).ConfigureAwait(false);
+        }
+
+        return action switch
+        {
+            ProcessAction.Suspend => "Suspended (SIGSTOP). Remember to resume it - a process left stopped is indistinguishable from one that is hung.",
+            ProcessAction.Resume => "Resumed (SIGCONT).",
+            _ => await ExitedAsync(processId, cancellationToken).ConfigureAwait(false)
+                ? "Exited."
+                : action == ProcessAction.Terminate
+                    ? $"Sent SIGTERM; it has not exited after {ExitWait.TotalSeconds:0} s. Use action 'kill' if it must go."
+                    : $"Sent SIGKILL; it has not exited after {ExitWait.TotalSeconds:0} s - it may be in uninterruptible I/O (state U).",
+        };
+    }
+
+    private async Task KillAsync(int processId, string signal, CancellationToken cancellationToken, bool toleratesGone = false)
+    {
+        var result = await commands.RunAsync("kill", ["-s", signal, processId.ToString(CultureInfo.InvariantCulture)], options.ExternalToolTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.ExitCode == 0)
+        {
+            return;
+        }
+
+        var error = result.StandardError.Trim();
+        if (error.Contains("No such process", StringComparison.Ordinal))
+        {
+            if (toleratesGone)
+            {
+                return;
+            }
+
+            throw new ProcessControlException($"PID {processId} exited before it could be signalled.");
+        }
+
+        throw new ProcessControlException(error.Contains("Operation not permitted", StringComparison.Ordinal)
+            ? $"Signalling PID {processId} needs root: it belongs to another user."
+            : $"kill -s {signal} {processId} failed: {error}");
+    }
+
+    private async Task<bool> ExitedAsync(int processId, CancellationToken cancellationToken)
+    {
+        var watch = Stopwatch.StartNew();
+        do
+        {
+            var stat = await commands.RunAsync("ps", ["-p", processId.ToString(CultureInfo.InvariantCulture), "-o", "stat="], options.ExternalToolTimeout, cancellationToken)
+                .ConfigureAwait(false);
+            if (stat.ExitCode != 0 || stat.StandardOutput.Trim().Length == 0 || stat.StandardOutput.Contains('Z', StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            await Task.Delay(PollDelay, cancellationToken).ConfigureAwait(false);
+        }
+        while (watch.Elapsed < ExitWait);
+
+        return false;
+    }
+
+    private sealed record Identity(string Stat, string StartText, DateTimeOffset? Start, string Comm, string? ArgvZero);
+
+    private async Task<Identity?> IdentityAsync(int processId, CancellationToken cancellationToken)
+    {
+        var pid = processId.ToString(CultureInfo.InvariantCulture);
+        var line = await commands.RunAsync("ps", ["-p", pid, "-ww", "-o", "pid=,ppid=,stat=,lstart=,comm="], options.ExternalToolTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (line.ExitCode != 0 || IdentityLine().Match(line.StandardOutput.Trim()) is not { Success: true } match)
+        {
+            return null;
+        }
+
+        var args = await commands.RunAsync("ps", ["-p", pid, "-ww", "-o", "args="], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
+        var argvZero = args.ExitCode == 0 ? VisDecode.Decode(args.StandardOutput.Trim()).Split(' ', 2)[0] : null;
+        var startText = Spaces().Replace(match.Groups[3].Value, " ");
+        DateTimeOffset? start = DateTime.TryParseExact(startText, "ddd MMM d HH:mm:ss yyyy", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)
+            ? new DateTimeOffset(parsed)
+            : null;
+        return new Identity(match.Groups[2].Value, startText, start, VisDecode.Decode(match.Groups[4].Value), string.IsNullOrEmpty(argvZero) ? null : argvZero);
+    }
+
+    private async Task<PsCommRow?> CommAsync(int processId, CancellationToken cancellationToken)
+    {
+        var result = await commands.RunAsync(
+            "ps", ["-p", processId.ToString(CultureInfo.InvariantCulture), "-ww", "-o", "pid=,lstart=,comm="], options.ExternalToolTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        return result.ExitCode == 0 ? PsTable.ParseComm(result.StandardOutput).Commands.GetValueOrDefault(processId) : null;
+    }
+
+    private static string LastSegment(string path) => path[(path.TrimEnd('/').LastIndexOf('/') + 1)..];
+
+    [GeneratedRegex(@"^(\d+)\s+\d+\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$")]
+    private static partial Regex IdentityLine();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex Spaces();
+}

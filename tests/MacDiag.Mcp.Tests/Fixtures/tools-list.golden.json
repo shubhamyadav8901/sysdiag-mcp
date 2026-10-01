@@ -503,6 +503,98 @@
     }
   },
   {
+    "name": "process_control",
+    "title": "Terminate, kill, suspend or resume a process",
+    "description": "Terminate, kill, suspend or resume a running process by signal. \u0027terminate\u0027 sends SIGTERM and waits up to 10 seconds to see it exit - unlike windiag, where terminate is a hard kill; \u0027kill\u0027 sends SIGKILL, which cannot be caught. \u0027suspend\u0027 (SIGSTOP) freezes the process without ending it, so a hang can be caught in the act; \u0027resume\u0027 (SIGCONT) undoes it. You must pass the name you expect alongside the PID; pass expectedStartTime from process_list as well to catch a PID reused by a process with the same name. The name and start time are checked, then checked again just before the signal; macOS has no pidfd, so a window of milliseconds remains, and the result says so. PID 1 (launchd), the kernel, loginwindow, WindowServer, logd, opendirectoryd, sshd and screen sharing, this server itself, zombies, and the main process of any launchd job service_control protects are refused for everything but resume.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id to act on. Get a current one from process_list.",
+          "type": "integer"
+        },
+        "expectedName": {
+          "description": "The name you expect that PID to be, e.g. \u0027nginx\u0027 or \u0027/usr/local/bin/nginx\u0027. Verified before anything happens.",
+          "type": "string"
+        },
+        "action": {
+          "description": "\u0027terminate\u0027, \u0027kill\u0027, \u0027suspend\u0027 or \u0027resume\u0027",
+          "type": "string",
+          "default": "suspend"
+        },
+        "expectedStartTime": {
+          "description": "The start time process_list reported for this PID. When given, a process started at any other time is refused.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "default": null
+        }
+      },
+      "required": [
+        "processId",
+        "expectedName"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "startTime": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "Terminate",
+                "Kill",
+                "Suspend",
+                "Resume"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "processId",
+            "processName",
+            "startTime",
+            "action",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "result"
+      ]
+    },
+    "annotations": {
+      "title": "Terminate, kill, suspend or resume a process",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "process_handles",
     "title": "Everything one process has open",
     "description": "List everything one process has open - files, directories, devices, sockets, pipes and kqueues - plus the files it has mapped, each with how it was opened: read, write or read-write. Use it to answer what a process is actually touching: which log it is writing, which file it holds open, how many sockets it has. Scoped to one process, so it is far cheaper than path_handle_search, which walks every process.",
