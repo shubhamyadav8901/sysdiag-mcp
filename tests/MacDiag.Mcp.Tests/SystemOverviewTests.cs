@@ -109,7 +109,7 @@ public sealed class SystemOverviewTests
     {
         var data = new TheoryData<string>();
         var directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured);
-        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml" }.Where(n => File.Exists(Path.Combine(directory, n))))
+        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson" }.Where(n => File.Exists(Path.Combine(directory, n))))
         {
             data.Add(name);
         }
@@ -170,6 +170,9 @@ public sealed class SystemOverviewTests
                 break;
             case "plist-sshd.xml":
                 Assert.Equal("com.openssh.sshd", PlistXml.Parse(text).String("Label"));
+                break;
+            case "log-ndjson":
+                Assert.Contains(text.Split('\n').Select(LogNdjson.Parse), l => l?.Kind == LogLineKind.Event);
                 break;
             case "lsof-p":
                 // Read raw: lsof's NUL-separated fields are not lines, and nothing in them is a comment.

@@ -31,6 +31,12 @@ launchctl print system/com.openssh.sshd > "$out/launchctl-print-sshd" || true
 launchctl list > "$out/launchctl-list" || true
 launchctl print-disabled system > "$out/launchctl-print-disabled" || true
 
+# A line of our own first, so the capture is never empty; then how much a busy runner logs in five minutes.
+logger -t macdiag-capture "capture $(date +%s)"
+sleep 2
+log show --style ndjson --last 1m --predicate 'process == "logger"' > "$out/log-ndjson" || true
+log show --style ndjson --last 5m | wc -c > "$out/log-size" || true
+
 # Readable by the user who runs the tests next, though captured as root.
 chmod a+r "$out"/*
 ls -l "$out"

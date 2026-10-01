@@ -7,6 +7,7 @@ using MacDiag.Mcp.Diagnostics.Capabilities;
 using MacDiag.Mcp.Diagnostics.Commands;
 using MacDiag.Mcp.Diagnostics.Control;
 using MacDiag.Mcp.Diagnostics.Handles;
+using MacDiag.Mcp.Diagnostics.Log;
 using MacDiag.Mcp.Diagnostics.Network;
 using MacDiag.Mcp.Diagnostics.Processes;
 using MacDiag.Mcp.Diagnostics.SelfUpdate;
@@ -98,7 +99,8 @@ public static class ServerBuilder
             .WithTools<ModuleTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<LockTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<NetworkTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<ServiceTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<ServiceTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<EventLogTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps.
@@ -145,6 +147,8 @@ public static class ServerBuilder
         services.TryAddSingleton<NetworkTools>();
         services.TryAddSingleton<IServiceInspector, MacServiceInspector>();
         services.TryAddSingleton<ServiceTools>();
+        services.TryAddSingleton<ILogInspector, MacLogInspector>();
+        services.TryAddSingleton<EventLogTools>();
         services.TryAddSingleton<IServiceController, MacServiceController>();
         services.TryAddSingleton<IProcessController, MacProcessController>();
         services.TryAddSingleton<ControlTools>();

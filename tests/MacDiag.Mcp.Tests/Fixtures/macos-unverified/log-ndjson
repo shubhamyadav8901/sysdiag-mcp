@@ -1,0 +1,8 @@
+# Source: log(1) show --style ndjson, macOS 14 field names. Unverified.
+{"timestamp":"2024-10-01 11:59:10.100000+0000","messageType":"Default","eventType":"logEvent","processImagePath":"/usr/sbin/cfprefsd","senderImagePath":"/usr/lib/libsystem_trace.dylib","subsystem":"com.apple.defaults","category":"cfprefsd","eventMessage":"Wrote preferences","processID":312}
+{"timestamp":"2024-10-01 11:59:20.200000+0000","messageType":"Error","eventType":"logEvent","processImagePath":"/usr/local/bin/backup","senderImagePath":"/usr/local/bin/backup","subsystem":"","category":"","eventMessage":"backup failed: disk full","processID":4242}
+{"timestamp":"2024-10-01 11:59:30.300000+0000","messageType":"Fault","eventType":"logEvent","processImagePath":"/usr/libexec/sshd-keygen-wrapper","senderImagePath":"/usr/libexec/sshd-keygen-wrapper","subsystem":"com.openssh.sshd","category":"auth","eventMessage":"fatal: bind to port 22 failed","processID":777}
+{"timestamp":"2024-10-01 11:59:40.400000+0000","messageType":"Info","eventType":"logEvent","processImagePath":"/usr/sbin/mDNSResponder","senderImagePath":"/usr/sbin/mDNSResponder","subsystem":"com.apple.mDNSResponder","category":"Default","eventMessage":"query for <private>","processID":200}
+{"timestamp":"2024-10-01 11:59:45.000000+0000","eventType":"activityCreateEvent","processImagePath":"/usr/sbin/cfprefsd","eventMessage":"","processID":312}
+{"timestamp":"2024-10-01 11:59:50.000000+0000","eventType":"lossEvent","eventMessage":"lost 12 unreliable messages","processID":0}
+{"count":6,"finished":1}

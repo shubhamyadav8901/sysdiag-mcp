@@ -63,6 +63,161 @@
     }
   },
   {
+    "name": "event_log_tail",
+    "title": "Recent unified log records",
+    "description": "Read recent records from the macOS unified log, newest first, filtered by age, severity, process, subsystem, category and sender. Defaults to the last hour at critical (fault) and error. \u0027warning\u0027 maps to macOS\u0027s default type, which is most of all logging, so ask for it only with a narrow filter. Use it to find out what the Mac complained about around the time of a failure. Looks back at most 7 days. Some messages read \u003Cprivate\u003E; that redaction is the system\u0027s.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "process": {
+          "description": "Only records from this process name, for example \u0027backupd\u0027 or \u0027sshd\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "subsystem": {
+          "description": "Only records from this subsystem, for example \u0027com.apple.TimeMachine\u0027",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "category": {
+          "description": "Only records in this category, within a subsystem",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "sender": {
+          "description": "Only records from this sender image (library or binary name)",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "minutes": {
+          "description": "How far back to look, in minutes (1-10080)",
+          "type": "integer",
+          "default": 60
+        },
+        "levels": {
+          "description": "Severities to include: critical, error, warning, information, verbose, or \u0027all\u0027. Defaults to critical\u002Berror.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default": null
+        },
+        "maxEvents": {
+          "description": "Maximum records to return",
+          "type": "integer",
+          "default": 50
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "minutes": {
+          "type": "integer"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timeCreated": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "level": {
+                "type": "string"
+              },
+              "messageType": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "subsystem": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "category": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "timeCreated",
+              "level",
+              "messageType",
+              "provider",
+              "subsystem",
+              "category",
+              "message",
+              "processId"
+            ]
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "minutes",
+        "events",
+        "truncated",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Recent unified log records",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "get_file",
     "title": "Read a file back off the host",
     "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",
