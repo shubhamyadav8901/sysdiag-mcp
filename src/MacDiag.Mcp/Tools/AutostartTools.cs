@@ -27,15 +27,16 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
         "runs, whether it is enabled, and whether another account could change it (the file, the program, the script " +
         "an interpreter runs, or a directory above any of them). categories takes one or more of: all, daemons, " +
         "agents, useragents, cron, periodic, loginhooks, authplugins, sysext, kext, btm (btm needs root). hideApple " +
-        "(default true) leaves out what comes " +
-        "from the sealed system volume, and, with signatures checked, Apple's own programs; a label is never trusted, " +
-        "since whoever writes a plist chooses it. verifySignatures checks each program with codesign; unsignedOnly " +
+        "(default true) leaves out what comes from the sealed system volume, and Apple's kernel and system " +
+        "extensions; neither a label nor the program's signer is trusted, since a planted plist chooses its label and " +
+        "can run curl or sh -c. verifySignatures checks each program with codesign, and an interpreter running code " +
+        "from its arguments counts as unsigned; unsignedOnly " +
         "returns only unsigned programs, scripts, missing programs and files another account could change - usually " +
         "the fastest route to an answer.")]
     public async Task<AutostartAuditToolResult> AutostartAudit(
         [Description("Comma-separated category names, or 'all'. Defaults to all.")] string categories = "all",
         [Description("Only entries whose label, program, file, schedule or command contains this text")] string? nameFilter = null,
-        [Description("Leave out what comes from the sealed system volume, and Apple-signed programs when signatures are checked. Defaults to true.")] bool hideApple = true,
+        [Description("Leave out what comes from the sealed system volume, and Apple's kernel and system extensions. Defaults to true.")] bool hideApple = true,
         [Description("Check each program's code signature and report who signed it.")] bool verifySignatures = false,
         [Description("Return only unsigned programs and scripts, missing programs, and entries another account could change. Implies verifySignatures.")] bool unsignedOnly = false,
         CancellationToken cancellationToken = default)

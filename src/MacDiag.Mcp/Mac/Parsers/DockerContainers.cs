@@ -22,12 +22,18 @@ public static class DockerContainers
             var containers = new List<DockerContainer>();
             foreach (var container in document.RootElement.EnumerateArray())
             {
+                if (container.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException($"Docker's container list held a {container.ValueKind}, not a container.");
+                }
+
                 var id = Text(container, "Id") ?? throw new FormatException("A Docker container had no Id.");
 
                 // Names carries the leading '/' of Docker's old link namespace.
                 string? name = null;
+                // The engine on a user's socket answers as that user likes: a non-string name must not end the list.
                 if (container.TryGetProperty("Names", out var names) &&
-                    names.ValueKind == JsonValueKind.Array && names.GetArrayLength() > 0)
+                    names.ValueKind == JsonValueKind.Array && names.GetArrayLength() > 0 && names[0].ValueKind == JsonValueKind.String)
                 {
                     name = names[0].GetString()?.TrimStart('/');
                 }

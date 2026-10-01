@@ -35,8 +35,12 @@ public sealed class SignatureTests
 
         public ExternalResult Spctl { get; set; } = new(0, "", "/Applications/Example.app: accepted\nsource=Notarized Developer ID\n");
 
+        /// <summary>Programs that never finish, as the real runner reports it: by throwing.</summary>
+        public HashSet<string> Hangs { get; } = [];
+
         public FakeCommands Commands() => new((program, args) => program switch
         {
+            _ when Hangs.Contains(program) || Hangs.Contains($"{program} {args[0]}") => FakeCommands.Hang(program),
             "stat" => Answer(Stats, args),
             "shasum" => Shasum(args[^1]),
             "codesign" when args[0] == "--verify" => Verify(args[^1]),
@@ -235,6 +239,58 @@ public sealed class SignatureTests
         Assert.Empty(result.Files);
         Assert.Contains("not inspected", result.Limitation, StringComparison.Ordinal);
         Assert.Contains(Tool, result.Limitation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Hashing_that_never_finishes_costs_that_file_not_the_whole_call()
+    {
+        var mac = new Mac();
+        mac.Hangs.Add("shasum");
+
+        var result = await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None);
+
+        Assert.Empty(result.Files);
+        Assert.Contains(result.NotFound, n => n.StartsWith(Tool, StringComparison.Ordinal) && n.Contains("did not finish", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_codesign_that_never_finishes_is_unknown_not_a_failed_call()
+    {
+        var mac = new Mac();
+        mac.Hangs.Add("codesign --verify");
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
+
+        Assert.Equal(SignatureVerdict.Unknown, file.Verdict);
+        Assert.Contains("did not finish", file.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_gatekeeper_check_that_never_finishes_is_not_assessed()
+    {
+        var mac = new Mac();
+        mac.Hangs.Add("spctl");
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([AppBinary], CancellationToken.None)).Files.Single();
+
+        Assert.StartsWith("not assessed", file.Gatekeeper, StringComparison.Ordinal);
+        Assert.Equal(SignatureVerdict.Valid, file.Verdict);
+    }
+
+    [Fact]
+    public async Task No_command_is_given_longer_than_what_is_left_of_the_calls_budget()
+    {
+        var mac = new Mac();
+        var commands = mac.Commands();
+        var inspector = new MacSignatureInspector(commands, MacDiagOptions.FromEnvironment(new Hashtable()))
+        {
+            Resolve = path => path,
+            Deadline = TimeSpan.FromSeconds(10),
+        };
+
+        await inspector.InspectAsync([Tool, AppBinary], CancellationToken.None);
+
+        Assert.All(commands.Timeouts.Skip(1), timeout => Assert.True(timeout <= TimeSpan.FromSeconds(10), timeout.ToString()));
     }
 
     [Fact]

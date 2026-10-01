@@ -258,7 +258,7 @@ public sealed class LiveMacTests : IDisposable
     [MacFact]
     public async Task With_no_container_engine_running_the_list_is_empty_and_no_socket_was_refused()
     {
-        var catalog = await new Diagnostics.Containers.MacContainerInspector(Commands, Options, new Diagnostics.Containers.MacDockerClient())
+        var catalog = await new Diagnostics.Containers.MacContainerInspector(Commands, Options, new Diagnostics.Containers.MacDockerClient(), new MacPrivilegeProbe())
             .ListAsync(CancellationToken.None);
 
         Assert.DoesNotContain(catalog.Limitations, l => l.StartsWith("Not asking", StringComparison.Ordinal));

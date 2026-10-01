@@ -40,14 +40,19 @@ public sealed class ContainerTests
 
     private static readonly DockerContainer Web = new("8dfafdbc3a40", "web", "nginx:1.27", "running");
 
+    private sealed class Probe(bool root) : IPrivilegeProbe
+    {
+        public bool IsElevated => root;
+    }
+
     private static MacContainerInspector Inspector(
         Dictionary<string, string> stats, IDockerQuery docker, string[]? homes = null, Dictionary<string, string>? links = null,
-        Func<string, IEnumerable<string>>? directories = null) =>
-        new(new FakeCommands((_, args) => Answer(stats, args)), MacDiagOptions.FromEnvironment(new Hashtable()), docker)
+        Func<string, IEnumerable<string>>? directories = null, bool root = true, Func<string, string>? resolve = null) =>
+        new(new FakeCommands((_, args) => Answer(stats, args)), MacDiagOptions.FromEnvironment(new Hashtable()), docker, new Probe(root))
         {
             ListHomes = () => homes ?? [Alice],
             ListDirectories = directories ?? (_ => []),
-            Resolve = path => links is not null && links.TryGetValue(path, out var target) ? target : path,
+            Resolve = resolve ?? (path => links is not null && links.TryGetValue(path, out var target) ? target : path),
         };
 
     [Fact]
@@ -222,7 +227,7 @@ public sealed class ContainerTests
                 commands.Add(args);
                 return Answer(AliceRunsDockerDesktop(), args);
             }),
-            MacDiagOptions.FromEnvironment(new Hashtable()), docker)
+            MacDiagOptions.FromEnvironment(new Hashtable()), docker, new Probe(true))
         {
             ListHomes = () => [Alice],
             ListDirectories = directory => directory == "/Users/alice/.colima" ? ["/Users/alice/.colima/x\n0\t0\t0755"] : [],
@@ -233,6 +238,35 @@ public sealed class ContainerTests
 
         Assert.DoesNotContain(commands.SelectMany(a => a), a => a.Contains('\n', StringComparison.Ordinal));
         Assert.Contains(catalog.Limitations, l => l.Contains("control character", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_link_that_loops_is_a_limitation_not_a_failed_call()
+    {
+        var docker = new FakeDocker(_ => ([Web], null));
+
+        var catalog = await Inspector(AliceRunsDockerDesktop(), docker,
+            resolve: path => path == System ? throw new IOException("Too many levels of symbolic links") : path).ListAsync(CancellationToken.None);
+
+        Assert.Contains(catalog.Limitations, l => l.Contains(System, StringComparison.Ordinal) && l.Contains("Too many levels", StringComparison.Ordinal));
+        Assert.Equal([AliceDesktop], docker.Asked);
+    }
+
+    [Fact]
+    public void A_container_name_that_is_not_a_string_is_left_out_rather_than_failing_the_list()
+    {
+        var container = Assert.Single(DockerContainers.Parse("""[{"Id":"x","Names":[1],"Image":"busybox"}]"""));
+
+        Assert.Equal(("x", null, "busybox"), (container.Id, container.Name, container.Image));
+        Assert.Throws<FormatException>(() => DockerContainers.Parse("[1]"));
+    }
+
+    [Fact]
+    public async Task Without_root_the_list_says_other_users_engines_may_be_unseen()
+    {
+        var catalog = await Inspector(new Dictionary<string, string>(), new FakeDocker(_ => ([], null)), root: false).ListAsync(CancellationToken.None);
+
+        Assert.Contains(catalog.Limitations, l => l.Contains("root", StringComparison.Ordinal));
     }
 
     [Fact]

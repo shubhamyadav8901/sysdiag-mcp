@@ -25,6 +25,8 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
 
     private static readonly TimeSpan GatekeeperTimeout = TimeSpan.FromSeconds(20);
 
+    private static readonly TimeSpan MinimumCommandTime = TimeSpan.FromSeconds(1);
+
     internal Func<string, string> Resolve { get; init; } = StartupPermissions.RealPath;
 
     /// <summary>How long one call may spend; 200 codesign runs over large bundles can take minutes.</summary>
@@ -69,6 +71,10 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
         var files = new List<FileSignature>();
         var notInspected = new List<string>();
         var clock = Stopwatch.StartNew();
+
+        // Every command gets at most what is left of the call's budget, so the file in flight cannot outrun it.
+        TimeSpan Left() => Min(options.ExternalToolTimeout, Max(Deadline - clock.Elapsed, MinimumCommandTime));
+
         foreach (var (full, real) in wanted)
         {
             if (!stats.TryGetValue(real, out var stat))
@@ -90,7 +96,7 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
                 continue;
             }
 
-            var hash = await commands.RunAsync("shasum", ["-a", "256", real], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
+            var hash = await RunAsync("shasum", ["-a", "256", real], Left(), cancellationToken).ConfigureAwait(false);
             if (hash.ExitCode != 0 || hash.StandardOutput.Split(' ', 2)[0] is not { Length: 64 } digest)
             {
                 notFound.Add(hash.StandardError.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)
@@ -99,7 +105,7 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
                 continue;
             }
 
-            files.Add(await SignatureAsync(full, real, stat, digest.ToUpperInvariant(), cancellationToken).ConfigureAwait(false));
+            files.Add(await SignatureAsync(full, real, stat, digest.ToUpperInvariant(), Left, cancellationToken).ConfigureAwait(false));
         }
 
         var limitation = TrustNote;
@@ -112,10 +118,11 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
         return new SignatureQueryResult(files, notFound, limitation);
     }
 
-    private async Task<FileSignature> SignatureAsync(string full, string real, StatLine stat, string sha256, CancellationToken cancellationToken)
+    private async Task<FileSignature> SignatureAsync(
+        string full, string real, StatLine stat, string sha256, Func<TimeSpan> left, CancellationToken cancellationToken)
     {
-        var verify = await commands.RunAsync("codesign", ["--verify", "--strict", "--", real], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
-        var display = await commands.RunAsync("codesign", ["-dvvv", "--", real], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
+        var verify = await RunAsync("codesign", ["--verify", "--strict", "--", real], left(), cancellationToken).ConfigureAwait(false);
+        var display = await RunAsync("codesign", ["-dvvv", "--", real], left(), cancellationToken).ConfigureAwait(false);
         var details = CodesignDisplay.Details(display.StandardError);
 
         var (verdict, detail) = verify switch
@@ -130,24 +137,24 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
             _ => (SignatureVerdict.Unknown, $"codesign could not judge it (exit {verify.ExitCode}): {Reason(verify.StandardError, real)}"),
         };
 
-        var receipt = await commands.RunAsync("pkgutil", ["--file-info", real], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
+        var receipt = await RunAsync("pkgutil", ["--file-info", real], left(), cancellationToken).ConfigureAwait(false);
         var (package, version) = receipt.ExitCode == 0 ? PkgutilFileInfo.Parse(receipt.StandardOutput) : (null, null);
 
         return new FileSignature(
             full, verdict, detail, real == full ? null : real, details.Identifier, details.TeamId, details.Authorities, details.HardenedRuntime,
-            await GatekeeperAsync(real, cancellationToken).ConfigureAwait(false), package, version, stat.Size,
+            await GatekeeperAsync(real, left, cancellationToken).ConfigureAwait(false), package, version, stat.Size,
             DateTimeOffset.FromUnixTimeSeconds(stat.ModifiedEpoch), sha256);
     }
 
     /// <summary>spctl's verdict on the app bundle the file belongs to; a bare tool has no Gatekeeper assessment to give.</summary>
-    private async Task<string> GatekeeperAsync(string path, CancellationToken cancellationToken)
+    private async Task<string> GatekeeperAsync(string path, Func<TimeSpan> left, CancellationToken cancellationToken)
     {
         if (AppBundle(path) is not { } app)
         {
             return "not applicable";
         }
 
-        var result = await commands.RunAsync("spctl", ["--assess", "--type", "execute", "-v", app], GatekeeperTimeout, cancellationToken).ConfigureAwait(false);
+        var result = await RunAsync("spctl", ["--assess", "--type", "execute", "-v", app], Min(GatekeeperTimeout, left()), cancellationToken).ConfigureAwait(false);
         return result.ExitCode switch
         {
             0 => "accepted" + (Source(result.StandardError) is { } source ? $" ({source})" : string.Empty),
@@ -155,6 +162,26 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
             _ => $"not assessed: {Reason(result.StandardError, app)}",
         };
     }
+
+    /// <summary>One command, whose failure to finish costs this file's answer, never the call's.</summary>
+    /// <remarks>The runner throws when a program outlives its timeout or cannot be started; a slow online
+    /// notarization check, or a file swapped for a FIFO after the hash, would otherwise discard every result.
+    /// Exit -1 marks it, with the reason where the program's own complaint would be.</remarks>
+    private async Task<ExternalResult> RunAsync(string program, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await commands.RunAsync(program, arguments, timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ExternalCommandException ex)
+        {
+            return new ExternalResult(-1, string.Empty, $"{program} did not finish: {ex.Message}");
+        }
+    }
+
+    private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
+
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
 
     /// <summary>The outermost .app the path is, or is inside.</summary>
     internal static string? AppBundle(string path)

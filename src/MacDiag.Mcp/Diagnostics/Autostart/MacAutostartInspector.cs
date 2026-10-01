@@ -16,9 +16,9 @@ namespace MacDiag.Mcp.Diagnostics.Autostart;
 /// whoever logs in, and drag-installed apps belong to the user who dragged them). Write access for wheel or admin
 /// does not count, because admins can become root anyway.</para>
 /// <para>hideApple judges where an entry comes from, never what it calls itself: whoever writes a plist chooses its
-/// label, so a planted /Library/LaunchDaemons/com.apple.updater.plist must show. An entry is hidden when its file
-/// is on the sealed system volume (/System), or -- when signatures are checked -- when its program is an Apple
-/// platform binary.</para>
+/// label, so a planted /Library/LaunchDaemons/com.apple.updater.plist must show. An entry is hidden only when its
+/// file is on the sealed system volume (/System). Not by its program's signature either: Apple's own programs --
+/// curl, osascript, sh -c -- run whatever a planted plist tells them to.</para>
 /// </remarks>
 public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOptions options, IPrivilegeProbe privilege) : IAutostartInspector
 {
@@ -38,7 +38,8 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
     private const int AnyExecuteBit = 0b001_001_001;
 
     private static readonly string[] Interpreters =
-        ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/ruby", "/usr/bin/osascript"];
+        ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh", "/bin/ksh", "/bin/dash", "/usr/bin/perl", "/usr/bin/python3",
+         "/usr/bin/ruby", "/usr/bin/osascript", "/usr/bin/env"];
 
     private static readonly string[] PeriodicDirectories =
         ["/etc/periodic/daily", "/etc/periodic/weekly", "/etc/periodic/monthly",
@@ -126,7 +127,17 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
         /// <summary>A listing command's output, or null with the failure named as a limitation.</summary>
         private async Task<string?> ListingAsync(string program, string[] arguments, string command)
         {
-            var result = await Commands.RunAsync(program, arguments, Timeout, cancellationToken).ConfigureAwait(false);
+            ExternalResult result;
+            try
+            {
+                result = await Commands.RunAsync(program, arguments, Timeout, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ExternalCommandException ex)
+            {
+                _limitations.Add($"{command} did not finish ({ex.Message}), so what it lists is missing.");
+                return null;
+            }
+
             if (result.ExitCode == 0)
             {
                 return result.StandardOutput;
@@ -156,6 +167,12 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
 
         public async Task UserAgentsAsync()
         {
+            // Directory.Exists says false for a directory it may not search, so another user's 0700 Library looks empty.
+            if (!elevated)
+            {
+                _limitations.Add("The server is not running as root, so other users' LaunchAgents, in homes it cannot read, are not listed.");
+            }
+
             foreach (var home in await HomesAsync().ConfigureAwait(false))
             {
                 var name = home.Key[(home.Key.LastIndexOf('/') + 1)..];
@@ -363,15 +380,16 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             var matched = _found.Where(Matches).ToList();
             var stats = await StatAllAsync(matched).ConfigureAwait(false);
 
-            var entries = new List<(AutostartEntry Entry, bool AppleSigned)>();
+            var entries = new List<AutostartEntry>();
             var verify = query.VerifySignatures || query.UnsignedOnly;
-            var signatures = new Dictionary<string, (bool Signed, string Detail, bool Apple)>(StringComparer.Ordinal);
+            var signatures = new Dictionary<string, (bool? Signed, string Detail)>(StringComparer.Ordinal);
             foreach (var candidate in matched)
             {
-                if (candidate.RequireExecutable &&
-                    (!stats.TryGetValue(candidate.Location, out var self) || self.Kind != StatKind.File || (self.Mode & AnyExecuteBit) == 0))
+                // periodic(8) runs what [ -x ] accepts, which follows a link: judge the file it leads to. A name that
+                // could not be statted is flagged by Judge, never dropped here.
+                if (candidate.RequireExecutable && candidate.Problem is null && !Executable(candidate.Location, stats))
                 {
-                    continue; // periodic(8) runs only executable files
+                    continue;
                 }
 
                 var findings = new List<string>();
@@ -379,12 +397,16 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
 
                 bool? signed = null;
                 string? detail = null;
-                var apple = false;
                 if (verify && candidate.Image is { } image && !missing && candidate.Problem is null)
                 {
                     if (candidate.Script is not null)
                     {
                         (signed, detail) = (false, "a script; its interpreter's signature says nothing about it");
+                    }
+                    else if (Interpreters.Contains(image, StringComparer.Ordinal))
+                    {
+                        // sh -c, osascript -e, python3 -c, env: the code that runs is in the arguments, and nobody signed it.
+                        (signed, detail) = (false, "an interpreter running code from its arguments; what it runs is not signed");
                     }
                     else
                     {
@@ -394,20 +416,19 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                             signatures[image] = known;
                         }
 
-                        (signed, detail, apple) = known;
+                        (signed, detail) = known;
                     }
                 }
 
-                entries.Add((new AutostartEntry(
+                entries.Add(new AutostartEntry(
                     candidate.Category, candidate.Location, candidate.Entry, candidate.Enabled, candidate.Profile, candidate.Description,
                     candidate.Image, candidate.LaunchString, candidate.Script, signed, detail, missing, writable,
-                    findings.Distinct(StringComparer.Ordinal).ToList()), apple));
+                    findings.Distinct(StringComparer.Ordinal).ToList()));
             }
 
             var kept = entries
-                .Where(e => !(query.HideApple && e.AppleSigned && e.Entry.Category is not ("cron" or "periodic")))
-                .Select(e => e.Entry)
-                .Where(e => !query.UnsignedOnly || e.Signed == false || e.ImageMissing || e.WritableByOthers)
+                .Where(e => !query.UnsignedOnly || e.Signed == false || (e.Signed is null && e.SignatureDetail is not null) ||
+                            e.ImageMissing || e.WritableByOthers)
                 .OrderBy(e => Array.IndexOf(Categories, e.Category))
                 .ThenBy(e => e.Entry, StringComparer.Ordinal)
                 .ThenBy(e => e.Location, StringComparer.Ordinal)
@@ -432,23 +453,30 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             Func<PlistDictionary, Task<IReadOnlySet<int>?>> imageOwners)
         {
             var overrides = overrideDomain is null ? null : await OverridesAsync(overrideDomain).ConfigureAwait(false);
-            foreach (var plistPath in directories.SelectMany(List).Where(p => p.EndsWith(".plist", StringComparison.Ordinal)))
+
+            // The sealed volume is Apple's and cannot be written to: with hideApple there is nothing to read there.
+            var plists = directories.SelectMany(List)
+                .Where(p => p.EndsWith(".plist", StringComparison.Ordinal))
+                .Where(p => !(query.HideApple && p.StartsWith(SealedVolume, StringComparison.Ordinal)))
+                .ToList();
+            var readable = await RegularFilesAsync(plists).ConfigureAwait(false);
+            foreach (var plistPath in plists)
             {
-                // The sealed volume is Apple's and cannot be written to: with hideApple there is nothing to read there.
-                if (query.HideApple && plistPath.StartsWith(SealedVolume, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
                 var name = plistPath[(plistPath.LastIndexOf('/') + 1)..^".plist".Length];
-                if (StatLines.HasControlCharacter(plistPath))
+                if (!readable.TryGetValue(plistPath, out var read))
                 {
+                    continue; // gone between the listing and the stat
+                }
+
+                if (read.Problem is not null)
+                {
+                    // A FIFO, a device or a link to one would hang or flood plutil, which runs as root: never read, always shown.
                     _found.Add(new Candidate(category, plistPath, name, true, profile, null, null, null, null, sourceOwners, sourceOwners,
-                        Problem: "its name contains a control character"));
+                        Problem: read.Problem));
                     continue;
                 }
 
-                if (await ReadPlistAsync(plistPath).ConfigureAwait(false) is not { } plist)
+                if (await ReadPlistAsync(read.Path!).ConfigureAwait(false) is not { } plist)
                 {
                     continue;
                 }
@@ -463,6 +491,95 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                     sourceOwners, await imageOwners(plist).ConfigureAwait(false)));
             }
         }
+
+        /// <summary>For each path: the regular file to read (itself, or what its link leads to), or why it must not be read.</summary>
+        /// <remarks>Absent paths have no entry. Names with a control character are never statted.</remarks>
+        private async Task<Dictionary<string, (string? Path, string? Problem)>> RegularFilesAsync(IReadOnlyList<string> paths)
+        {
+            var result = new Dictionary<string, (string? Path, string? Problem)>(StringComparer.Ordinal);
+            foreach (var path in paths.Where(StatLines.HasControlCharacter))
+            {
+                result[path] = (null, "its name contains a control character");
+            }
+
+            var stats = await StatBatchesAsync(paths.Where(p => !StatLines.HasControlCharacter(p))).ConfigureAwait(false);
+            var links = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (path, line) in stats)
+            {
+                if (line.Kind == StatKind.File)
+                {
+                    result[path] = (path, null);
+                }
+                else if (line.Kind != StatKind.Link)
+                {
+                    result[path] = (null, $"it is not a regular file ({KindName(line.Kind)}), so it was not read");
+                }
+                else
+                {
+                    try
+                    {
+                        links[path] = owner.Resolve(path);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        result[path] = (null, $"it is a link that cannot be followed ({ex.Message})");
+                    }
+                }
+            }
+
+            var targets = await StatBatchesAsync(links.Values.Where(t => !StatLines.HasControlCharacter(t))).ConfigureAwait(false);
+            foreach (var (path, target) in links)
+            {
+                result[path] = targets.TryGetValue(target, out var line) && line.Kind == StatKind.File
+                    ? (target, null)
+                    : (null, $"it is a link to {Printable(target)}, which is not a regular file, so it was not read");
+            }
+
+            return result;
+        }
+
+        private async Task<Dictionary<string, StatLine>> StatBatchesAsync(IEnumerable<string> paths)
+        {
+            var stats = new Dictionary<string, StatLine>(StringComparer.Ordinal);
+            foreach (var batch in paths.Distinct(StringComparer.Ordinal).Chunk(StatBatch))
+            {
+                foreach (var (path, line) in await StatLines.StatAsync(Commands, batch, Timeout, cancellationToken).ConfigureAwait(false))
+                {
+                    stats[path] = line;
+                }
+            }
+
+            return stats;
+        }
+
+        /// <summary>Whether periodic(8) would run it: a regular file with an execute bit, after following a link.</summary>
+        private bool Executable(string path, IReadOnlyDictionary<string, StatLine> stats)
+        {
+            if (!stats.TryGetValue(path, out var line))
+            {
+                return false;
+            }
+
+            if (line.Kind == StatKind.Link)
+            {
+                var target = Spellings(path).Skip(1).FirstOrDefault();
+                if (target is null || !stats.TryGetValue(target, out line))
+                {
+                    return false;
+                }
+            }
+
+            return line.Kind == StatKind.File && (line.Mode & AnyExecuteBit) != 0;
+        }
+
+        private static string KindName(StatKind kind) => kind switch
+        {
+            StatKind.Fifo => "a FIFO",
+            StatKind.Socket => "a socket",
+            StatKind.CharacterDevice or StatKind.BlockDevice => "a device",
+            StatKind.Directory => "a directory",
+            _ => "not a file",
+        };
 
         private void AddCron(string location, CronLine job, string? profile, IReadOnlySet<int> sourceOwners, IReadOnlySet<int> imageOwners)
         {
@@ -573,30 +690,33 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
-            var stats = new Dictionary<string, StatLine>(StringComparer.Ordinal);
-            foreach (var batch in paths.Chunk(StatBatch))
-            {
-                foreach (var (path, line) in await StatLines.StatAsync(Commands, batch, Timeout, cancellationToken).ConfigureAwait(false))
-                {
-                    stats[path] = line;
-                }
-            }
-
-            return stats;
+            return await StatBatchesAsync(paths).ConfigureAwait(false);
         }
 
-        private async Task<(bool Signed, string Detail, bool Apple)> SignatureAsync(string image)
+        private async Task<(bool? Signed, string Detail)> SignatureAsync(string image)
         {
-            var verify = await Commands.RunAsync("codesign", ["--verify", "--strict", "--", image], Timeout, cancellationToken).ConfigureAwait(false);
+            ExternalResult verify, display;
+            try
+            {
+                verify = await Commands.RunAsync("codesign", ["--verify", "--strict", "--", image], Timeout, cancellationToken).ConfigureAwait(false);
+                display = verify.ExitCode == 0
+                    ? await Commands.RunAsync("codesign", ["-dvvv", "--", image], Timeout, cancellationToken).ConfigureAwait(false)
+                    : verify;
+            }
+            catch (ExternalCommandException ex)
+            {
+                // Not judged is neither unsigned nor signed: unsignedOnly keeps it, so somebody looks at it.
+                return (null, $"codesign did not finish: {ex.Message}");
+            }
+
             if (verify.ExitCode != 0)
             {
                 var reason = verify.StandardError.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? $"codesign exit {verify.ExitCode}";
-                return (false, reason.StartsWith(image + ": ", StringComparison.Ordinal) ? reason[(image.Length + 2)..] : reason, false);
+                return (false, reason.StartsWith(image + ": ", StringComparison.Ordinal) ? reason[(image.Length + 2)..] : reason);
             }
 
-            var details = CodesignDisplay.Details(
-                (await Commands.RunAsync("codesign", ["-dvvv", "--", image], Timeout, cancellationToken).ConfigureAwait(false)).StandardError);
-            return (true, details.SignedByApple ? "Signed by Apple" : details.Authorities.FirstOrDefault() ?? "Signed", details.SignedByApple);
+            var details = CodesignDisplay.Details(display.StandardError);
+            return (true, details.SignedByApple ? "Signed by Apple" : details.Authorities.FirstOrDefault() ?? "Signed");
         }
 
         private async Task<PlistDictionary?> ReadPlistAsync(string path)
@@ -608,6 +728,11 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             catch (ServiceQueryException ex)
             {
                 _unreadable.Add(ex.Message);
+                return null;
+            }
+            catch (ExternalCommandException ex)
+            {
+                _unreadable.Add($"plutil did not finish on {path}: {ex.Message}");
                 return null;
             }
         }

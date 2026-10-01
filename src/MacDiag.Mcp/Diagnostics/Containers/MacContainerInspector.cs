@@ -11,10 +11,13 @@ namespace MacDiag.Mcp.Diagnostics.Containers;
 /// home is asked under the target's own path, with the target's own checks; a link anywhere else is refused.</para>
 /// <para>Two sockets can lead to one daemon, so containers are kept once by id.</para>
 /// </remarks>
-public sealed class MacContainerInspector(IExternalCommand commands, MacDiagOptions options, IDockerQuery docker) : IContainerInspector
+public sealed class MacContainerInspector(IExternalCommand commands, MacDiagOptions options, IDockerQuery docker, IPrivilegeProbe privilege) : IContainerInspector
 {
     internal const string VirtualMachineNote =
         "Containers run in a virtual machine on macOS, so they have no host PIDs; their processes do not appear in process_list.";
+
+    internal const string NotRootNote =
+        "The server is not running as root, so an engine socket in another user's home may be out of its reach and is then not listed.";
 
     internal Func<IEnumerable<string>> ListHomes { get; init; } = DefaultHomes;
 
@@ -45,13 +48,24 @@ public sealed class MacContainerInspector(IExternalCommand commands, MacDiagOpti
         var accepted = new List<(DockerSocket Socket, string Resolved, bool ViaLink)>();
         foreach (var candidate in candidates.Where(c => first.ContainsKey(c.Path)))
         {
-            if (first[candidate.Path].Kind != StatKind.Link)
+            // A link that loops or cannot be followed is the user's to plant; it costs that socket, not the call.
+            string target;
+            try
             {
-                accepted.Add((candidate, ResolveDirectory(candidate.Path), false));
+                target = first[candidate.Path].Kind == StatKind.Link ? Resolve(candidate.Path) : ResolveDirectory(candidate.Path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                limitations.Add($"Not asking {candidate.Path}: it could not be resolved ({ex.Message}).");
                 continue;
             }
 
-            var target = Resolve(candidate.Path);
+            if (first[candidate.Path].Kind != StatKind.Link)
+            {
+                accepted.Add((candidate, target, false));
+                continue;
+            }
+
             if (HomeOf(target) is { } home && !StatLines.HasControlCharacter(target))
             {
                 accepted.Add((candidate with { Path = target, Home = home }, target, true));
@@ -106,6 +120,12 @@ public sealed class MacContainerInspector(IExternalCommand commands, MacDiagOpti
         if (containers.Count > 0)
         {
             limitations.Add(VirtualMachineNote);
+        }
+
+        // stat cannot see into a home it may not search, and says so only on stderr: without root, absence is not proof.
+        if (!privilege.IsElevated)
+        {
+            limitations.Add(NotRootNote);
         }
 
         var rows = containers.Values

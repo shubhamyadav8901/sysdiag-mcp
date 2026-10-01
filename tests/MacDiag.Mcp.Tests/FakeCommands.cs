@@ -5,10 +5,14 @@ internal sealed class FakeCommands(Func<string, IReadOnlyList<string>, ExternalR
 {
     public List<(string Program, IReadOnlyList<string> Arguments)> Calls { get; } = [];
 
+    /// <summary>The timeout each call was given, in call order.</summary>
+    public List<TimeSpan> Timeouts { get; } = [];
+
     public Task<ExternalResult> RunAsync(
         string program, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         Calls.Add((program, arguments));
+        Timeouts.Add(timeout);
         return Task.FromResult(answer(program, arguments));
     }
 
@@ -28,4 +32,7 @@ internal sealed class FakeCommands(Func<string, IReadOnlyList<string>, ExternalR
     }
 
     public static ExternalResult Ok(string output) => new(0, output, string.Empty);
+
+    /// <summary>What the real runner throws when a program outlives its timeout.</summary>
+    public static ExternalResult Hang(string program) => throw new ExternalCommandException($"{program} did not finish within its timeout and was killed.", timedOut: true);
 }
