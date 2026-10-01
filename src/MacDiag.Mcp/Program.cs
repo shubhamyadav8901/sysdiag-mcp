@@ -131,12 +131,12 @@ async Task<int> RunHttp(MacDiagOptions opts, string address)
 }
 
 // stdout is the MCP channel in stdio mode, so every log line goes to stderr -- except under launchd, where
-// stderr is crash.log, never rotated, and kept for what the runtime itself writes. launchd sets
-// XPC_SERVICE_NAME to the job's label, which is how "started by our own job" is told apart from a by-hand run.
+// stderr is crash.log, never rotated, and kept for what the runtime itself writes. LaunchdJob tells "started by
+// our own job" apart from a by-hand run, by the label launchd sets and by launchd being the parent.
 void ConfigureLogging(ILoggingBuilder logging, MacDiagOptions opts)
 {
     logging.ClearProviders();
-    if (opts.ServiceLabel is { } label && Environment.GetEnvironmentVariable("XPC_SERVICE_NAME") == label)
+    if (LaunchdJob.IsOurs(opts.ServiceLabel))
     {
         logging.AddProvider(new RollingFileLoggerProvider(Path.Combine(MacServiceInstaller.LogDirectory, "macdiag.log")));
         return;

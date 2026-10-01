@@ -50,6 +50,22 @@ public sealed class ToolRegistrationTests
     }
 
     [Fact]
+    public void Update_self_is_registered_only_with_its_grant_and_never_on_a_read_only_server()
+    {
+        Assert.DoesNotContain("update_self", ToolNames(Options()));
+        Assert.Contains("update_self", ToolNames(Options(selfUpdate: true)));
+        Assert.DoesNotContain("update_self", ToolNames(Options(readOnly: true, selfUpdate: true)));
+    }
+
+    [Fact]
+    public void The_update_services_are_registered_whatever_the_grant_so_a_test_fake_wins()
+    {
+        using var provider = Provider(Options());
+
+        Assert.NotNull(provider.GetService<Diag.Mcp.Server.SelfUpdate.IUpdateGuard>());
+    }
+
+    [Fact]
     public void The_tool_surface_matches_the_recorded_snapshot()
     {
         using var provider = Provider(Options(selfUpdate: true, commands: true));

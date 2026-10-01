@@ -1175,6 +1175,99 @@
     }
   },
   {
+    "name": "update_self",
+    "title": "Install a staged server build",
+    "description": "Replace this server\u0027s own executable with a build already copied next to it (with put_file), then restart it through launchd. You must pass the SHA-256 you expect; anything else is refused and nothing is changed. The staged file must be a macOS executable for this Mac (an arm64 build must be signed; ad hoc is enough). By default the server FINISHES whatever tool calls are already running before it restarts, refusing new calls meanwhile; pass force to cut them off instead, and call update_self again with force to stop waiting. Either way THIS CONNECTION WILL DROP - that is success, not failure. Reconnect and check the version; if it does not come back, read the helper log named in the result - a build that does not come up is rolled back. Full Disk Access is tied to the code signature, so an ad-hoc build loses it after the update; capabilities shows whether it is still granted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "expectedSha256": {
+          "description": "SHA-256 of the staged build, as put_file or push_file reported it",
+          "type": "string"
+        },
+        "stagedFileName": {
+          "description": "Name of the staged file beside the server. Must be a file name, not a path.",
+          "type": "string",
+          "default": "MacDiag.Mcp.new"
+        },
+        "force": {
+          "description": "Set true to restart without waiting for running tool calls; their work is cut off. Default false, which waits.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "expectedSha256"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "stagedPath": {
+              "type": "string"
+            },
+            "livePath": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "signatureVerdict": {
+              "type": "string"
+            },
+            "helperLogPath": {
+              "type": "string"
+            },
+            "restartScheduled": {
+              "type": "boolean"
+            },
+            "forced": {
+              "type": "boolean"
+            },
+            "otherCallsInFlight": {
+              "type": "integer"
+            },
+            "drainTimeoutSeconds": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "stagedPath",
+            "livePath",
+            "sizeBytes",
+            "sha256",
+            "signatureVerdict",
+            "helperLogPath",
+            "restartScheduled",
+            "forced",
+            "otherCallsInFlight",
+            "drainTimeoutSeconds"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "update"
+      ]
+    },
+    "annotations": {
+      "title": "Install a staged server build",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "who_locks_path",
     "title": "Who holds or locks this path",
     "description": "Find which processes hold a file or directory open. The file is matched by device and inode, so a hard link or a rename still matches, and each holder is shown with how it holds it: open for reading or writing, running it as its executable, mapping it as a library, or using it as its working or root directory. Use it for \u0027text file busy\u0027, a file that will not delete, or a volume that will not eject. macOS\u0027s lsof does not report lock state, so the result names who has the file open, not which of them holds a lock. It reports Exhaustive only when the server runs as root.",

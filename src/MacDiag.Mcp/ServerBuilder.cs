@@ -8,6 +8,7 @@ using MacDiag.Mcp.Diagnostics.Commands;
 using MacDiag.Mcp.Diagnostics.Handles;
 using MacDiag.Mcp.Diagnostics.Network;
 using MacDiag.Mcp.Diagnostics.Processes;
+using MacDiag.Mcp.Diagnostics.SelfUpdate;
 using MacDiag.Mcp.Diagnostics.SystemInfo;
 using MacDiag.Mcp.Mac;
 using MacDiag.Mcp.Tools;
@@ -53,8 +54,8 @@ public static class ServerBuilder
           MACDIAG_HTTP_BIND                      address to serve on when --http has none
           MACDIAG_TOKEN                          bearer token; generated and printed once when unset
           MACDIAG_READ_ONLY=1                    register no tool that changes the machine
-          MACDIAG_ALLOW_SELF_UPDATE=1            let put_file write into the server's own directory
-                                                 to stage a build
+          MACDIAG_ALLOW_SELF_UPDATE=1            register update_self, and let put_file write into the
+                                                 server's own directory to stage a build for it
           MACDIAG_ALLOW_COMMAND_EXECUTION=1      register run_command
           MACDIAG_ALLOW_ARBITRARY_WRITE=1        let put_file write anywhere, the server's own directory included
           MACDIAG_ALLOW_ARBITRARY_READ=1         let get_file read outside the server's directories
@@ -103,6 +104,12 @@ public static class ServerBuilder
             mcp.WithTools<CommandTools>(DiagServerKit.ToolJsonOptions);
         }
 
+        // Lets the token replace the root-owned binary and run it: its own grant, refused under read-only.
+        if (options.AllowSelfUpdate && !options.ReadOnly)
+        {
+            mcp.WithTools<SelfUpdateTools>(DiagServerKit.ToolJsonOptions);
+        }
+
         return mcp;
     }
 
@@ -127,6 +134,11 @@ public static class ServerBuilder
         services.TryAddSingleton<INetworkInspector, MacNetworkInspector>();
         services.TryAddSingleton<IPipeInspector, MacPipeInspector>();
         services.TryAddSingleton<NetworkTools>();
+        services.TryAddSingleton<IStagedBuildInspector, MacStagedBuildInspector>();
+        services.TryAddSingleton<IUpdateGuard, MachOUpdateGuard>();
+        services.TryAddSingleton<IRestartHelper, LaunchdRestartHelper>();
+        services.TryAddSingleton<ISelfUpdater, SelfUpdater>();
+        services.TryAddSingleton<SelfUpdateTools>();
         services.TryAddSingleton<IShellSet, MacShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
         services.TryAddSingleton<CommandTools>();
