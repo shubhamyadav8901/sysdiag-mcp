@@ -109,7 +109,7 @@ public sealed class SystemOverviewTests
     {
         var data = new TheoryData<string>();
         var directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured);
-        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson", "codesign-dvvv-apple", "pkgutil-file-info", "ls-lde", "stat-lines", "systemextensionsctl-list", "kmutil-showloaded", "sfltool-dumpbtm" }.Where(n => File.Exists(Path.Combine(directory, n)) && new FileInfo(Path.Combine(directory, n)).Length > 0))
+        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson", "codesign-dvvv-apple", "pkgutil-file-info", "ls-lde", "stat-lines", "systemextensionsctl-list", "kmutil-showloaded", "sfltool-dumpbtm", "launchctl-list-user" }.Where(n => File.Exists(Path.Combine(directory, n)) && new FileInfo(Path.Combine(directory, n)).Length > 0))
         {
             data.Add(name);
         }
@@ -164,6 +164,12 @@ public sealed class SystemOverviewTests
                 break;
             case "launchctl-list":
                 Assert.True(LaunchctlList.Parse(text).Count >= 20);
+                break;
+            case "launchctl-list-user":
+                // What process_control relies on: asked as the user, launchd answers for the user's domain, not the system's.
+                var user = LaunchctlList.Parse(text).Select(r => r.Label).ToHashSet(StringComparer.Ordinal);
+                Assert.NotEmpty(user);
+                Assert.False(user.SetEquals(LaunchctlList.Parse(Fixture(Captured, "launchctl-list")).Select(r => r.Label)), "the user's list is the system list");
                 break;
             case "launchctl-print-disabled":
                 Assert.NotEmpty(LaunchctlDisabled.Parse(text));

@@ -13,6 +13,9 @@ public sealed class LaunchdProtection(MacDiagOptions options)
 {
     private const string ApplePrefix = "com.apple.";
 
+    /// <summary>Apple's per-user agents a Mac is reached through: killing one can drop the operator's own session.</summary>
+    private static readonly string[] AppleRemoteAccess = ["com.apple.screensharing.", "com.apple.RemoteDesktop.", "com.apple.RemoteManagement."];
+
     /// <summary>Apple's own jobs (Remote Login among them), and the remote-access and VPN agents a Mac may be reached through.</summary>
     internal static readonly string[] Prefixes =
     [
@@ -42,15 +45,15 @@ public sealed class LaunchdProtection(MacDiagOptions options)
     /// <summary>The rule for a job in a user's own launchd domain: everything <see cref="Refusal"/> protects but Apple's agents.</summary>
     /// <remarks>
     /// Apple's per-user agents -- Finder, Dock, SystemUIServer -- are relaunched by launchd, and restarting one is
-    /// ordinary troubleshooting; the ones a Mac is reached through (screen sharing, ARDAgent) are refused by name
-    /// before any list is read. A user's remote-access and VPN agents, the configured labels and this server's own job
-    /// stay protected.
+    /// ordinary troubleshooting. Apple's remote-access agents (screen sharing, Remote Desktop), a user's remote-access
+    /// and VPN agents, the configured labels and this server's own job stay protected.
     /// </remarks>
     public string? RefusalInUserDomain(string label)
     {
         ArgumentNullException.ThrowIfNull(label);
 
-        if (!label.StartsWith(ApplePrefix, StringComparison.OrdinalIgnoreCase) || Same(label, options.ServiceLabel))
+        if (!label.StartsWith(ApplePrefix, StringComparison.OrdinalIgnoreCase) || Same(label, options.ServiceLabel) ||
+            AppleRemoteAccess.Any(p => label.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
             return Refusal(label);
         }

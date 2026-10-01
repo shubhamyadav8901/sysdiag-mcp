@@ -134,7 +134,8 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
             throw new ProcessControlException("launchctl list returned no jobs, so protected processes cannot be told apart; only resume is allowed. Nothing was sent.");
         }
 
-        // Run as root, launchctl list is the system domain; run as anyone else, it is that user's own domain.
+        // Run as root, launchctl list is the system domain; run as anyone else inside a user session, it is that user's
+        // own domain. The shipped server is a root LaunchDaemon, so the second case is a server started by hand.
         var root = IsRoot();
         Func<string, string?> refusal = root ? _protection.Refusal : _protection.RefusalInUserDomain;
         if (jobs.FirstOrDefault(row => row.ProcessId == processId && refusal(row.Label) is not null)
@@ -145,33 +146,40 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
 
         if (root)
         {
-            await RequireUnprotectedInUserDomainAsync(processId, cancellationToken).ConfigureAwait(false);
+            await RequireUnprotectedInUserDomainAsync(processId, jobs, cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>A human account's process may be the main process of a job in that user's own domain -- a remote-access
     /// agent such as Tailscale's or TeamViewer's -- which root's launchctl list does not show.</summary>
     /// <remarks>
-    /// launchctl asuser runs launchctl list in the user's bootstrap context, so it prints the same documented table.
-    /// Accounts below 501 are system accounts with no user session and so no agents; asking for one would refuse every
-    /// signal to _www and its kin. A user's list that cannot be read fails closed, like the system list.
+    /// <para>launchctl asuser alone changes the bootstrap but not the credentials, and root's launchctl may then still
+    /// answer for the system domain; so the list is run as the user too (sudo -n -u #uid, which root may do without a
+    /// password), in the user's bootstrap, where it prints the same documented table for the user's own domain.</para>
+    /// <para>Accounts below 501, and nobody (-2), are system accounts with no user session and so no agents; asking
+    /// for one would refuse every signal to _www and its kin. A user's list that cannot be read, that is empty -- a
+    /// session always holds Apple's agents -- or that is the system list again fails closed. That includes a user
+    /// who has logged out but left processes behind: only resume is allowed for them until they log in.</para>
+    /// <para><b>Unverified on a Mac</b>: the capture script records this list, and CI's macOS job settles it.</para>
     /// </remarks>
-    private async Task RequireUnprotectedInUserDomainAsync(int processId, CancellationToken cancellationToken)
+    private async Task RequireUnprotectedInUserDomainAsync(
+        int processId, IReadOnlyList<(int? ProcessId, string Status, string Label)> systemJobs, CancellationToken cancellationToken)
     {
         var pid = processId.ToString(CultureInfo.InvariantCulture);
         var owner = await commands.RunAsync("ps", ["-p", pid, "-o", "uid="], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
-        if (owner.ExitCode != 0 || !int.TryParse(owner.StandardOutput.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var uid))
+        if (owner.ExitCode != 0 || !long.TryParse(owner.StandardOutput.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var uid))
         {
             throw new ProcessControlException($"PID {processId}'s owner could not be read, so its user's protected jobs cannot be checked; only resume is allowed. Nothing was sent.");
         }
 
-        if (uid < FirstUserId)
+        // nobody prints as -2 or as 4294967294, its unsigned spelling.
+        if (uid < FirstUserId || uid > int.MaxValue)
         {
             return;
         }
 
         var account = uid.ToString(CultureInfo.InvariantCulture);
-        var list = await commands.RunAsync("launchctl", ["asuser", account, "launchctl", "list"], options.ExternalToolTimeout, cancellationToken)
+        var list = await commands.RunAsync("launchctl", ["asuser", account, "sudo", "-n", "-u", $"#{account}", "launchctl", "list"], options.ExternalToolTimeout, cancellationToken)
             .ConfigureAwait(false);
         if (list.ExitCode != 0)
         {
@@ -179,7 +187,20 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
                 $"The launchd jobs of uid {uid}, who owns PID {processId}, could not be read ({list.StandardError.Trim()}), so only resume is allowed. Nothing was sent.");
         }
 
-        if (LaunchctlList.Parse(list.StandardOutput).FirstOrDefault(row => row.ProcessId == processId && _protection.RefusalInUserDomain(row.Label) is not null)
+        var jobs = LaunchctlList.Parse(list.StandardOutput);
+        if (jobs.Count == 0)
+        {
+            throw new ProcessControlException(
+                $"The launchd list for uid {uid}, who owns PID {processId}, was empty, which no user session is; only resume is allowed. Nothing was sent.");
+        }
+
+        if (jobs.Select(j => j.Label).ToHashSet(StringComparer.Ordinal).SetEquals(systemJobs.Select(j => j.Label)))
+        {
+            throw new ProcessControlException(
+                $"Asking for uid {uid}'s launchd jobs returned the system domain's instead, so its agents cannot be told apart; only resume is allowed. Nothing was sent.");
+        }
+
+        if (jobs.FirstOrDefault(row => row.ProcessId == processId && _protection.RefusalInUserDomain(row.Label) is not null)
             is { Label: { Length: > 0 } label })
         {
             throw new ProcessControlException($"PID {processId} is the main process of '{label}', a protected job in uid {uid}'s own launchd domain. Nothing was sent.");

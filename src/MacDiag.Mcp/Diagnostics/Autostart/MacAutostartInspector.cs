@@ -399,7 +399,12 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                 string? detail = null;
                 if (verify && candidate.Image is { } image && !missing && candidate.Problem is null)
                 {
-                    if (candidate.Script is not null)
+                    if (_denied.Contains(image) || (candidate.Script is { } denied && _denied.Contains(denied)))
+                    {
+                        // Not judged is neither unsigned nor signed: codesign cannot read it any more than stat could.
+                        (signed, detail) = (null, "could not be examined (permission denied)");
+                    }
+                    else if (candidate.Script is not null)
                     {
                         (signed, detail) = (false, "a script; its interpreter's signature says nothing about it");
                     }

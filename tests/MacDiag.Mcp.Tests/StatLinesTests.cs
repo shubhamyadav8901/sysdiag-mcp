@@ -34,6 +34,17 @@ public sealed class StatLinesTests
     }
 
     [Fact]
+    public async Task A_path_privacy_protection_refuses_counts_as_out_of_sight_too()
+    {
+        // A root daemon without Full Disk Access is refused by TCC with EPERM, not EACCES.
+        var commands = new FakeCommands((_, _) => new ExternalResult(1, "\n", "stat: /Users/a/Library/Mail: stat: Operation not permitted\n"));
+
+        var outcome = await StatLines.StatOutcomeAsync(commands, ["/Users/a/Library/Mail"], TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(["/Users/a/Library/Mail"], outcome.Denied);
+    }
+
+    [Fact]
     public async Task A_path_stat_may_not_look_at_is_told_apart_from_one_that_does_not_exist()
     {
         var lines = new Dictionary<string, string> { ["/a"] = Line("/a", 0, 0, "0644", "Regular File") };

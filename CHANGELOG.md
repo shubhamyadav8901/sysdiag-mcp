@@ -22,7 +22,7 @@ release fixed something that had been silently wrong, it says what the wrong ans
     `named_pipes`, `update_self` (a launchd swap that restarts the old build on any abort and rolls back a
     build that does not come up), `service_config`, `service_control` and `process_control` (which refuse what
     keeps the Mac reachable, including the main process of a protected launchd job, in the system domain or a
-    user's own), `event_log_tail`
+    user's own - the latter not yet verified on a Mac), `event_log_tail`
     (the unified log, walked backwards in time windows), `container_list` (Docker Desktop, Colima, OrbStack
     and Rancher Desktop sockets, each checked for owner and type first), `file_signatures` (codesign,
     Gatekeeper for app bundles, package receipts, SHA-256), `autostart_audit` (launchd, cron, periodic,

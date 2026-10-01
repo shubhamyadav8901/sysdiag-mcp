@@ -41,7 +41,12 @@ log show --style ndjson --last 5m | wc -c > "$out/log-size" || true
 codesign -dvvv /bin/ls 2> "$out/codesign-dvvv-apple" || true
 pkgutil --file-info /bin/ls > "$out/pkgutil-file-info" || true
 # A home directory, which carries an ACL (group:everyone deny delete); /Library usually has none.
-ls -lde "/Users/${SUDO_USER:-$(id -un)}" > "$out/ls-lde" || true
+user="${SUDO_USER:-$(id -un)}"
+home="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+ls -lde "${home:-/Users/$user}" > "$out/ls-lde" || true
+# process_control's view of a user's own launchd domain, exactly as the server asks for it.
+uid="$(id -u "$user")"
+launchctl asuser "$uid" sudo -n -u "#$uid" launchctl list > "$out/launchctl-list-user" || true
 # The server's own stat format; printf turns %% into % and \t into a TAB.
 stat -f "$(printf '%%u\t%%g\t%%Mp%%Lp\t%%Sf\t%%z\t%%m\t%%HT\t%%N')" -- / /bin/ls /dev/null > "$out/stat-lines" || true
 systemextensionsctl list > "$out/systemextensionsctl-list" || true

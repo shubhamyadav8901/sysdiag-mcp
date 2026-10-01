@@ -169,14 +169,15 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
         var name = await OneLineAsync("id", ["-un", "--", key], cancellationToken).ConfigureAwait(false);
         // id -Gn joins names with spaces, and a directory group may hold one ("Domain Users"): the names are split only
         // when there are as many as there are gids, and the gids -- never the names -- decide whether an ACL applies.
-        var ids = (await OneLineAsync("id", ["-G", "--", key], cancellationToken).ConfigureAwait(false) ?? string.Empty)
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        var idTokens = (await OneLineAsync("id", ["-G", "--", key], cancellationToken).ConfigureAwait(false) ?? string.Empty)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var ids = idTokens
             .Select(g => uint.TryParse(g, NumberStyles.None, CultureInfo.InvariantCulture, out var gid) ? gid : (uint?)null)
             .OfType<uint>()
             .ToHashSet();
         var names = await OneLineAsync("id", ["-Gn", "--", key], cancellationToken).ConfigureAwait(false) ?? string.Empty;
         var split = names.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        IReadOnlyList<string> groups = split.Length == ids.Count || names.Length == 0 ? split : [names];
+        IReadOnlyList<string> groups = split.Length == idTokens.Length || names.Length == 0 ? split : [names];
         if (processId is null && name is not null && description != name)
         {
             description = $"{name} (uid {uid})";
@@ -220,7 +221,13 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
                 continue;
             }
 
+            // An inherited entry reads "group:staff inherited deny ...": the word is not part of the group's name.
             var principal = entry[..deny];
+            if (principal.EndsWith(" inherited", StringComparison.Ordinal))
+            {
+                principal = principal[..^" inherited".Length];
+            }
+
             var applies = principal == "group:everyone"
                 || (principal.StartsWith("user:", StringComparison.Ordinal) && principal["user:".Length..] == subject.UserName)
                 || (principal.StartsWith("group:", StringComparison.Ordinal) &&

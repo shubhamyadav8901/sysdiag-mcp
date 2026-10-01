@@ -198,7 +198,7 @@ public sealed class AccessTests
     [Fact]
     public void Acl_entries_are_read_from_ls_without_their_index()
     {
-        Assert.Equal(["group:everyone deny delete", "user:admin allow read,write", "group:staff deny write,append inherited"],
+        Assert.Equal(["group:everyone deny delete", "user:admin allow read,write", "group:staff inherited deny write,append"],
             LsAcl.Parse(Fixture(Unverified, "ls-lde")));
         Assert.Empty(LsAcl.Parse("-rw-r--r--  1 root  wheel  0 Oct  1 09:00 /x\n"));
     }
@@ -212,7 +212,7 @@ public sealed class AccessTests
 
         Assert.Equal(3, report.Acl.Count);
         Assert.Contains(report.Notes, n => n.Contains("group:everyone deny delete", StringComparison.Ordinal));
-        Assert.Contains(report.Notes, n => n.Contains("group:staff deny write,append inherited", StringComparison.Ordinal));
+        Assert.Contains(report.Notes, n => n.Contains("group:staff inherited deny write,append", StringComparison.Ordinal));
         Assert.DoesNotContain(report.Notes, n => n.Contains("user:admin", StringComparison.Ordinal));
     }
 
@@ -238,6 +238,27 @@ public sealed class AccessTests
         Assert.Contains(report.Notes, n => n.Contains("group:Domain Users deny", StringComparison.Ordinal));
         Assert.DoesNotContain(report.Notes, n => n.Contains("'group:Domain deny", StringComparison.Ordinal));
         Assert.Equal(["staff Domain Users everyone"], report.Subject.Groups);
+    }
+
+    [Fact]
+    public async Task A_gid_id_lists_twice_does_not_run_the_group_names_together()
+    {
+        var mac = new FakeMac { GroupNames = "staff staff everyone", GroupIds = "20 20 12" };
+
+        var report = await Inspect(mac);
+
+        Assert.Equal(["staff", "staff", "everyone"], report.Subject.Groups);
+    }
+
+    [Fact]
+    public async Task An_inherited_deny_entry_is_matched_by_its_group_not_by_the_word_inherited()
+    {
+        var mac = new FakeMac { Acl = " 0: group:staff inherited deny write,append\n" };
+
+        var report = await Inspect(mac);
+
+        Assert.Contains(report.Notes, n => n.Contains("through group:staff:", StringComparison.Ordinal));
+        Assert.DoesNotContain(mac.Commands.Calls, c => c.Program == "dscacheutil" && c.Arguments.Contains("staff inherited"));
     }
 
     [Fact]

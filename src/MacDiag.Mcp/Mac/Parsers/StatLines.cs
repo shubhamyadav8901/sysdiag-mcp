@@ -76,15 +76,22 @@ public static class StatLines
         return new StatOutcome(stats, denied);
     }
 
-    /// <summary>The path in one "stat: &lt;path&gt;: stat: Permission denied" line, or null.</summary>
+    /// <summary>The path in one "stat: &lt;path&gt;: stat: Permission denied" line -- or "Operation not permitted",
+    /// which is how privacy protection (TCC) refuses a root daemon without Full Disk Access -- or null.</summary>
     private static string? Refused(string line)
     {
-        const string Prefix = "stat: ", Suffix = ": stat: Permission denied";
+        const string Prefix = "stat: ";
         var trimmed = line.TrimEnd('\r');
-        return trimmed.StartsWith(Prefix, StringComparison.Ordinal) && trimmed.EndsWith(Suffix, StringComparison.Ordinal) &&
-               trimmed.Length > Prefix.Length + Suffix.Length
-            ? trimmed[Prefix.Length..^Suffix.Length]
-            : null;
+        foreach (var suffix in new[] { ": stat: Permission denied", ": stat: Operation not permitted" })
+        {
+            if (trimmed.StartsWith(Prefix, StringComparison.Ordinal) && trimmed.EndsWith(suffix, StringComparison.Ordinal) &&
+                trimmed.Length > Prefix.Length + suffix.Length)
+            {
+                return trimmed[Prefix.Length..^suffix.Length];
+            }
+        }
+
+        return null;
     }
 
     public static bool HasControlCharacter(string path) => path.Any(char.IsControl);

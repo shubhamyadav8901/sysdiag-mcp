@@ -319,6 +319,20 @@ public sealed class AutostartTests
     }
 
     [Fact]
+    public async Task A_program_stat_may_not_look_at_is_not_judged_unsigned_when_signatures_are_checked()
+    {
+        var mac = new FakeMac();
+        mac.Stats.Remove(AgentDProgram);
+        mac.Denied.Add(AgentDProgram);
+
+        var entry = (await Audit(mac, new AutostartQuery(VerifySignatures: true))).Entries.Single();
+
+        Assert.Null(entry.Signed);
+        Assert.Contains("permission denied", entry.SignatureDetail, StringComparison.Ordinal);
+        Assert.DoesNotContain(mac.Commands.Calls, c => c.Program == "codesign");
+    }
+
+    [Fact]
     public async Task A_link_this_server_may_not_follow_costs_nothing_but_its_resolved_spelling()
     {
         var mac = new FakeMac();

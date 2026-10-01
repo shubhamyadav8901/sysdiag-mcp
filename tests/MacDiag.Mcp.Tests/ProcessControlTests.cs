@@ -37,6 +37,9 @@ public sealed class ProcessControlTests
 
         public List<int> AsUser { get; } = [];
 
+        /// <summary>What ps prints for the uid, when it is not the table's number: nobody is -2 or 4294967294.</summary>
+        public string? UidText { get; init; }
+
         public List<string> Signals { get; } = [];
 
         private int _identityReads;
@@ -73,7 +76,7 @@ public sealed class ProcessControlTests
 
             if (columns == "uid=")
             {
-                return FakeCommands.Ok($"  {p.Uid}\n");
+                return FakeCommands.Ok($"  {UidText ?? p.Uid.ToString(System.Globalization.CultureInfo.InvariantCulture)}\n");
             }
 
             // The re-read just before the signal asks for pid, lstart and comm only.
@@ -137,6 +140,76 @@ public sealed class ProcessControlTests
         Assert.Contains("io.tailscale.", ex.Message, StringComparison.Ordinal);
         Assert.Contains("uid 501", ex.Message, StringComparison.Ordinal);
         Assert.Empty(mac.Signals);
+    }
+
+    [Fact]
+    public async Task The_users_list_is_read_by_launchctl_running_as_that_user_not_as_root()
+    {
+        // As root, asuser changes the bootstrap but not the credentials, and launchctl may still answer for the
+        // system domain; run as the user it lists the user's own.
+        var mac = new Mac();
+        mac.Processes[4600] = new(1, "S", Start, "/usr/local/bin/tool", "tool", Uid: 501);
+        mac.UserLists[501] = "4600\t0\tcom.example.tool\n";
+        var commands = mac.Commands;
+
+        await new MacProcessController(commands, MacDiagOptions.FromEnvironment(new Hashtable()), NullLogger<MacProcessController>.Instance)
+        {
+            ExitWait = TimeSpan.FromMilliseconds(200), PollDelay = TimeSpan.Zero, SelfPid = () => 99999, IsRoot = () => true,
+        }.ControlAsync(4600, "tool", ProcessAction.Terminate, null, CancellationToken.None);
+
+        Assert.Contains(commands.Calls, c => c.Program == "launchctl" && c.Arguments.SequenceEqual(["asuser", "501", "sudo", "-n", "-u", "#501", "launchctl", "list"]));
+    }
+
+    [Fact]
+    public async Task An_empty_list_for_the_users_domain_fails_closed_because_a_session_always_has_jobs()
+    {
+        var mac = new Mac();
+        mac.Processes[4600] = new(1, "S", Start, "/usr/local/bin/tool", "tool", Uid: 501);
+        mac.UserLists[501] = "";
+
+        await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(4600, "tool", ProcessAction.Terminate, null, CancellationToken.None));
+        Assert.Empty(mac.Signals);
+    }
+
+    [Fact]
+    public async Task A_users_list_that_is_the_system_list_again_fails_closed_because_the_wrong_domain_answered()
+    {
+        var mac = new Mac();
+        mac.Processes[4600] = new(1, "S", Start, "/usr/local/bin/tool", "tool", Uid: 501);
+        mac.UserLists[501] = string.Join('\n', Fixture(Unverified, "launchctl-list").Split('\n').Where(l => !l.StartsWith("PID", StringComparison.Ordinal)));
+
+        var ex = await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(4600, "tool", ProcessAction.Terminate, null, CancellationToken.None));
+
+        Assert.Contains("system", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(mac.Signals);
+    }
+
+    [Fact]
+    public async Task The_screen_sharing_agent_in_a_users_domain_stays_protected_as_the_operator_may_be_connected_through_it()
+    {
+        var mac = new Mac();
+        mac.Processes[4900] = new(1, "S", Start, "/System/Library/CoreServices/RemoteManagement/ScreensharingAgent.bundle/Contents/MacOS/ScreensharingAgent", "ScreensharingAgent", Uid: 501);
+        mac.UserLists[501] = "4900\t0\tcom.apple.screensharing.agent\n4600\t0\tcom.apple.Finder\n";
+
+        await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(4900, "ScreensharingAgent", ProcessAction.Kill, null, CancellationToken.None));
+        Assert.Empty(mac.Signals);
+    }
+
+    [Theory]
+    [InlineData("-2")]
+    [InlineData("4294967294")]
+    public async Task A_process_owned_by_nobody_is_a_system_account_with_no_user_domain(string uid)
+    {
+        var mac = new Mac { UidText = uid };
+        mac.Processes[4800] = new(1, "S", Start, "/usr/local/bin/worker", "worker", Uid: -2);
+
+        await Controller(mac).ControlAsync(4800, "worker", ProcessAction.Terminate, null, CancellationToken.None);
+
+        Assert.Empty(mac.AsUser);
+        Assert.Equal(["TERM 4800"], mac.Signals);
     }
 
     [Fact]
