@@ -27,6 +27,21 @@ public static class ServerBuilder
                                                  have written it or any directory above it
           MacDiag.Mcp --help                     this text
 
+        Service management (root; launchd):
+          MacDiag.Mcp --install-service --http <url> [--token-stdin | --token <t>] [--label <l>] [--artifacts <dir>]
+                      [--allow-self-update] [--allow-command-execution] [--allow-arbitrary-write]
+                      [--allow-arbitrary-read] [--read-only]
+          MacDiag.Mcp --uninstall-service [--label <l>] [--purge]
+          MacDiag.Mcp --service-status [--label <l>]
+        Installs /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp, /etc/macdiag/macdiag.env
+        (0600: token and grants), /var/db/macdiag and /var/log/macdiag (0700) and
+        /Library/LaunchDaemons/<l>.plist (default label com.windiag.macdiag), then loads it and waits until
+        it is listening, reporting the Application Firewall's state. --token-stdin reads the token from
+        standard input, keeping it out of sudo's log and ps. --purge also deletes /var/db/macdiag.
+        Under launchd the server logs to /var/log/macdiag/macdiag.log (rolled at 10 MiB); crash.log holds
+        what the runtime writes before that, including a refused configuration, which launchd retries
+        every 10 s until it is fixed.
+
         put_file writes freely only under the artifact directory. Into the server's own directory it
         needs MACDIAG_ALLOW_SELF_UPDATE=1, since staging a build is the only reason to.
 

@@ -20,10 +20,40 @@ if (!OperatingSystem.IsMacOS())
     return 2;
 }
 
+// Service management: sets this Mac up from the one file already on it, and never starts a server. Handled
+// before the options below because these switches configure the settings the daemon will get, not this process's.
 if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--service-status"))
 {
-    Console.Error.WriteLine("[macdiag] service management arrives with the launchd installer.");
-    return 2;
+    try
+    {
+        if (!Environment.IsPrivilegedProcess)
+        {
+            Console.Error.WriteLine("[macdiag] service management needs root; run it with sudo.");
+            return 2;
+        }
+
+        var label = MacServiceInstallOptions.Label(args);
+        if (args.Contains("--service-status"))
+        {
+            return MacServiceInstaller.Status(label);
+        }
+
+        return args.Contains("--uninstall-service")
+            ? MacServiceInstaller.Uninstall(label, purge: args.Contains("--purge"))
+            : MacServiceInstaller.Install(MacServiceInstallOptions.Parse(args));
+    }
+    catch (ConfigurationException ex)
+    {
+        Console.Error.WriteLine($"[macdiag] {ex.Message}");
+        return 2;
+    }
+    catch (Exception ex)
+    {
+        // The installer's audience is a person at a console without a working server yet, so a raw stack trace
+        // is the least useful thing it could print. Name the type; they are the one who can report it.
+        Console.Error.WriteLine($"[macdiag] service management failed: {ex.GetType().FullName}: {ex.Message}");
+        return 4;
+    }
 }
 
 MacDiagOptions options;
@@ -76,7 +106,7 @@ async Task<int> RunStdio(MacDiagOptions opts)
 {
     // The server's own directory as content root, as DiagServerHost does for HTTP: launchd starts daemons in /.
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { ContentRootPath = AppContext.BaseDirectory });
-    ConfigureLogging(builder.Logging);
+    ConfigureLogging(builder.Logging, opts);
     ServerBuilder.ConfigureServices(builder.Services, opts).WithStdioServerTransport();
 
     var host = builder.Build();
@@ -94,16 +124,24 @@ async Task<int> RunHttp(MacDiagOptions opts, string address)
         new HttpHostSettings(address, opts.Token, "[macdiag]", "MACDIAG_TOKEN", token),
         builder =>
         {
-            ConfigureLogging(builder.Logging);
+            ConfigureLogging(builder.Logging, opts);
             ServerBuilder.ConfigureServices(builder.Services, opts).WithHttpTransport();
         },
         afterBanner: app => Log(app.Services, $"starting http server ({opts.Describe()})")).ConfigureAwait(false);
 }
 
-// stdout is the MCP channel in stdio mode, so every log line goes to stderr.
-void ConfigureLogging(ILoggingBuilder logging)
+// stdout is the MCP channel in stdio mode, so every log line goes to stderr -- except under launchd, where
+// stderr is crash.log, never rotated, and kept for what the runtime itself writes. launchd sets
+// XPC_SERVICE_NAME to the job's label, which is how "started by our own job" is told apart from a by-hand run.
+void ConfigureLogging(ILoggingBuilder logging, MacDiagOptions opts)
 {
     logging.ClearProviders();
+    if (opts.ServiceLabel is { } label && Environment.GetEnvironmentVariable("XPC_SERVICE_NAME") == label)
+    {
+        logging.AddProvider(new RollingFileLoggerProvider(Path.Combine(MacServiceInstaller.LogDirectory, "macdiag.log")));
+        return;
+    }
+
     logging.AddConsole(consoleOptions => consoleOptions.LogToStandardErrorThreshold = LogLevel.Trace);
 }
 
