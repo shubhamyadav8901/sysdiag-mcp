@@ -164,6 +164,114 @@
     }
   },
   {
+    "name": "process_handles",
+    "title": "Everything one process has open",
+    "description": "List everything one process has open - files, directories, devices, sockets, pipes and kqueues - plus the files it has mapped, each with how it was opened: read, write or read-write. Use it to answer what a process is actually touching: which log it is writing, which file it holds open, how many sockets it has. Scoped to one process, so it is far cheaper than path_handle_search, which walks every process.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "includeAllObjectTypes": {
+          "description": "Set false for file references only - open files and directories plus mapped files.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processName": {
+                "type": "string"
+              },
+              "processId": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "userId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "handleValue": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "access": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "processName",
+              "processId",
+              "type",
+              "userId",
+              "handleValue",
+              "name",
+              "access"
+            ]
+          }
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "handles",
+        "elevated",
+        "truncated",
+        "totalMatched",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Everything one process has open",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "process_list",
     "title": "Running processes",
     "description": "List running processes with their PID, parent PID, start time, resident memory, user, state and full command line. The command line is the point: it is what tells one java or python process from another. Filter by name or command line, or ask for a single PID. Containers run in a virtual machine on macOS, so their processes are not host processes and do not appear here.",
@@ -279,6 +387,106 @@
     },
     "annotations": {
       "title": "Running processes",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "process_modules",
+    "title": "Files mapped into a process",
+    "description": "List the executable and libraries a process has mapped, with each one\u0027s path and size. Use it when the library on disk and the one in use might differ, or to see which non-system library a process loaded. System libraries are mapped from the dyld shared cache and are not listed individually; the executable, dyld and any non-system library are. Filter by name or path.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "description": "Process id. Get a current one from process_list; PIDs are reused.",
+          "type": "integer"
+        },
+        "nameFilter": {
+          "description": "Only files whose path contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "processId"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "modules": {
+          "type": "object",
+          "properties": {
+            "processId": {
+              "type": "integer"
+            },
+            "processName": {
+              "type": "string"
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "path",
+                  "sizeBytes"
+                ]
+              }
+            },
+            "totalMatched": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "processId",
+            "processName",
+            "modules",
+            "totalMatched",
+            "truncated",
+            "limitations"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "modules"
+      ]
+    },
+    "annotations": {
+      "title": "Files mapped into a process",
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true,

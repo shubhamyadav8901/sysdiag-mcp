@@ -24,5 +24,7 @@ public sealed class MacCapabilityRequirements : ICapabilityRequirements
             ["system_overview"] = new("sw_vers, sysctl, vm_stat, mount, and each volume's size", "sw_vers", null),
             ["run_command"] = new("/bin/zsh -c, /bin/sh -c, /bin/bash -c, or a direct exec", null, null),
             ["process_list"] = new("ps -axww (pid, ppid, uid, rss, stat, lstart, args) joined with ps -axww -o pid,comm", "ps", null),
+            ["process_handles"] = new("lsof -p, scoped to one process", "lsof", "cannot list the open files of processes owned by other users"),
+            ["process_modules"] = new("lsof -p (txt entries); system libraries are in the dyld shared cache", "lsof", "cannot list the mapped files of processes owned by other users"),
         };
 }
