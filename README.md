@@ -398,15 +398,22 @@ uninstall) run in CI's `macos-latest` job, which needs the repository on a remot
 against an interactive Mac. The parsers are tested against output written from Apple's documentation
 (`tests/MacDiag.Mcp.Tests/Fixtures/macos-unverified`) until `tools/capture-macos-fixtures.sh` has run on a Mac.
 
-This first part serves:
+It serves:
 
 | Tool | Answers from | Notes |
 |---|---|---|
 | `system_overview` | `sw_vers`, `sysctl -n hw.model hw.memsize kern.osrelease kern.boottime`, `vm_stat`, `mount`, each volume's size | Each APFS container once, by its writable volume, because its volumes share free space; the sealed system volume is never flagged full. Anything that could not be read, or that came back in a shape it does not recognise, is listed as a warning, so a 0 is never mistaken for a real value. The page size is never guessed |
 | `run_command` | `/bin/zsh -c` (default), `/bin/sh -c`, `/bin/bash -c` (bash 3.2), or a direct exec | Only with `--allow-command-execution`, never on a read-only server |
 | `capabilities`, `put_file`, `get_file` | the shared kit | As on every server |
+| `process_list` | `ps -axww` (pid, ppid, uid, rss, stat, lstart, args) joined by PID with `ps -axww -o pid,comm` | Command lines are decoded from ps's vis escaping; a process that exits between the two calls keeps no path rather than another's. Containers run in a VM, so their processes are not listed |
+| `process_handles`, `process_modules` | `lsof -p` (field output, NUL-terminated, so a name cannot forge a record) | Files, sockets, pipes and kqueues with their access mode. System libraries live in the dyld shared cache and are not listed one by one |
+| `path_handle_search` | a full `lsof -b` listing, matched under every spelling of each name; for a full path, also `lsof -f --` by device and inode | Finds `/tmp/...` though lsof says `/private/tmp/...`, and `/Users/...` though it says `/System/Volumes/Data/Users/...`; a directory finds what is open beneath it; a hard link is found by identity |
+| `who_locks_path` | `lsof -f -- <path>` | Darwin's lsof does not report lock state, so it lists who has the path open (reading, writing, running it, mapping it, or as a working directory), never who locks it. A mount point is answered as that directory |
+| `network_owners` | `lsof -i -Ts`, joined by each socket's kernel address | Every owner of a shared listener; an IPv4 and an IPv6 listener on one port stay separate |
+| `named_pipes` | unix sockets and FIFOs from a full lsof listing | Darwin's lsof does not report whether a unix socket is listening, so `listening` is always null |
+| `update_self` | a Mach-O check (thin or universal, the slice this Mac runs, `codesign --verify` for arm64), then a detached helper that swaps the binary and runs `launchctl kickstart -k` | Only with `--allow-self-update`. Any failure before the swap starts the old build again; a new build that does not come up within 30 s (new PID, matching hash, port answering) is rolled back. **This restart path has not yet run on a Mac**; CI's macOS smoke exercises it |
 
-The process, file, network, launchd, log, signature and access tools, and `update_self`, follow. Programs
+The launchd, log, signature, autostart, access, container and process-control tools follow. Programs
 are run from `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin` only (never `/usr/local` or `/opt/homebrew`, which
 an admin user can own), with `LC_ALL=C` and no pager.
 

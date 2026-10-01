@@ -17,8 +17,10 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 - **MacDiag.Mcp (preview), a macOS diagnostics server**, for macOS 13 or later on Apple Silicon and Intel,
   reached through the same relay.
-  - This first part serves the kit tools, `run_command` (`zsh`, `sh`, `bash`, `none`) and
-    `system_overview`.
+  - It serves the kit tools, `run_command` (`zsh`, `sh`, `bash`, `none`), `system_overview`, `process_list`,
+    `process_handles`, `process_modules`, `path_handle_search`, `who_locks_path`, `network_owners`,
+    `named_pipes` and `update_self` (a launchd swap that restarts the old build on any abort and rolls back a
+    build that does not come up).
   - `--install-service` installs it as a launchd daemon from root-only paths.
   - It refuses to start if its settings file, its binary, or any directory above them could have been
     written by an account other than root.
