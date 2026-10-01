@@ -18,6 +18,9 @@ sysctl -n hw.model hw.memsize kern.osrelease kern.boottime > "$out/sysctl"
 vm_stat > "$out/vm_stat"
 mount > "$out/mount"
 
+ps -axww -o pid=,ppid=,uid=,rss=,stat=,lstart=,args= > "$out/ps-args"
+ps -axww -o pid=,comm= > "$out/ps-comm"
+
 # lsof exits 1 when it finds nothing, which set -e would read as failure.
 lsof -n -P -w -F0pcuRfatdDsinPT -p $$ > "$out/lsof-p" || [ $? -eq 1 ]
 lsof -n -P -w -F0pcuRfatdDsinPT -i -Ts > "$out/lsof-i" || [ $? -eq 1 ]

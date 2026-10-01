@@ -1,0 +1,7 @@
+# Source: ps(1), ps -axww -o pid=,comm= under LC_ALL=C. Unverified. 777 exited between the two calls; 900 started after the first.
+    1 /sbin/launchd
+  501 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
+  612 java
+  640 /bin/sleep
+  850 /Applications/Visual Studio Code.app/Contents/MacOS/Electron
+  900 /usr/bin/newcomer
