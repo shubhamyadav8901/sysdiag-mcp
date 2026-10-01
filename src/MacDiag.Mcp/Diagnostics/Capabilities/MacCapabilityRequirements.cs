@@ -36,7 +36,7 @@ public sealed class MacCapabilityRequirements : ICapabilityRequirements
             ["event_log_tail"] = new("log show --style ndjson over backward time windows", "log", null),
             ["container_list"] = new("Docker Engine API on /var/run/docker.sock and each user's Docker Desktop, Colima, OrbStack or Rancher Desktop socket, each checked for type, owner and the directories above it", null, "cannot reach another user's container engine unless the server runs as root"),
             ["file_signatures"] = new("SHA-256 via shasum; codesign --verify --strict and -dvvv; spctl --assess -v for app bundles; pkgutil --file-info", "codesign", null),
-            ["autostart_audit"] = new("launchd plists via plutil, crontabs, periodic scripts, loginwindow hooks and SecurityAgent plugins, each file and the directories above it statted; codesign when signatures are checked", MacDiag.Mcp.Mac.Launchd.Plutil.Program, "cannot read users' crontabs, root's login hooks or homes it has no access to without root"),
+            ["autostart_audit"] = new("launchd plists via plutil, crontabs, periodic scripts, loginwindow hooks, SecurityAgent plugins, systemextensionsctl list, kmutil showloaded and sfltool dumpbtm, each file and the directories above it statted; codesign when signatures are checked", MacDiag.Mcp.Mac.Launchd.Plutil.Program, "cannot read users' crontabs, root's login hooks, Background Task Management or homes it has no access to without root"),
             ["update_self"] = new("staged-build swap through a detached helper and launchctl kickstart (a relaunch when not a daemon), rolled back if the new build does not come up", null, null, RequiresElevation: true),
         };
 }

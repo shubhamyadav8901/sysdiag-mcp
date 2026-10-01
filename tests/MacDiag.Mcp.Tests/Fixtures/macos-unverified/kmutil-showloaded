@@ -1,0 +1,5 @@
+# kmutil showloaded, written from kmutil(8) and kextstat(8) output: Index Refs Address Size Wired Name (Version) UUID <Linked Against>. Unverified.
+Index Refs Address            Size       Wired      Name (Version) UUID <Linked Against>
+    1  163 0                  0          0          com.apple.kpi.bsd (23.6.0) 5A1F2B3C-4D5E-6F70-8192-A3B4C5D6E7F8 <>
+   32    3 0xffffff7f80f4c000 0x14000    0x14000    com.apple.iokit.IOUSBHostFamily (1.2) 1B2C3D4E-5F60-7182-93A4-B5C6D7E8F901 <8 6 5 3 1>
+  187    0 0xffffff7f8a4b2000 0x5000     0x5000     com.example.driver (1.0.0) 0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9 <8 6 5 3 1>

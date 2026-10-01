@@ -1,0 +1,9 @@
+# systemextensionsctl list, written from systemextensionsctl(8) and published output; fields are TAB-separated. Unverified.
+3 extension(s)
+--- com.apple.system_extension.network_extension
+enabled	active	teamID	bundleID (version)	name	[state]
+*	*	ABCDE12345	com.example.vpn.extension (1.2.3/45)	Example VPN	[activated enabled]
+--- com.apple.system_extension.endpoint_security
+enabled	active	teamID	bundleID (version)	name	[state]
+*	*	X9E956P446	com.example.edr.agent (7.10/1234)	Example EDR	[activated enabled]
+		ABCDE12345	com.example.old (1.0/1)	Old Extension	[terminated waiting to uninstall on reboot]

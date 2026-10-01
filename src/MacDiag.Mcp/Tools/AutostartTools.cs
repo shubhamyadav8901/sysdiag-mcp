@@ -22,10 +22,12 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
         UseStructuredContent = true)]
     [Description(
         "List what starts on its own on this Mac - launchd daemons and agents (system and every user's), cron, " +
-        "periodic scripts, login and logout hooks and authorization plugins - with the program each runs, when it " +
+        "periodic scripts, login and logout hooks, authorization plugins, system extensions, loaded kernel " +
+        "extensions and Background Task Management items - with the program each runs, when it " +
         "runs, whether it is enabled, and whether another account could change it (the file, the program, the script " +
         "an interpreter runs, or a directory above any of them). categories takes one or more of: all, daemons, " +
-        "agents, useragents, cron, periodic, loginhooks, authplugins. hideApple (default true) leaves out what comes " +
+        "agents, useragents, cron, periodic, loginhooks, authplugins, sysext, kext, btm (btm needs root). hideApple " +
+        "(default true) leaves out what comes " +
         "from the sealed system volume, and, with signatures checked, Apple's own programs; a label is never trusted, " +
         "since whoever writes a plist chooses it. verifySignatures checks each program with codesign; unsignedOnly " +
         "returns only unsigned programs, scripts, missing programs and files another account could change - usually " +

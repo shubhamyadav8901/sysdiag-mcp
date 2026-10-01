@@ -55,6 +55,12 @@ public sealed class AutostartTests
 
         public string[] Homes { get; set; } = [];
 
+        public ExternalResult SystemExtensions { get; set; } = FakeCommands.Ok("0 extension(s)\n");
+
+        public ExternalResult Kexts { get; set; } = FakeCommands.Ok("Index Refs Address            Size       Wired      Name (Version) UUID <Linked Against>\n");
+
+        public ExternalResult Btm { get; set; } = FakeCommands.Ok("");
+
         public bool Root { get; set; } = true;
 
         public FakeCommands Commands { get; private set; } = null!;
@@ -82,6 +88,9 @@ public sealed class AutostartTests
             ("id", "-u") => Uids.TryGetValue(args[^1], out var uid) ? FakeCommands.Ok($"{uid}\n") : new ExternalResult(1, "", "id: no such user"),
             ("codesign", "--verify") => Unsigned.Contains(args[^1]) ? new ExternalResult(1, "", $"{args[^1]}: code object is not signed at all") : new ExternalResult(0, "", ""),
             ("codesign", "-dvvv") => new ExternalResult(0, "", AppleSigned.Contains(args[^1]) ? "Authority=Software Signing\n" : "Authority=Developer ID Application: Example (ABCDE12345)\n"),
+            ("systemextensionsctl", "list") => SystemExtensions,
+            ("kmutil", "showloaded") => Kexts,
+            ("sfltool", "dumpbtm") => Btm,
             _ => new ExternalResult(1, "", $"unexpected {program} {string.Join(' ', args)}"),
         };
     }

@@ -1,0 +1,44 @@
+# sfltool dumpbtm (root), written from published output. The item markers are indented, as sfltool prints them. Unverified.
+========================
+ Records for UID 0 : FFFFEEEE-DDDD-CCCC-BBBB-AAAA00000000
+========================
+
+ ServiceManagement migrated: true
+ SharedFileList migrated: true
+
+ Items:
+
+ #1:
+                 UUID: 8F3A1B2C-3D4E-5F60-7182-93A4B5C6D7E8
+                 Name: com.example.helper
+       Developer Name: Example Corp
+      Team Identifier: ABCDE12345
+                 Type: legacy daemon (0x10010)
+                Flags: [ legacy ] (0x1)
+          Disposition: [enabled, allowed, visible, notified] (0xb)
+           Identifier: 16.com.example.helper
+                  URL: file:///Library/LaunchDaemons/com.example.helper.plist
+      Executable Path: /Library/PrivilegedHelperTools/com.example.helper
+           Generation: 1
+
+========================
+ Records for UID 501 : 11112222-3333-4444-5555-666677778888
+========================
+
+ Items:
+
+ #1:
+                 UUID: 2B3C4D5E-6F70-8192-A3B4-C5D6E7F80912
+                 Name: Example Sync
+       Developer Name: Example Corp
+      Team Identifier: ABCDE12345
+                 Type: login item (0x4)
+          Disposition: [disabled, disallowed, visible, notified] (0xa)
+           Identifier: com.example.sync
+                  URL: file:///Applications/Example%20Sync.app/
+      Executable Path: /Applications/Example Sync.app/Contents/MacOS/Example Sync
+
+ #2:
+                 UUID: 3C4D5E6F-7081-92A3-B4C5-D6E7F8091223
+           Identifier: com.example.broken
+                  URL: file:///Users/alice/Library/LaunchAgents/com.example.broken.plist

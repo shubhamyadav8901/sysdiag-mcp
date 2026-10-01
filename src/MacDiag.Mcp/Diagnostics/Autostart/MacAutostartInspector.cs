@@ -22,7 +22,13 @@ namespace MacDiag.Mcp.Diagnostics.Autostart;
 /// </remarks>
 public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOptions options, IPrivilegeProbe privilege) : IAutostartInspector
 {
-    internal static readonly string[] Categories = ["daemons", "agents", "useragents", "cron", "periodic", "loginhooks", "authplugins"];
+    internal static readonly string[] Categories =
+        ["daemons", "agents", "useragents", "cron", "periodic", "loginhooks", "authplugins", "sysext", "kext", "btm"];
+
+    internal const string AppleExtensionsNote =
+        "Apple's kernel and system extensions are hidden by their bundle identifier, which the extension declares; pass hideApple false to see them.";
+
+    private const string BtmLocation = "Background Task Management (sfltool dumpbtm)";
 
     internal const string AclNote =
         "Write access granted through an ACL is not checked; effective_access answers that for one path.";
@@ -74,6 +80,11 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
         if (wanted.Contains("periodic")) run.Periodic();
         if (wanted.Contains("loginhooks")) await run.LoginHooksAsync().ConfigureAwait(false);
         if (wanted.Contains("authplugins")) run.AuthorizationPlugins();
+        if (wanted.Contains("sysext")) await run.SystemExtensionsAsync().ConfigureAwait(false);
+        if (wanted.Contains("kext")) await run.KextsAsync().ConfigureAwait(false);
+
+        // Last: a legacy daemon or agent it lists may already be an entry from its plist.
+        if (wanted.Contains("btm")) await run.BackgroundTasksAsync().ConfigureAwait(false);
         return await run.FinishAsync().ConfigureAwait(false);
     }
 
@@ -110,6 +121,21 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
         private readonly Dictionary<string, IReadOnlyDictionary<string, bool>> _overrides = new(StringComparer.Ordinal);
         private readonly Dictionary<string, int?> _uids = new(StringComparer.Ordinal);
         private Dictionary<string, StatLine>? _homes;
+        private bool _hiddenExtensions;
+
+        /// <summary>A listing command's output, or null with the failure named as a limitation.</summary>
+        private async Task<string?> ListingAsync(string program, string[] arguments, string command)
+        {
+            var result = await Commands.RunAsync(program, arguments, Timeout, cancellationToken).ConfigureAwait(false);
+            if (result.ExitCode == 0)
+            {
+                return result.StandardOutput;
+            }
+
+            var reason = result.StandardError.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? $"exit {result.ExitCode}";
+            _limitations.Add($"{command} failed ({reason}), so what it lists is missing.");
+            return null;
+        }
 
         private IExternalCommand Commands => owner.Runner;
 
@@ -230,8 +256,110 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             }
         }
 
+        public async Task SystemExtensionsAsync()
+        {
+            const string Command = "systemextensionsctl list";
+            if (await ListingAsync("systemextensionsctl", ["list"], Command).ConfigureAwait(false) is not { } text)
+            {
+                return;
+            }
+
+            var extensions = SystemExtensions.Parse(text);
+            if (extensions.Count == 0 && !SystemExtensions.SaysNone(text) && text.Trim().Length > 0)
+            {
+                _limitations.Add($"{Command} printed nothing this server recognises, so system extensions are not listed.");
+            }
+
+            foreach (var extension in extensions)
+            {
+                if (query.HideApple && (extension.BundleId.StartsWith("com.apple.", StringComparison.Ordinal) || extension.TeamId == "Apple"))
+                {
+                    _hiddenExtensions = true;
+                    continue;
+                }
+
+                _found.Add(new Candidate("sysext", Command, extension.BundleId, extension.Enabled, null,
+                    $"{extension.Kind}: {extension.Name ?? extension.BundleId} {extension.Version}, team {extension.TeamId ?? "none"} [{extension.State}]",
+                    null, null, null, RootOnly, RootOnly));
+            }
+        }
+
+        public async Task KextsAsync()
+        {
+            const string Command = "kmutil showloaded";
+            if (await ListingAsync("kmutil", ["showloaded"], Command).ConfigureAwait(false) is not { } text)
+            {
+                return;
+            }
+
+            var kexts = KextList.Parse(text);
+            if (kexts.Count == 0 && KextList.HasUnrecognisedLines(text))
+            {
+                _limitations.Add($"{Command} printed nothing this server recognises, so kernel extensions are not listed.");
+            }
+
+            foreach (var kext in kexts)
+            {
+                if (query.HideApple && kext.BundleId.StartsWith("com.apple.", StringComparison.Ordinal))
+                {
+                    _hiddenExtensions = true;
+                    continue;
+                }
+
+                _found.Add(new Candidate("kext", Command, kext.BundleId, true, null, $"loaded, version {kext.Version}", null, null, null, RootOnly, RootOnly));
+            }
+        }
+
+        public async Task BackgroundTasksAsync()
+        {
+            const string Command = "sfltool dumpbtm";
+            if (!elevated)
+            {
+                _limitations.Add($"Background Task Management ({Command}) needs root, so its login items and helpers are not listed.");
+                return;
+            }
+
+            if (await ListingAsync("sfltool", ["dumpbtm"], Command).ConfigureAwait(false) is not { } text)
+            {
+                return;
+            }
+
+            var items = BtmDump.Parse(text);
+            if (items.Count == 0 && text.Trim().Length > 0 && !text.Contains("Records for UID", StringComparison.Ordinal))
+            {
+                _limitations.Add($"{Command} printed nothing this server recognises, so Background Task Management items are not listed.");
+            }
+
+            var listed = _found.Select(c => c.Image).OfType<string>().ToHashSet(StringComparer.Ordinal);
+            foreach (var item in items)
+            {
+                var name = item.Name ?? item.Identifier ?? "(unnamed)";
+                if (item.Missing.Count > 0)
+                {
+                    _limitations.Add($"A Background Task Management item ({name}) did not report: {string.Join(", ", item.Missing)}.");
+                }
+
+                var legacy = item.Type?.StartsWith("legacy", StringComparison.Ordinal) == true;
+                if ((legacy && item.ExecutablePath is { } path && listed.Contains(path)) ||
+                    (query.HideApple && item.ExecutablePath?.StartsWith(SealedVolume, StringComparison.Ordinal) == true))
+                {
+                    continue;
+                }
+
+                var runsAsRoot = item.Type?.Contains("daemon", StringComparison.Ordinal) == true;
+                _found.Add(new Candidate("btm", BtmLocation, name, item.Enabled, item.Uid > 0 ? $"uid {item.Uid}" : null,
+                    $"{item.Type ?? "unknown type"} [{string.Join(", ", item.Disposition)}]{(item.Url is { } url ? $" from {url}" : string.Empty)}",
+                    item.ExecutablePath, item.ExecutablePath, null, RootOnly, runsAsRoot ? RootOnly : null));
+            }
+        }
+
         public async Task<AutostartAuditResult> FinishAsync()
         {
+            if (_hiddenExtensions)
+            {
+                _limitations.Add(AppleExtensionsNote);
+            }
+
             var matched = _found.Where(Matches).ToList();
             var stats = await StatAllAsync(matched).ConfigureAwait(false);
 
@@ -388,6 +516,12 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
 
         private void JudgePath(string path, IReadOnlySet<int>? owners, IReadOnlyDictionary<string, StatLine> stats, List<string> findings)
         {
+            // A location can be a command ("kmutil showloaded") rather than a file; there is nothing to stat.
+            if (!path.StartsWith('/'))
+            {
+                return;
+            }
+
             foreach (var each in Spellings(path).SelectMany(StartupPermissions.Chain).Distinct(StringComparer.Ordinal))
             {
                 if (!stats.TryGetValue(each, out var line))
