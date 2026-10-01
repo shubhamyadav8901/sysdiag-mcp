@@ -26,5 +26,7 @@ public sealed class MacCapabilityRequirements : ICapabilityRequirements
             ["process_list"] = new("ps -axww (pid, ppid, uid, rss, stat, lstart, args) joined with ps -axww -o pid,comm", "ps", null),
             ["process_handles"] = new("lsof -p, scoped to one process", "lsof", "cannot list the open files of processes owned by other users"),
             ["process_modules"] = new("lsof -p (txt entries); system libraries are in the dyld shared cache", "lsof", "cannot list the mapped files of processes owned by other users"),
+            ["path_handle_search"] = new("a full lsof listing (-b) matched under every spelling of each name, plus lsof -f -- <path> by device and inode", "lsof", "cannot search processes owned by other users; the result says it is partial"),
+            ["who_locks_path"] = new("lsof -f -- <path> by device and inode; lock state is not visible on macOS", "lsof", "cannot see files held by processes owned by other users, so it never reports Exhaustive"),
         };
 }

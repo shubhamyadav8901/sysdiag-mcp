@@ -32,6 +32,28 @@ public sealed class HandleTools(IHandleInspector handles)
         CancellationToken cancellationToken = default) =>
         ToResult(await handles.ForProcessAsync(processId, includeAllObjectTypes, cancellationToken).ConfigureAwait(false));
 
+    [McpServerTool(
+        Name = "path_handle_search",
+        Title = "Exhaustive handle search",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Search every process's open and mapped files for names containing the given text, under every spelling " +
+        "macOS gives a path (/Users/... and /System/Volumes/Data/Users/..., /tmp and /private/tmp). Give a full path " +
+        "and it also matches the same file under any other name - a hard link or a rename after opening. Give a " +
+        "directory and it finds everything open beneath it. Use it as the follow-up when who_locks_path does not " +
+        "explain a problem. Complete only when the server runs as root. By default it searches file references; set " +
+        "includeAllObjectTypes to also search sockets and pipes by their descriptor text. A very busy Mac can " +
+        "produce more open files than one call returns; narrow the text if the result says so.")]
+    public async Task<PathHandleSearchResult> PathHandleSearch(
+        [Description("Text to match anywhere in the open file's name, for example a full path, a file name or a directory")] string nameFragment,
+        [Description("Also search sockets and pipes, not just files. Slower on a busy host.")] bool includeAllObjectTypes = false,
+        CancellationToken cancellationToken = default) =>
+        ToResult(await handles.SearchAsync(nameFragment, includeAllObjectTypes, cancellationToken).ConfigureAwait(false));
+
     internal static PathHandleSearchResult ToResult(HandleSearch search) =>
         new(RenderHandleSummary(search), search.Query, search.Entries, search.Elevated, search.Truncated, search.TotalMatched, search.Limitations);
 

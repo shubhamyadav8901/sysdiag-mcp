@@ -164,6 +164,114 @@
     }
   },
   {
+    "name": "path_handle_search",
+    "title": "Exhaustive handle search",
+    "description": "Search every process\u0027s open and mapped files for names containing the given text, under every spelling macOS gives a path (/Users/... and /System/Volumes/Data/Users/..., /tmp and /private/tmp). Give a full path and it also matches the same file under any other name - a hard link or a rename after opening. Give a directory and it finds everything open beneath it. Use it as the follow-up when who_locks_path does not explain a problem. Complete only when the server runs as root. By default it searches file references; set includeAllObjectTypes to also search sockets and pipes by their descriptor text. A very busy Mac can produce more open files than one call returns; narrow the text if the result says so.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFragment": {
+          "description": "Text to match anywhere in the open file\u0027s name, for example a full path, a file name or a directory",
+          "type": "string"
+        },
+        "includeAllObjectTypes": {
+          "description": "Also search sockets and pipes, not just files. Slower on a busy host.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "nameFragment"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processName": {
+                "type": "string"
+              },
+              "processId": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string"
+              },
+              "userId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "handleValue": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "access": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "processName",
+              "processId",
+              "type",
+              "userId",
+              "handleValue",
+              "name",
+              "access"
+            ]
+          }
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "handles",
+        "elevated",
+        "truncated",
+        "totalMatched",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Exhaustive handle search",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "process_handles",
     "title": "Everything one process has open",
     "description": "List everything one process has open - files, directories, devices, sockets, pipes and kqueues - plus the files it has mapped, each with how it was opened: read, write or read-write. Use it to answer what a process is actually touching: which log it is writing, which file it holds open, how many sockets it has. Scoped to one process, so it is far cheaper than path_handle_search, which walks every process.",
@@ -829,6 +937,102 @@
     },
     "annotations": {
       "title": "System overview",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "who_locks_path",
+    "title": "Who holds or locks this path",
+    "description": "Find which processes hold a file or directory open. The file is matched by device and inode, so a hard link or a rename still matches, and each holder is shown with how it holds it: open for reading or writing, running it as its executable, mapping it as a library, or using it as its working or root directory. Use it for \u0027text file busy\u0027, a file that will not delete, or a volume that will not eject. macOS\u0027s lsof does not report lock state, so the result names who has the file open, not which of them holds a lock. It reports Exhaustive only when the server runs as root.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path to the file or directory, for example /Users/me/Library/Application Support/App/lock",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "holders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "processId": {
+                "type": "integer"
+              },
+              "processName": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "Open",
+                  "Executing",
+                  "Mapped",
+                  "WorkingDirectory",
+                  "RootDirectory",
+                  "Other"
+                ]
+              },
+              "access": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "processId",
+              "processName",
+              "kind",
+              "access"
+            ]
+          }
+        },
+        "exhaustive": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "summary",
+        "path",
+        "holders",
+        "exhaustive",
+        "limitations",
+        "totalMatched",
+        "truncated"
+      ]
+    },
+    "annotations": {
+      "title": "Who holds or locks this path",
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true,

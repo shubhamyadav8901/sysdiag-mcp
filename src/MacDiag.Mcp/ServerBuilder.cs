@@ -91,7 +91,8 @@ public static class ServerBuilder
             .WithTools<SystemTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<ProcessTools>(DiagServerKit.ToolJsonOptions)
             .WithTools<HandleTools>(DiagServerKit.ToolJsonOptions)
-            .WithTools<ModuleTools>(DiagServerKit.ToolJsonOptions);
+            .WithTools<ModuleTools>(DiagServerKit.ToolJsonOptions)
+            .WithTools<LockTools>(DiagServerKit.ToolJsonOptions);
 
         // The heaviest grant: the bearer token becomes arbitrary code execution as root. Its own flag,
         // refused under read-only -- the same rule every server keeps.
@@ -119,6 +120,8 @@ public static class ServerBuilder
         services.TryAddSingleton<IModuleInspector, MacModuleInspector>();
         services.TryAddSingleton<HandleTools>();
         services.TryAddSingleton<ModuleTools>();
+        services.TryAddSingleton<ILockInspector, MacLockInspector>();
+        services.TryAddSingleton<LockTools>();
         services.TryAddSingleton<IShellSet, MacShellSet>();
         services.TryAddSingleton<ICommandRunner, CommandRunner>();
         services.TryAddSingleton<CommandTools>();

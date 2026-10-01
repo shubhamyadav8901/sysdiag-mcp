@@ -20,6 +20,8 @@ public sealed record ModuleListResult(
 public interface IHandleInspector
 {
     Task<HandleSearch> ForProcessAsync(int processId, bool includeAllObjectTypes, CancellationToken cancellationToken);
+
+    Task<HandleSearch> SearchAsync(string nameFragment, bool includeAllObjectTypes, CancellationToken cancellationToken);
 }
 
 public interface IModuleInspector
