@@ -1,0 +1,12 @@
+# codesign -dvvv on an ad hoc signed tool: no authority, Signature=adhoc.
+Executable=/usr/local/bin/tool
+Identifier=tool-55554944a3e5a7b8
+Format=Mach-O thin (arm64)
+CodeDirectory v=20400 size=500 flags=0x20002(adhoc,linker-signed) hashes=12+0 location=embedded
+Hash type=sha256 size=32
+CandidateCDHash sha256=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d
+Signature=adhoc
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements=none

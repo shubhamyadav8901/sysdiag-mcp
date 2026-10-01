@@ -144,4 +144,75 @@ public static class CodesignDisplay
         var team = text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("TeamIdentifier=", StringComparison.Ordinal))?["TeamIdentifier=".Length..];
         return team is { Length: > 0 } and not "not set" ? ("Signed", $"TeamID={team}") : ("Signed", null);
     }
+
+    /// <summary>Who signed the file and how, from codesign -dvvv's standard error.</summary>
+    /// <remarks>
+    /// Authority lines run from the leaf certificate up. The hardened runtime is a flag inside the CodeDirectory
+    /// line ("flags=0x10000(runtime)"), not a line of its own, and "adhoc" appears there too -- so it is read from
+    /// the flag names in the parentheses, never by searching the line.
+    /// </remarks>
+    public static CodesignDetails Details(string standardError)
+    {
+        string? identifier = null, team = null;
+        var authorities = new List<string>();
+        bool adHoc = false, runtime = false;
+        foreach (var line in (standardError ?? string.Empty).Split('\n').Select(l => l.Trim()))
+        {
+            if (line.StartsWith("Identifier=", StringComparison.Ordinal))
+            {
+                identifier = line["Identifier=".Length..];
+            }
+            else if (line.StartsWith("TeamIdentifier=", StringComparison.Ordinal))
+            {
+                team = line["TeamIdentifier=".Length..] is { Length: > 0 } t and not "not set" ? t : null;
+            }
+            else if (line.StartsWith("Authority=", StringComparison.Ordinal))
+            {
+                authorities.Add(line["Authority=".Length..]);
+            }
+            else if (line == "Signature=adhoc")
+            {
+                adHoc = true;
+            }
+            else if (line.StartsWith("CodeDirectory ", StringComparison.Ordinal))
+            {
+                var flags = line.Split(' ').FirstOrDefault(token => token.StartsWith("flags=", StringComparison.Ordinal)) ?? string.Empty;
+                var open = flags.IndexOf('(', StringComparison.Ordinal);
+                var names = open < 0 ? [] : flags[(open + 1)..].TrimEnd(')').Split(',');
+                runtime = names.Contains("runtime", StringComparer.Ordinal);
+                adHoc |= names.Contains("adhoc", StringComparer.Ordinal);
+            }
+        }
+
+        return new CodesignDetails(identifier, team, authorities, adHoc, runtime);
+    }
+}
+
+/// <param name="Authorities">The certificate chain, leaf first; empty for an ad hoc signature.</param>
+public sealed record CodesignDetails(string? Identifier, string? TeamId, IReadOnlyList<string> Authorities, bool AdHoc, bool HardenedRuntime)
+{
+    /// <summary>The leaf certificate of Apple's own platform binaries; Developer ID and App Store chains also end in Apple Root CA.</summary>
+    public bool SignedByApple => Authorities.Count > 0 && Authorities[0] == "Software Signing";
+}
+
+/// <summary>pkgutil --file-info: the first receipt that names the file.</summary>
+public static class PkgutilFileInfo
+{
+    public static (string? PackageId, string? Version) Parse(string text)
+    {
+        string? id = null, version = null;
+        foreach (var line in (text ?? string.Empty).Split('\n').Select(l => l.Trim()))
+        {
+            if (id is null && line.StartsWith("pkgid: ", StringComparison.Ordinal))
+            {
+                id = line["pkgid: ".Length..].Trim();
+            }
+            else if (id is not null && version is null && line.StartsWith("pkg-version: ", StringComparison.Ordinal))
+            {
+                version = line["pkg-version: ".Length..].Trim();
+            }
+        }
+
+        return (id, version);
+    }
 }

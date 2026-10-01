@@ -324,6 +324,154 @@
     }
   },
   {
+    "name": "file_signatures",
+    "title": "File signature and package",
+    "description": "Report, for one or more files, the SHA-256, size and modification time, the code signature (whether it verifies, who signed it - Apple, a Developer ID team, ad hoc or nobody - and whether it uses the hardened runtime), Gatekeeper\u0027s assessment for a file inside an app bundle, and the installer package whose receipt names it. Symlinks are followed. A valid signature says who signed the file and that it has not changed since; it is not a verdict on whether the signer is trustworthy. Use it to confirm a deployed binary, to spot a file modified after signing, or to find a program nobody signed. At most 200 paths per call.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "description": "Full paths of the files to inspect",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paths"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "Valid",
+                  "AdHoc",
+                  "Unsigned",
+                  "Invalid",
+                  "Unknown"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "resolvedPath": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "identifier": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "teamId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "authorities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "hardenedRuntime": {
+                "type": "boolean"
+              },
+              "gatekeeper": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "package": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "packageVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sizeBytes": {
+                "type": "integer"
+              },
+              "lastWriteTime": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sha256": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "verdict",
+              "detail",
+              "resolvedPath",
+              "identifier",
+              "teamId",
+              "authorities",
+              "hardenedRuntime",
+              "gatekeeper",
+              "package",
+              "packageVersion",
+              "sizeBytes",
+              "lastWriteTime",
+              "sha256"
+            ]
+          }
+        },
+        "notFound": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limitation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "files",
+        "notFound",
+        "limitation"
+      ]
+    },
+    "annotations": {
+      "title": "File signature and package",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "get_file",
     "title": "Read a file back off the host",
     "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",

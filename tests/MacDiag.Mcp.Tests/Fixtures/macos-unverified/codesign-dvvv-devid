@@ -1,0 +1,17 @@
+# codesign -dvvv on a Developer ID app, written from codesign(1) and TN3126; stderr, where codesign writes it.
+Executable=/Applications/Example.app/Contents/MacOS/Example
+Identifier=com.example.app
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=1234 flags=0x10000(runtime) hashes=27+7 location=embedded
+Hash type=sha256 size=32
+CandidateCDHash sha256=0b5e3c3a1f2d4e6f8a9b0c1d2e3f405162738495
+Signature size=8979
+Authority=Developer ID Application: Example Corp (ABCDE12345)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Timestamp=Sep 10, 2024 at 9:11:42 PM
+Info.plist entries=40
+TeamIdentifier=ABCDE12345
+Runtime Version=14.0.0
+Sealed Resources version=2 rules=13 files=1234
+Internal requirements count=1 size=220

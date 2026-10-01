@@ -35,6 +35,7 @@ public sealed class MacCapabilityRequirements : ICapabilityRequirements
             ["process_control"] = new("kill(1) after a ps name and start-time check, checked again just before the signal", "kill", "can only signal processes owned by the current user"),
             ["event_log_tail"] = new("log show --style ndjson over backward time windows", "log", null),
             ["container_list"] = new("Docker Engine API on /var/run/docker.sock and each user's Docker Desktop, Colima, OrbStack or Rancher Desktop socket, each checked for type, owner and the directories above it", null, "cannot reach another user's container engine unless the server runs as root"),
+            ["file_signatures"] = new("SHA-256 via shasum; codesign --verify --strict and -dvvv; spctl --assess -v for app bundles; pkgutil --file-info", "codesign", null),
             ["update_self"] = new("staged-build swap through a detached helper and launchctl kickstart (a relaunch when not a daemon), rolled back if the new build does not come up", null, null, RequiresElevation: true),
         };
 }

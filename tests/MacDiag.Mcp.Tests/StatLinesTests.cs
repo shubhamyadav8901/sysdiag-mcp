@@ -42,6 +42,17 @@ public sealed class StatLinesTests
         Assert.Equal(kind, StatLines.Parse(Line("/p", 0, 0, "0644", type)).Single().Kind);
     }
 
+    [Theory]
+    [InlineData("/usr/local/bin/../bin/./tool", "/usr/local/bin/tool")]
+    [InlineData("//a///b/", "/a/b")]
+    [InlineData("/..", "/")]
+    [InlineData("relative/x", null)]
+    [InlineData("C:\\Windows", null)]
+    public void A_mac_path_is_normalised_lexically_the_same_on_every_os(string path, string? expected)
+    {
+        Assert.Equal(expected, MacDiag.Mcp.Mac.MacPaths.Lexical(path));
+    }
+
     [Fact]
     public void No_flags_is_an_empty_list_and_a_malformed_line_is_skipped()
     {

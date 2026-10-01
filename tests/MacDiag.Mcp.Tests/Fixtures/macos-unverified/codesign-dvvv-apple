@@ -1,0 +1,17 @@
+# codesign -dvvv /bin/ls: a platform binary, whose leaf authority is Software Signing.
+Executable=/bin/ls
+Identifier=com.apple.ls
+Format=Mach-O universal (x86_64 arm64e)
+CodeDirectory v=20400 size=623 flags=0x0(none) hashes=13+2 location=embedded
+Platform identifier=15
+Hash type=sha256 size=32
+CandidateCDHash sha256=7d1c8e2f3a4b5c6d7e8f90a1b2c3d4e5f6a7b8c9
+Signature size=4442
+Authority=Software Signing
+Authority=Apple Code Signing Certification Authority
+Authority=Apple Root CA
+Signed Time=Aug 3, 2024 at 4:50:56 AM
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements count=1 size=64

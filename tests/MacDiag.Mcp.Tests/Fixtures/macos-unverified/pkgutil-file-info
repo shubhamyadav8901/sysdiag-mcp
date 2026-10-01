@@ -1,0 +1,10 @@
+# pkgutil --file-info for a file a package receipt names, written from pkgutil(1).
+volume: /
+path: /usr/local/bin/tool
+
+pkgid: com.example.tool
+pkg-version: 2.1.0
+install-time: 1727000000
+uid: 0
+gid: 0
+mode: 755
