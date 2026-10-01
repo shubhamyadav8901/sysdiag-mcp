@@ -50,7 +50,17 @@ internal static class FileScope
     /// the link's own location: see <see cref="LandingPath"/>.
     /// </param>
     internal static (WriteScope Scope, bool InServerDirectory) Classify(
-        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink = false)
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink = false) =>
+        Classify(fullPath, options, serverDirectory, replacesFinalLink, looseServerMatch: OperatingSystem.IsMacOS());
+
+    /// <param name="looseServerMatch">
+    /// Also count a case- or normalisation-variant spelling as inside the server directory, for the self-update
+    /// gate only. On case-insensitive APFS the variant is that directory; ownership still compares exactly, so on
+    /// a case-sensitive volume a different directory never becomes owned. A variant can add a grant requirement,
+    /// never skip one.
+    /// </param>
+    internal static (WriteScope Scope, bool InServerDirectory) Classify(
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch)
     {
         var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink);
         if (crossesMagicLink)
@@ -63,7 +73,42 @@ internal static class FileScope
         var server = OwnedDirectory(serverDirectory);
         var artifacts = OwnedDirectory(options.ArtifactDirectory);
         var inServer = IsUnder(real, server);
-        return (inServer || IsUnder(real, artifacts) ? WriteScope.WinDiag : WriteScope.Arbitrary, inServer);
+        var gated = inServer || (looseServerMatch && LooseIsUnder(real, server));
+        return (inServer || IsUnder(real, artifacts) ? WriteScope.WinDiag : WriteScope.Arbitrary, gated);
+    }
+
+    /// <summary>Whether this runtime really normalises: under invariant globalization Normalize is a silent no-op.</summary>
+    private static readonly bool NormalizationWorks =
+        ("e" + (char)0x301).Normalize(System.Text.NormalizationForm.FormC).Length == 1;
+
+    /// <summary>Under the directory, ignoring case and Unicode normalisation: APFS's default comparison.</summary>
+    internal static bool LooseIsUnder(string candidate, string directory) => LooseIsUnder(candidate, directory, NormalizationWorks);
+
+    /// <remarks>
+    /// Without working normalisation a decomposed and a composed spelling cannot be compared, so any path holding
+    /// non-ASCII whose leading ASCII agrees with the directory's counts as under it: the gate adds a requirement,
+    /// never skips one.
+    /// </remarks>
+    internal static bool LooseIsUnder(string candidate, string directory, bool normalizationWorks)
+    {
+        var d = directory.TrimEnd('/');
+        if (normalizationWorks)
+        {
+            var c = candidate.Normalize(System.Text.NormalizationForm.FormC);
+            d = d.Normalize(System.Text.NormalizationForm.FormC);
+            return c.Equals(d, StringComparison.OrdinalIgnoreCase) || c.StartsWith(d + "/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        static bool Ascii(string s) => s.All(ch => ch <= 0x7F);
+        if (Ascii(candidate) && Ascii(d))
+        {
+            return candidate.Equals(d, StringComparison.OrdinalIgnoreCase) || candidate.StartsWith(d + "/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        static string Lead(string s) => new(s.TakeWhile(ch => ch <= 0x7F).ToArray());
+        var (leadCandidate, leadDirectory) = (Lead(candidate), Lead(d));
+        return leadCandidate.StartsWith(leadDirectory, StringComparison.OrdinalIgnoreCase) ||
+               leadDirectory.StartsWith(leadCandidate, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The real path of an owned directory, refused when it cannot be judged.</summary>
