@@ -144,8 +144,8 @@ public sealed class SystemOverviewTests
                 break;
             case "vm_stat":
                 var memory = VmStat.Parse(text);
-                Assert.Contains(memory.PageSize, new long[] { 4096, 16384 });
-                Assert.True(memory.AvailableBytes > 0);
+                Assert.Contains(memory.PageSize, new long?[] { 4096, 16384 });
+                Assert.True(memory.AvailableBytes > 0, string.Join(", ", memory.Missing));
                 break;
             case "mount":
                 Assert.Contains(MountList.Parse(text), m => m.MountPoint == "/");

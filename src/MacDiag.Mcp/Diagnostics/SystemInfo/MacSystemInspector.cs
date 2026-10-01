@@ -35,7 +35,11 @@ public sealed class MacSystemInspector(IExternalCommand commands, IPrivilegeProb
             return null;
         }
 
-        var versions = SwVers.Parse(await Run("sw_vers").ConfigureAwait(false) ?? string.Empty);
+        var versions = await Run("sw_vers").ConfigureAwait(false) is { } swVers ? SwVers.Parse(swVers) : null;
+        if (versions is not null && versions.Version is null)
+        {
+            limitations.Add("sw_vers printed no ProductVersion, so the macOS version is unknown.");
+        }
 
         string?[] sysctl = [null, null, null, null];
         if (await Run("sysctl", "-n", "hw.model", "hw.memsize", "kern.osrelease", "kern.boottime").ConfigureAwait(false) is { } text)
@@ -51,6 +55,10 @@ public sealed class MacSystemInspector(IExternalCommand commands, IPrivilegeProb
         }
 
         var memory = await Run("vm_stat").ConfigureAwait(false) is { } vm ? VmStat.Parse(vm) : null;
+        if (memory is { Missing.Count: > 0 })
+        {
+            limitations.Add($"vm_stat's output lacked {string.Join(", ", memory.Missing)}, so available memory is unknown (shown as 0).");
+        }
         var mounts = await Run("mount").ConfigureAwait(false) is { } mountText ? MountList.Parse(mountText) : [];
 
         var boot = Sysctl.BootTime(sysctl[3]);
@@ -60,15 +68,15 @@ public sealed class MacSystemInspector(IExternalCommand commands, IPrivilegeProb
         }
 
         var total = long.TryParse(sysctl[1], NumberStyles.None, CultureInfo.InvariantCulture, out var memsize) ? memsize : 0;
-        if (total == 0 || memory is null)
+        if (total == 0)
         {
-            limitations.Add("Memory could not be read in full; a zero here means unknown, not empty.");
+            limitations.Add("hw.memsize could not be read, so total memory is unknown (shown as 0).");
         }
 
         return new SystemOverview(
             Environment.MachineName,
             Environment.UserName,
-            versions.Version is null ? "macOS (version unknown)" : $"{versions.Name ?? "macOS"} {versions.Version} ({versions.Build ?? "?"})",
+            versions?.Version is null ? "macOS (version unknown)" : $"{versions.Name ?? "macOS"} {versions.Version} ({versions.Build ?? "?"})",
             sysctl[2] is { } release ? "Darwin " + release : "Darwin",
             RuntimeInformation.OSArchitecture.ToString(),
             sysctl[0],
@@ -78,11 +86,11 @@ public sealed class MacSystemInspector(IExternalCommand commands, IPrivilegeProb
             Environment.ProcessorCount,
             total,
             memory?.AvailableBytes ?? 0,
-            Filesystems(MountList.ForSpace(mounts)),
+            Filesystems(MountList.ForSpace(mounts), limitations),
             limitations);
     }
 
-    private static List<MountedFilesystem> Filesystems(IEnumerable<MacMount> mounts)
+    private static List<MountedFilesystem> Filesystems(IEnumerable<MacMount> mounts, List<string> limitations)
     {
         var result = new List<MountedFilesystem>();
         foreach (var mount in mounts)
@@ -100,10 +108,14 @@ public sealed class MacSystemInspector(IExternalCommand commands, IPrivilegeProb
                 {
                     (totalBytes, freeBytes) = probe.Result;
                 }
+                else
+                {
+                    limitations.Add($"{mount.MountPoint} did not answer within {PerMountBudget.TotalSeconds:0} s, so its size is unknown (shown as 0).");
+                }
             }
             catch (AggregateException ex) when (ex.InnerException is IOException or UnauthorizedAccessException)
             {
-                // Reported as size unknown, which the summary says plainly.
+                limitations.Add($"{mount.MountPoint}'s size could not be read: {ex.InnerException.Message}");
             }
 
             result.Add(new MountedFilesystem(mount.MountPoint, mount.Device, mount.FileSystem, totalBytes, freeBytes, mount.ReadOnly));
