@@ -78,6 +78,16 @@ public sealed class StartupPermissionsTests
     }
 
     [Fact]
+    public void A_sticky_directory_reads_with_its_sticky_bit_so_the_artifact_check_refuses_it()
+    {
+        // stat -f "%Mp%Lp" prints /private/tmp as 1777; %Lp alone would say 777 and lose the sticky bit.
+        var tmp = Assert.Single(ParseStat("0 1777 Directory /private/tmp\n"));
+
+        Assert.Equal(0b1_111_111_111, tmp.Mode);
+        Assert.Contains("sticky", MacServiceInstaller.ArtifactDirectoryProblem(existed: true, tmp), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Every_ancestor_is_checked_root_first()
     {
         Assert.Equal(["/", "/etc", "/etc/macdiag", Env], Chain(Env));
