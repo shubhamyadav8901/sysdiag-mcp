@@ -45,7 +45,7 @@ cd "$work"
 # Every cross-platform suite. A filter that matches nothing in one project reports "No test matches"
 # and exits 0 there, so a filtered run is read for a non-zero Total, never for the exit code alone.
 status=0
-for project in tests/DiagRelay.Mcp.Tests tests/Diag.Mcp.Server.Tests tests/LinuxDiag.Mcp.Tests; do
+for project in tests/DiagRelay.Mcp.Tests tests/Diag.Mcp.Server.Tests tests/LinuxDiag.Mcp.Tests tests/MacDiag.Mcp.Tests; do
   dotnet test "$project" -warnaserror "$@" || status=1
 done
 exit $status

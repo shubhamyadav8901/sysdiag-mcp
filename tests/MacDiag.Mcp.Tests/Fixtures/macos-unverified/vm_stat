@@ -1,0 +1,24 @@
+# Source: vm_stat(1), macOS 14 on Apple Silicon (16 KiB pages). Unverified.
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               12345.
+Pages active:                            234567.
+Pages inactive:                          200000.
+Pages speculative:                         5000.
+Pages throttled:                              0.
+Pages wired down:                         98765.
+Pages purgeable:                           4321.
+"Translation faults":                 123456789.
+Pages copy-on-write:                    1234567.
+Pages zero filled:                     87654321.
+Pages reactivated:                        12345.
+Pages purged:                             54321.
+File-backed pages:                       150000.
+Anonymous pages:                         289567.
+Pages stored in compressor:              111111.
+Pages occupied by compressor:             33333.
+Decompressions:                          222222.
+Compressions:                            333333.
+Pageins:                                 444444.
+Pageouts:                                  5555.
+Swapins:                                      0.
+Swapouts:                                     0.

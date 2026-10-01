@@ -1,0 +1,155 @@
+using MacDiag.Mcp.Diagnostics.SystemInfo;
+using MacDiag.Mcp.Mac.Parsers;
+using MacDiag.Mcp.Tools;
+
+namespace MacDiag.Mcp.Tests;
+
+public sealed class SystemOverviewTests
+{
+    /// <summary>The fixtures written from Apple's documentation: the values the tests below pin.</summary>
+    internal const string Unverified = "macos-unverified";
+
+    /// <summary>Output captured on a real Mac by tools/capture-macos-fixtures.sh: checked for shape only.</summary>
+    internal const string Captured = "macos";
+
+    /// <summary>A fixture's text from the named set, with its comment lines removed.</summary>
+    internal static string Fixture(string set, string name) =>
+        string.Join('\n', File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", set, name)).Where(l => !l.StartsWith('#')));
+
+    [Fact]
+    public void Sw_vers_gives_name_version_and_build()
+    {
+        Assert.Equal(new SwVersInfo("macOS", "14.6.1", "23G93"), SwVers.Parse(Fixture(Unverified, "sw_vers")));
+    }
+
+    [Fact]
+    public void Sysctl_values_come_in_the_order_asked_and_boottime_is_read_from_its_struct_text()
+    {
+        var values = Sysctl.ParseValues(Fixture(Unverified, "sysctl"), 4);
+
+        Assert.Equal("Mac14,2", values[0]);
+        Assert.Equal("17179869184", values[1]);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1727762400), Sysctl.BootTime(values[3]));
+        Assert.Null(Sysctl.BootTime("not a struct"));
+    }
+
+    [Fact]
+    public void A_sysctl_answer_with_a_value_missing_is_refused_rather_than_shifted()
+    {
+        Assert.Throws<FormatException>(() => Sysctl.ParseValues("Mac14,2\n23.6.0\n", 4));
+    }
+
+    [Fact]
+    public void Available_memory_is_free_inactive_and_speculative_pages_at_the_page_size_the_header_states()
+    {
+        var memory = VmStat.Parse(Fixture(Unverified, "vm_stat"));
+
+        Assert.Equal(16384, memory.PageSize);
+        Assert.Equal((12345L + 200000 + 5000) * 16384, memory.AvailableBytes);
+    }
+
+    [Fact]
+    public void Mounts_keep_spaces_in_the_mount_point_and_read_only_and_file_system_from_the_options()
+    {
+        var mounts = MountList.Parse(Fixture(Unverified, "mount"));
+
+        var root = mounts.Single(m => m.MountPoint == "/");
+        Assert.True(root.ReadOnly);
+        Assert.Equal("apfs", root.FileSystem);
+        Assert.Contains(mounts, m => m.MountPoint == "/Volumes/My Backup");
+        Assert.Equal("/dev/disk6s1", mounts.Single(m => m.MountPoint == "/Volumes/Back on (old)").Device);
+        Assert.Equal("smbfs", mounts.Single(m => m.MountPoint == "/Volumes/share").FileSystem);
+    }
+
+    [Fact]
+    public void Each_apfs_container_is_reported_once_by_its_writable_volume_and_system_internal_volumes_never()
+    {
+        // APFS volumes in one container share its free space, so / and /System/Volumes/Data would report the
+        // same number twice; the sealed system volume is the one dropped.
+        var shown = MountList.ForSpace(MountList.Parse(Fixture(Unverified, "mount"))).Select(m => m.MountPoint).ToArray();
+
+        Assert.Equal(["/System/Volumes/Data", "/Volumes/My Backup", "/Volumes/Back on (old)", "/Volumes/share"], shown);
+    }
+
+    [Fact]
+    public void A_sealed_root_with_no_writable_sibling_is_still_shown()
+    {
+        var shown = MountList.ForSpace(MountList.Parse("/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n"));
+
+        Assert.Equal("/", Assert.Single(shown).MountPoint);
+    }
+
+    [Fact]
+    public void A_line_in_an_unexpected_shape_is_skipped_and_an_unknown_vm_stat_line_is_ignored()
+    {
+        // Review Focus 4: tool output that differs from the documented shape is read as far as it is recognised.
+        Assert.Single(MountList.Parse("garbage\n/dev/disk3s5 on /System/Volumes/Data (apfs, local)\n"));
+        Assert.Equal(4096, VmStat.Parse("Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 1.\nSomething new: 7.\n").PageSize);
+        Assert.Null(SwVers.Parse("ProductVersion: 14.6\n").Name);
+    }
+
+    [Fact]
+    public void The_summary_names_the_version_model_and_a_nearly_full_data_volume_but_never_a_read_only_volume()
+    {
+        var overview = new SystemOverview("mac1", "root", "macOS 14.6.1 (23G93)", "Darwin 23.6.0", "Arm64", "Mac14,2", true,
+            DateTimeOffset.UnixEpoch, TimeSpan.FromHours(5), 8, 16L << 30, 4L << 30,
+            [new MountedFilesystem("/", "/dev/disk3s1s1", "apfs", 100, 1, true),
+             new MountedFilesystem("/System/Volumes/Data", "/dev/disk3s5", "apfs", 100, 2, false)],
+            ["vm_stat failed: boom"]);
+
+        var summary = SystemTools.RenderOverview(overview);
+
+        Assert.Contains("macOS 14.6.1 (23G93)", summary, StringComparison.Ordinal);
+        Assert.Contains("Mac14,2", summary, StringComparison.Ordinal);
+        Assert.Contains("WARNING: vm_stat failed: boom", summary, StringComparison.Ordinal);
+        Assert.Equal(1, summary.Split("CRITICALLY LOW").Length - 1);
+    }
+
+    public static TheoryData<string> CapturedFixtures()
+    {
+        var data = new TheoryData<string>();
+        var directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured);
+        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount" }.Where(n => File.Exists(Path.Combine(directory, n))))
+        {
+            data.Add(name);
+        }
+
+        if (data.Count == 0)
+        {
+            data.Add("(none captured)");
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(CapturedFixtures))]
+    public void Every_parser_reads_output_captured_on_a_real_mac(string name)
+    {
+        if (name == "(none captured)")
+        {
+            // Reported, not passed silently: xUnit 2 has no dynamic skip, so the case says what it is.
+            Assert.False(Directory.Exists(Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured)), "captures exist but none matched");
+            return;
+        }
+
+        var text = Fixture(Captured, name);
+        switch (name)
+        {
+            case "sw_vers":
+                Assert.NotNull(SwVers.Parse(text).Version);
+                break;
+            case "sysctl":
+                Assert.NotNull(Sysctl.BootTime(Sysctl.ParseValues(text, 4)[3]));
+                break;
+            case "vm_stat":
+                var memory = VmStat.Parse(text);
+                Assert.Contains(memory.PageSize, new long[] { 4096, 16384 });
+                Assert.True(memory.AvailableBytes > 0);
+                break;
+            case "mount":
+                Assert.Contains(MountList.Parse(text), m => m.MountPoint == "/");
+                break;
+        }
+    }
+}

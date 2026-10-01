@@ -1,0 +1,5 @@
+# Source: sysctl(8) -n hw.model hw.memsize kern.osrelease kern.boottime, macOS 14 on Apple Silicon. Unverified.
+Mac14,2
+17179869184
+23.6.0
+{ sec = 1727762400, usec = 123456 } Tue Oct  1 06:00:00 2024

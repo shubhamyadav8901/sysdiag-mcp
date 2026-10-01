@@ -1,0 +1,4 @@
+# Source: sw_vers(1), macOS 14. Unverified until tools/capture-macos-fixtures.sh runs on a Mac.
+ProductName:		macOS
+ProductVersion:		14.6.1
+BuildVersion:		23G93

@@ -1,0 +1,508 @@
+[
+  {
+    "name": "capabilities",
+    "title": "Server capabilities",
+    "description": "Report which of this server\u0027s tools can actually answer completely on this machine, and why any cannot - a missing helper program, or a tool that silently returns partial results because the server is not elevated. Call this when a result looks surprisingly empty, before concluding that nothing was found.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "elevated": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "backing": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "Available",
+                  "Degraded",
+                  "Unavailable"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "backing",
+              "status",
+              "detail"
+            ]
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "elevated",
+        "tools"
+      ]
+    },
+    "annotations": {
+      "title": "Server capabilities",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_file",
+    "title": "Read a file back off the host",
+    "description": "Read a file off the machine hosting this server, returned as base64 over the same authenticated channel as every other tool. This is the reverse of put_file and the way to retrieve what the server produced - a dump or a capture its tools wrote. By default it may only read inside the directories this server owns (its own folder and the artifact directory, which is where every capture lands); reading anywhere else requires the server to have been started with its arbitrary-read grant. A file larger than one slice is fetched by walking offset forward until endOfFile is true, appending each slice; ask for includeWholeFileHash on the last one and compare it against the reassembled copy. Each slice also carries its own chunkSha256, so corruption is caught at the slice rather than as an opaque mismatch at the end. IMPORTANT: the bytes come back in the response, so they land in the caller\u0027s context - pulling a multi-megabyte dump this way is enormous. Use the relay\u0027s pull_file, which drives this same loop and streams straight to a local file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Path on the host to read, e.g. the path a capture or dump tool returned",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Byte offset to start at. Walk this forward to fetch a whole file. Default 0.",
+          "type": "integer",
+          "default": 0
+        },
+        "length": {
+          "description": "Bytes to return. Default 64 KB, capped at 4 MB (base64 costs a third again, and a 32-bit target encodes it in one piece).",
+          "type": "integer",
+          "default": 0
+        },
+        "includeWholeFileHash": {
+          "description": "Also return the SHA-256 of the WHOLE file, to verify a reassembled copy. Rereads the file, so ask for it only on the last slice.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "totalBytes": {
+              "type": "integer"
+            },
+            "content": {
+              "type": "string"
+            },
+            "chunkSha256": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endOfFile": {
+              "type": "boolean"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "WinDiag",
+                "Arbitrary"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "offset",
+            "length",
+            "totalBytes",
+            "content",
+            "chunkSha256",
+            "sha256",
+            "endOfFile",
+            "scope"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "file"
+      ]
+    },
+    "annotations": {
+      "title": "Read a file back off the host",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "put_file",
+    "title": "Write a file on the host",
+    "description": "Write a file onto the machine hosting this server, sent as base64 over the same authenticated channel as every other tool. Use it to stage an updated server build for update_self, to place the helper binaries a tool needs, or to drop an input file. By default it may only write inside the directories this server owns (its own folder and the artifact directory), which is all staging needs. A server may reserve its own folder for staging an update, and then writing there also needs its self-update grant; the refusal names it. Writing anywhere else requires the server to have been started with its arbitrary-write grant. Pass expectedSha256 to have the written file verified and rolled back on mismatch. A file too big for one message - a self-contained binary is tens of MB, which a 32-bit server cannot decode from base64 in one go - is sent in chunks: the first call writes fresh, each later call sets append=true, and only the last passes expectedSha256, of the whole assembled file. Any one call is capped at ~128 MB.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Destination path on the host, as the host spells it.",
+          "type": "string"
+        },
+        "contentBase64": {
+          "description": "The file\u0027s bytes (or this chunk\u0027s bytes), base64-encoded.",
+          "type": "string"
+        },
+        "expectedSha256": {
+          "description": "SHA-256 the finished file must have; verified after writing, rolled back on mismatch. For a chunked send, pass it only on the last chunk.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "overwrite": {
+          "description": "Set false to refuse rather than replace an existing file at the path.",
+          "type": "boolean",
+          "default": true
+        },
+        "append": {
+          "description": "Append to the file instead of replacing it - used for the second and later chunks of a large file.",
+          "type": "boolean",
+          "default": false
+        },
+        "chunkSha256": {
+          "description": "SHA-256 of THIS call\u0027s bytes, checked before writing so a chunk corrupted in transit is caught at the chunk. Safe to re-send on failure.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path",
+        "contentBase64"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "WinDiag",
+                "Arbitrary"
+              ]
+            },
+            "overwrote": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "sizeBytes",
+            "sha256",
+            "scope",
+            "overwrote"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "file"
+      ]
+    },
+    "annotations": {
+      "title": "Write a file on the host",
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "run_command",
+    "title": "Run a command on the host",
+    "description": "Run an arbitrary command on the Mac hosting this server, as the account the server runs under (normally root), and return its exit code, stdout and stderr. This is a general shell, not a diagnostic query - use it for anything the other tools do not cover. shell selects how the command is read: \u0027zsh\u0027 (default) runs it through /bin/zsh -c, so pipes, redirection and \u0026\u0026 all work; \u0027sh\u0027 uses /bin/sh -c; \u0027bash\u0027 uses /bin/bash -c (bash 3.2 on macOS); \u0027none\u0027 runs the first token as a program with no shell, splitting the rest into arguments on spaces (double quotes group a single argument; no variables, globs or pipes). Set workingDirectory to run somewhere other than the server\u0027s own folder. A non-zero exit code is returned, not treated as an error. Output is capped; the result says when it was truncated.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The command line to run, interpreted according to shell.",
+          "type": "string"
+        },
+        "shell": {
+          "description": "\u0027zsh\u0027 (default), \u0027sh\u0027, \u0027bash\u0027, or \u0027none\u0027",
+          "type": "string",
+          "default": "zsh"
+        },
+        "workingDirectory": {
+          "description": "Directory to run in; defaults to the server\u0027s own directory. Must already exist.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeoutSeconds": {
+          "description": "Per-command timeout override in seconds (1..3600); omit for the server default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "command": {
+          "type": "object",
+          "properties": {
+            "commandLine": {
+              "type": "string"
+            },
+            "shell": {
+              "type": "string"
+            },
+            "workingDirectory": {
+              "type": "string"
+            },
+            "exitCode": {
+              "type": "integer"
+            },
+            "standardOutput": {
+              "type": "string"
+            },
+            "standardError": {
+              "type": "string"
+            },
+            "outputTruncated": {
+              "type": "boolean"
+            },
+            "timedOut": {
+              "type": "boolean"
+            },
+            "durationSeconds": {
+              "type": "number"
+            },
+            "elevated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "commandLine",
+            "shell",
+            "workingDirectory",
+            "exitCode",
+            "standardOutput",
+            "standardError",
+            "outputTruncated",
+            "timedOut",
+            "durationSeconds",
+            "elevated"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "command"
+      ]
+    },
+    "annotations": {
+      "title": "Run a command on the host",
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "system_overview",
+    "title": "System overview",
+    "description": "Describe the Mac: macOS version and build, hardware model, architecture, uptime and boot time, processor count, memory, mounted volumes with free space, the account the server runs as, and whether it is root. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full data volume, a very recent reboot, exhausted memory) before you go looking for something subtler. APFS volumes in one container share its free space, so each container is listed once.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "system": {
+          "type": "object",
+          "properties": {
+            "machineName": {
+              "type": "string"
+            },
+            "userName": {
+              "type": "string"
+            },
+            "operatingSystem": {
+              "type": "string"
+            },
+            "kernel": {
+              "type": "string"
+            },
+            "architecture": {
+              "type": "string"
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "elevated": {
+              "type": "boolean"
+            },
+            "bootTime": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "uptime": {
+              "$comment": "Represents a System.TimeSpan value.",
+              "type": "string",
+              "pattern": "^-?(\\d\u002B\\.)?\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?$"
+            },
+            "processorCount": {
+              "type": "integer"
+            },
+            "totalPhysicalMemoryBytes": {
+              "type": "integer"
+            },
+            "availablePhysicalMemoryBytes": {
+              "type": "integer"
+            },
+            "filesystems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "mountPoint": {
+                    "type": "string"
+                  },
+                  "device": {
+                    "type": "string"
+                  },
+                  "fileSystem": {
+                    "type": "string"
+                  },
+                  "totalBytes": {
+                    "type": "integer"
+                  },
+                  "freeBytes": {
+                    "type": "integer"
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "percentFree": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "canRunOutOfSpace": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "mountPoint",
+                  "device",
+                  "fileSystem",
+                  "totalBytes",
+                  "freeBytes",
+                  "readOnly"
+                ]
+              }
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "machineName",
+            "userName",
+            "operatingSystem",
+            "kernel",
+            "architecture",
+            "model",
+            "elevated",
+            "bootTime",
+            "uptime",
+            "processorCount",
+            "totalPhysicalMemoryBytes",
+            "availablePhysicalMemoryBytes",
+            "filesystems",
+            "limitations"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "system"
+      ]
+    },
+    "annotations": {
+      "title": "System overview",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  }
+]

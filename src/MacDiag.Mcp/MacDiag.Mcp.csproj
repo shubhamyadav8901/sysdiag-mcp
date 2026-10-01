@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net9.0 with the whole assembly marked macOS-only (AssemblyInfo.cs), so the platform analyzer
+         checks every call, as LinuxDiag's does for Linux. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>MacDiag.Mcp</AssemblyName>
+    <RootNamespace>MacDiag.Mcp</RootNamespace>
+    <Company>Shubham Yadav</Company>
+    <Product>MacDiag</Product>
+    <AssemblyTitle>MacDiag MCP Server</AssemblyTitle>
+    <Description>macOS diagnostics MCP server.</Description>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Deliberately not InvariantGlobalization (unlike LinuxDiag): macOS always ships ICU, and invariant mode
+         turns string normalisation into a silent no-op, which FileScope's case/NFC gate depends on. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Diag.Mcp.Core\Diag.Mcp.Core.csproj" />
+    <ProjectReference Include="..\Diag.Mcp.Server\Diag.Mcp.Server.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Diag.Mcp.Core" />
+    <Using Include="Diag.Mcp.Server" />
+    <Using Include="Diag.Mcp.Server.Capabilities" />
+    <Using Include="Diag.Mcp.Server.External" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MacDiag.Mcp.Tests" />
+  </ItemGroup>
+
+</Project>
