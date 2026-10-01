@@ -63,6 +63,112 @@
     }
   },
   {
+    "name": "container_list",
+    "title": "Containers on this Mac",
+    "description": "List the Docker containers on this Mac - from Docker Desktop, Colima, OrbStack or Rancher Desktop, for every user - with each one\u0027s name, image, state, and the engine and socket it came from. Containers run inside a virtual machine on macOS, so they have no host PIDs and their processes are not in process_list. Each engine is asked through its Engine API socket, and only when the socket is owned by its home directory\u0027s owner in directories no other account can change. A socket that was refused or could not be asked is named in Limitations, so an empty list is never mistaken for \u0027no containers\u0027.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFilter": {
+          "description": "Only containers whose name, image or id contains this text",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "runtime": {
+                "type": "string"
+              },
+              "engine": {
+                "type": "string"
+              },
+              "socket": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "image": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mainProcessId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "runtime",
+              "engine",
+              "socket",
+              "id",
+              "name",
+              "image",
+              "state",
+              "mainProcessId"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "containers",
+        "totalMatched",
+        "truncated",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Containers on this Mac",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "event_log_tail",
     "title": "Recent unified log records",
     "description": "Read recent records from the macOS unified log, newest first, filtered by age, severity, process, subsystem, category and sender. Defaults to the last hour at critical (fault) and error. \u0027warning\u0027 maps to macOS\u0027s default type, which is most of all logging, so ask for it only with a narrow filter. Use it to find out what the Mac complained about around the time of a failure. Looks back at most 7 days. Some messages read \u003Cprivate\u003E; that redaction is the system\u0027s.",
