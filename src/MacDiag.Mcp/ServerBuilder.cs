@@ -67,8 +67,11 @@ public static class ServerBuilder
           MACDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS   default 1800 (1..86400)
           MACDIAG_MAX_RESULTS                    default 50000
           MACDIAG_SERVICE_LABEL                  the launchd label; written by --install-service
-          MACDIAG_PROTECTED_LABELS               extra launchd labels, comma-separated, that service
-                                                 control refuses to stop
+          MACDIAG_PROTECTED_LABELS               extra launchd labels, comma-separated, that service_control
+                                                 refuses to stop or restart and whose main process
+                                                 process_control refuses to signal; an entry ending in '.'
+                                                 is a prefix (com.corp.), and a pattern like com.corp.*
+                                                 is a startup error
 
         The channel is plaintext HTTP. Never route it across a network you do not trust.
         """;

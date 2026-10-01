@@ -412,8 +412,12 @@ It serves:
 | `network_owners` | `lsof -i -Ts`, joined by each socket's kernel address | Every owner of a shared listener; an IPv4 and an IPv6 listener on one port stay separate |
 | `named_pipes` | unix sockets and FIFOs from a full lsof listing | Darwin's lsof does not report whether a unix socket is listening, so `listening` is always null |
 | `update_self` | a Mach-O check (thin or universal, the slice this Mac runs, `codesign --verify` for arm64), then a detached helper that swaps the binary and runs `launchctl kickstart -k` | Only with `--allow-self-update`. Any failure before the swap starts the old build again; a new build that does not come up within 30 s (new PID, matching hash, port answering) is rolled back. **This restart path has not yet run on a Mac**; CI's macOS smoke exercises it |
+| `service_config` | the job's plist (`plutil -convert xml1 -o -`) for configuration; `launchctl print` for runtime state, top-level keys only | Takes the label (`com.openssh.sshd` is Remote Login). A plist named otherwise than its label is found by the `Label` inside it. A LaunchAgent is read in the console user's `gui/<uid>` domain |
+| `service_control` | `launchctl kickstart`/`bootstrap` (start), `bootout` (stop), `kickstart -k` (restart), system domain only | Writable server only. stop unloads the job until it is started again or the Mac restarts. Refused for stop and restart: Apple's jobs (`com.apple.*`, Remote Login among them), remote-access and VPN agents (Tailscale, WireGuard, OpenVPN, ZeroTier, Cisco, GlobalProtect, Fortinet, TeamViewer, Jamf), `MACDIAG_PROTECTED_LABELS`, and this server's own job. A disabled job is not started; the refusal says how to enable it |
+| `process_control` | `/bin/kill` after a `ps` name and start-time check, checked again just before the signal | Writable server only. macOS has no pidfd: a window of milliseconds remains between the last check and the signal, and every result says so. Refused for everything but resume: PID 1, the kernel, loginwindow, WindowServer, logd, opendirectoryd, sshd and screen sharing, this server, zombies, and the main process of any job `service_control` protects |
+| `event_log_tail` | `log show --style ndjson`, walked backwards in time windows | Defaults to critical (fault) and error: macOS's `default` type, which `warning` maps to, is most of all logging. Looks back at most 7 days. A window too large to read in full is reported as not reached, never as the newest events. `<private>` redaction is the system's |
 
-The launchd, log, signature, autostart, access, container and process-control tools follow. Programs
+The signature, autostart, access and container tools follow. Programs
 are run from `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin` only (never `/usr/local` or `/opt/homebrew`, which
 an admin user can own), with `LC_ALL=C` and no pager.
 
@@ -866,7 +870,7 @@ same meanings, except:
 
 - its artifact directory defaults to `/var/db/macdiag`;
 - `MACDIAG_SERVICE_LABEL` names its launchd job;
-- `MACDIAG_PROTECTED_LABELS` adds launchd labels that service control will refuse to stop.
+- `MACDIAG_PROTECTED_LABELS` adds launchd labels, comma-separated, that `service_control` refuses to stop or restart and whose main process `process_control` refuses to signal. An entry is an exact label, or a prefix ending in `.` (`com.corp.`); a pattern such as `com.corp.*` stops the server at startup rather than protecting nothing. Add the labels of any remote-access tool the Mac is reached through that the built-in list misses - AnyDesk, RealVNC, Splashtop, ScreenConnect, Zscaler, Cloudflare WARP.
 
 `MacDiag.Mcp --help` lists them.
 
