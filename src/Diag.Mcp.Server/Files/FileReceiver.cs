@@ -180,7 +180,24 @@ public sealed class FileReceiver : IFileReceiver
     {
         // Every chunk after the first lands here, and a destination that has become a link since the
         // first chunk must be refused rather than followed. On x86-64 Linux open(2) itself refuses it,
-        // in the same system call that opens: no window between checking and opening.
+        // in the same system call that opens: no window between checking and opening. macOS does the
+        // same through its own flags and a two-argument open; MacNoFollow says why it is not one class.
+        if (OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                EnsureDirectory(fullPath);
+                MacNoFollow.Append(fullPath, content);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new FileTransferException(
+                    $"Could not append to '{fullPath}': {ex.Message}. If a previous chunked transfer was " +
+                    "interrupted, delete the partial file and start over.", ex);
+            }
+        }
+
         if (OperatingSystem.IsLinux() && LinuxNoFollow.Supported)
         {
             try
