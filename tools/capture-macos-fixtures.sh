@@ -27,6 +27,10 @@ lsof -n -P -w -F0pcuRfatdDsinPT -i -Ts > "$out/lsof-i" || [ $? -eq 1 ]
 
 plutil -convert xml1 -o - /System/Library/LaunchDaemons/ssh.plist > "$out/plist-sshd.xml" || true
 
+launchctl print system/com.openssh.sshd > "$out/launchctl-print-sshd" || true
+launchctl list > "$out/launchctl-list" || true
+launchctl print-disabled system > "$out/launchctl-print-disabled" || true
+
 # Readable by the user who runs the tests next, though captured as root.
 chmod a+r "$out"/*
 ls -l "$out"

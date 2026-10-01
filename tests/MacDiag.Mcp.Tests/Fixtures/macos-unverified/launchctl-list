@@ -1,0 +1,8 @@
+# Source: launchctl(1) list as root (the system domain). Unverified.
+PID	Status	Label
+-	0	com.apple.ftp-proxy
+88	0	com.apple.WindowServer
+777	0	com.openssh.sshd
+1234	-9	com.example.web
+garbage row
+-	78	io.tailscale.ipn.macsys

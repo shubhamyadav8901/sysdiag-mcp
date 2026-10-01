@@ -1,0 +1,31 @@
+# Source: launchctl(1) print system/com.openssh.sshd, macOS 14 shape; one tab per nesting level. Unverified.
+system/com.openssh.sshd = {
+	active count = 0
+	path = /System/Library/LaunchDaemons/ssh.plist
+	type = LaunchDaemon
+	state = not running
+
+	program = /usr/libexec/sshd-keygen-wrapper
+	arguments = {
+		/usr/libexec/sshd-keygen-wrapper
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	domain = system
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 0
+	last exit code = (never exited)
+	spawn type = daemon (3)
+
+	endpoints = {
+		"com.openssh.sshd" = {
+			port = 22
+			state = active
+			pid = 999
+		}
+	}
+}

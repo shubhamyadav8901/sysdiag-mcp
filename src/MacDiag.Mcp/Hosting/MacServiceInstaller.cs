@@ -157,11 +157,7 @@ public static partial class MacServiceInstaller
                 : (0, $"removed '{label}'. {InstallDirectory} was kept.");
 
     /// <summary>The PID in <c>launchctl print</c>'s output, or null when the job is not running.</summary>
-    internal static int? PidFrom(string printOutput) =>
-        PidLine().Match(printOutput ?? string.Empty) is { Success: true } match &&
-        int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var pid)
-            ? pid
-            : null;
+    internal static int? PidFrom(string printOutput) => Mac.Parsers.LaunchctlPrint.State(printOutput ?? string.Empty).ProcessId;
 
     /// <summary>Whether the job just bootstrapped is the one serving: running, a new process, and the listener itself.</summary>
     /// <remarks>
@@ -172,7 +168,7 @@ public static partial class MacServiceInstaller
         portOpen && running && newPid is { } pid && pid != oldPid && listeners.Contains(pid);
 
     /// <summary>Whether <c>launchctl print</c> reports the job as running.</summary>
-    internal static bool IsRunning(string printOutput) => RunningLine().IsMatch(printOutput ?? string.Empty);
+    internal static bool IsRunning(string printOutput) => Mac.Parsers.LaunchctlPrint.State(printOutput ?? string.Empty).State == "running";
 
     /// <summary>The PIDs in <c>lsof -t</c>'s terse output, one per line; anything else is ignored.</summary>
     internal static IReadOnlyList<int> ParsePids(string text) =>
@@ -364,12 +360,6 @@ public static partial class MacServiceInstaller
         output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
         return process.ExitCode;
     }
-
-    [GeneratedRegex(@"^\s*pid = (\d+)\s*$", RegexOptions.Multiline)]
-    private static partial Regex PidLine();
-
-    [GeneratedRegex(@"^\s*state = running\s*$", RegexOptions.Multiline)]
-    private static partial Regex RunningLine();
 
     [GeneratedRegex(@"://[+*]:")]
     private static partial Regex WildcardHost();

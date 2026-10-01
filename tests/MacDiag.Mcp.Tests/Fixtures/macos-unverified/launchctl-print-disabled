@@ -1,0 +1,11 @@
+# Source: launchctl(1) print-disabled system; macOS 13+ prints enabled/disabled, older releases true/false. Unverified.
+disabled services = {
+	"com.apple.ftp-proxy" => disabled
+	"com.openssh.sshd" => enabled
+	"com.example.old" => true
+	"com.example.new" => false
+}
+
+login item associations = {
+	"com.example.helper" => disabled
+}
