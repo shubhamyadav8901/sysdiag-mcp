@@ -185,4 +185,82 @@ public sealed class LiveMacTests : IDisposable
         Assert.StartsWith("/", row.ExecutablePath, StringComparison.Ordinal);
         Assert.EndsWith("sh", row.ExecutablePath, StringComparison.Ordinal);
     }
+
+    [MacFact]
+    public async Task A_platform_binary_is_signed_by_apple_and_a_bare_tool_has_no_gatekeeper_assessment()
+    {
+        var result = await new Diagnostics.Signatures.MacSignatureInspector(Commands, Options).InspectAsync(["/bin/ls"], CancellationToken.None);
+
+        var ls = Assert.Single(result.Files);
+        Assert.Equal(Diagnostics.Signatures.SignatureVerdict.Valid, ls.Verdict);
+        Assert.Equal("Signed by Apple, verified", ls.Detail);
+        Assert.Equal("not applicable", ls.Gatekeeper);
+        Assert.Equal(64, ls.Sha256.Length);
+    }
+
+    [MacFact]
+    public async Task A_file_nobody_signed_is_unsigned_and_a_fifo_returns_at_once_as_not_a_regular_file()
+    {
+        var plain = Path.Combine(_root, "plain.txt");
+        await File.WriteAllTextAsync(plain, "hello");
+        var fifo = Path.Combine(_root, "pipe");
+        using (var mkfifo = Process.Start("/usr/bin/mkfifo", [fifo])!)
+        {
+            await mkfifo.WaitForExitAsync();
+        }
+
+        var watch = Stopwatch.StartNew();
+        var result = await new Diagnostics.Signatures.MacSignatureInspector(Commands, Options).InspectAsync([plain, fifo], CancellationToken.None);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30), $"took {watch.Elapsed}");
+        Assert.Equal(Diagnostics.Signatures.SignatureVerdict.Unsigned, Assert.Single(result.Files).Verdict);
+        Assert.Contains(result.NotFound, n => n.EndsWith("(not a regular file)", StringComparison.Ordinal));
+    }
+
+    [MacFact]
+    public async Task The_kernel_says_the_owner_of_a_0600_file_may_read_and_write_it_but_not_execute_it()
+    {
+        var file = Path.Combine(_root, "private.txt");
+        await File.WriteAllTextAsync(file, "x");
+        File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        var report = await new Diagnostics.Access.MacAccessInspector(Commands, Options).InspectAsync(file, Environment.UserName, null, CancellationToken.None);
+
+        Assert.Equal((true, true, false), (report.Read.Allowed, report.Write.Allowed, report.Execute.Allowed));
+        Assert.True(report.Probe.SameSubject);
+        Assert.Null(report.BlockedAt);
+        Assert.NotNull(report.MountPoint);
+    }
+
+    [MacFact]
+    public async Task Apples_own_daemons_show_only_when_asked_for()
+    {
+        var inspector = new Diagnostics.Autostart.MacAutostartInspector(Commands, Options, new MacPrivilegeProbe());
+
+        var all = await inspector.AuditAsync(new Diagnostics.Autostart.AutostartQuery("daemons", HideApple: false), CancellationToken.None);
+        var hidden = await inspector.AuditAsync(new Diagnostics.Autostart.AutostartQuery("daemons"), CancellationToken.None);
+
+        Assert.Contains(all.Entries, e => e.Entry.StartsWith("com.apple.", StringComparison.Ordinal));
+        Assert.DoesNotContain(hidden.Entries, e => e.Location.StartsWith("/System/", StringComparison.Ordinal));
+    }
+
+    [MacFact]
+    public async Task System_and_kernel_extensions_are_read_without_an_unrecognised_output_limitation()
+    {
+        var inspector = new Diagnostics.Autostart.MacAutostartInspector(Commands, Options, new MacPrivilegeProbe());
+
+        var result = await inspector.AuditAsync(new Diagnostics.Autostart.AutostartQuery("sysext,kext", HideApple: false), CancellationToken.None);
+
+        Assert.DoesNotContain(result.Limitations, l => l.Contains("recognises", StringComparison.Ordinal));
+        Assert.Contains(result.Entries, e => e.Category == "kext");
+    }
+
+    [MacFact]
+    public async Task With_no_container_engine_running_the_list_is_empty_and_no_socket_was_refused()
+    {
+        var catalog = await new Diagnostics.Containers.MacContainerInspector(Commands, Options, new Diagnostics.Containers.MacDockerClient())
+            .ListAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(catalog.Limitations, l => l.StartsWith("Not asking", StringComparison.Ordinal));
+    }
 }

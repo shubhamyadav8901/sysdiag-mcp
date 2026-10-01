@@ -109,7 +109,7 @@ public sealed class SystemOverviewTests
     {
         var data = new TheoryData<string>();
         var directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured);
-        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson" }.Where(n => File.Exists(Path.Combine(directory, n)) && new FileInfo(Path.Combine(directory, n)).Length > 0))
+        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson", "codesign-dvvv-apple", "pkgutil-file-info", "ls-lde", "stat-lines", "systemextensionsctl-list", "kmutil-showloaded", "sfltool-dumpbtm" }.Where(n => File.Exists(Path.Combine(directory, n)) && new FileInfo(Path.Combine(directory, n)).Length > 0))
         {
             data.Add(name);
         }
@@ -173,6 +173,29 @@ public sealed class SystemOverviewTests
                 break;
             case "log-ndjson":
                 Assert.Contains(text.Split('\n').Select(LogNdjson.Parse), l => l?.Kind == LogLineKind.Event);
+                break;
+            case "codesign-dvvv-apple":
+                Assert.True(CodesignDisplay.Details(text).SignedByApple, text);
+                break;
+            case "pkgutil-file-info":
+                // /bin/ls may or may not have a receipt on a sealed system; a receipt that is there must parse whole.
+                var (package, version) = PkgutilFileInfo.Parse(text);
+                Assert.True(package is null || version is not null, text);
+                break;
+            case "ls-lde":
+                Assert.All(LsAcl.Parse(text), entry => Assert.Matches(@"^\S+ (allow|deny) ", entry));
+                break;
+            case "stat-lines":
+                Assert.Equal([StatKind.Directory, StatKind.File, StatKind.CharacterDevice], StatLines.Parse(text).Select(l => l.Kind));
+                break;
+            case "systemextensionsctl-list":
+                Assert.True(SystemExtensions.Parse(text).Count > 0 || SystemExtensions.SaysNone(text), text);
+                break;
+            case "kmutil-showloaded":
+                Assert.NotEmpty(KextList.Parse(text));
+                break;
+            case "sfltool-dumpbtm":
+                Assert.True(BtmDump.Parse(text).Count > 0 || !text.Contains("#1:", StringComparison.Ordinal), text);
                 break;
             case "lsof-p":
                 // Read raw: lsof's NUL-separated fields are not lines, and nothing in them is a comment.

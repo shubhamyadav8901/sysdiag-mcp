@@ -37,6 +37,16 @@ sleep 2
 log show --style ndjson --last 1m --predicate 'process == "logger"' > "$out/log-ndjson" || true
 log show --style ndjson --last 5m | wc -c > "$out/log-size" || true
 
+# codesign writes what it displays to standard error.
+codesign -dvvv /bin/ls 2> "$out/codesign-dvvv-apple" || true
+pkgutil --file-info /bin/ls > "$out/pkgutil-file-info" || true
+ls -lde /Library > "$out/ls-lde" || true
+# The server's own stat format; printf turns %% into % and \t into a TAB.
+stat -f "$(printf '%%u\t%%g\t%%Mp%%Lp\t%%Sf\t%%z\t%%m\t%%HT\t%%N')" -- / /bin/ls /dev/null > "$out/stat-lines" || true
+systemextensionsctl list > "$out/systemextensionsctl-list" || true
+kmutil showloaded > "$out/kmutil-showloaded" || true
+sfltool dumpbtm > "$out/sfltool-dumpbtm" || true
+
 # Readable by the user who runs the tests next, though captured as root.
 chmod a+r "$out"/*
 ls -l "$out"
