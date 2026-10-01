@@ -65,6 +65,11 @@ public static partial class LaunchctlPrint
             Expected.Where(k => !keys.ContainsKey(k)).ToList());
     }
 
+    /// <summary>Whether a failed print means "launchd has no such job" -- the only failure that may be read as "not loaded".</summary>
+    /// <remarks>Any other failure is an error: treating it as "not loaded" would answer a stop with "nothing to stop".</remarks>
+    public static bool IsNotFound(int exitCode, string standardError) =>
+        exitCode == 113 || (standardError ?? string.Empty).Contains("Could not find service", StringComparison.OrdinalIgnoreCase);
+
     private static int? Number(string? value) =>
         int.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var number) ? number : null;
 

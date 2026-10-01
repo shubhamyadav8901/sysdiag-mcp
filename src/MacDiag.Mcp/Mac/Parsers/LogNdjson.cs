@@ -146,7 +146,9 @@ public static class LogPredicate
             }
         }
 
-        return string.Join(" AND ", clauses);
+        // Loss events carry no process or level, so they ride alongside the filter rather than through it: dropping them
+        // would make a range the system lost messages from read as complete.
+        return $"eventType == lossEvent OR ({string.Join(" AND ", clauses)})";
     }
 
     /// <summary>A value for a double-quoted literal: no quote, no backslash, no control character, 1 to 256 characters.</summary>

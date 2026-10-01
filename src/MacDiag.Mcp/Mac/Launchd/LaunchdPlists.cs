@@ -2,18 +2,24 @@ using System.Diagnostics;
 
 namespace MacDiag.Mcp.Mac.Launchd;
 
+/// <param name="Path">The plist, or null when none was found.</param>
+/// <param name="Incomplete">The search stopped at its bound before reading every plist: a null Path is then not "none".</param>
+public sealed record PlistSearch(string? Path, bool Incomplete, int Scanned);
+
 /// <summary>Finds the plist that defines a launchd label, loaded or not.</summary>
 /// <remarks>
 /// The file name is usually the label, but not always: com.openssh.sshd lives in ssh.plist. When &lt;label&gt;.plist is
-/// not there, each plist's own Label key is read, bounded in count and time, first match wins.
+/// not there, each plist's own Label key is read, bounded in count and time, first match wins -- and a search that
+/// hits its bound says so, so "not found" is never a guess.
 /// </remarks>
 public sealed class LaunchdPlists
 {
     public static readonly string[] DaemonDirectories = ["/Library/LaunchDaemons", "/System/Library/LaunchDaemons"];
     public static readonly string[] AgentDirectories = ["/Library/LaunchAgents", "/System/Library/LaunchAgents"];
 
-    private const int MaxScanned = 2000;
-    private static readonly TimeSpan ScanBudget = TimeSpan.FromSeconds(20);
+    internal int MaxScanned { get; init; } = 2000;
+
+    internal TimeSpan ScanBudget { get; init; } = TimeSpan.FromSeconds(20);
 
     internal Func<string, bool> FileExists { get; init; } = File.Exists;
 
@@ -23,7 +29,7 @@ public sealed class LaunchdPlists
     public static bool IsAgent(string plistPath) =>
         AgentDirectories.Any(d => plistPath.StartsWith(d + "/", StringComparison.Ordinal));
 
-    public async Task<string?> FindAsync(IExternalCommand commands, string label, IReadOnlyList<string> directories, CancellationToken cancellationToken)
+    public async Task<PlistSearch> FindAsync(IExternalCommand commands, string label, IReadOnlyList<string> directories, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commands);
 
@@ -32,7 +38,7 @@ public sealed class LaunchdPlists
             var named = $"{directory}/{label}.plist";
             if (FileExists(named))
             {
-                return named;
+                return new PlistSearch(named, false, 0);
             }
         }
 
@@ -40,17 +46,18 @@ public sealed class LaunchdPlists
         var scanned = 0;
         foreach (var plist in directories.SelectMany(ListPlists))
         {
-            if (++scanned > MaxScanned || watch.Elapsed > ScanBudget)
+            if (scanned >= MaxScanned || watch.Elapsed > ScanBudget)
             {
-                break;
+                return new PlistSearch(null, true, scanned);
             }
 
+            scanned++;
             if (await Plutil.LabelAsync(commands, plist, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false) == label)
             {
-                return plist;
+                return new PlistSearch(plist, false, scanned);
             }
         }
 
-        return null;
+        return new PlistSearch(null, false, scanned);
     }
 }

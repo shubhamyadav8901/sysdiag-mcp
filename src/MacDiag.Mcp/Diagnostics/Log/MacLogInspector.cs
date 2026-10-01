@@ -33,7 +33,10 @@ public sealed class MacLogInspector(IExternalCommand commands, MacDiagOptions op
         var types = LogLevels.Parse(levels);
         var predicate = LogPredicate.Build(process, subsystem, category, sender, types);
         var limit = Math.Clamp(maxEvents, 1, options.MaxResults);
-        var now = Clock();
+        // Whole seconds: --start and --end carry no fraction, so edges kept to the tick would drop an event in an edge
+        // second from both the window that filters it out and the one log never gave it to.
+        var clock = Clock();
+        var now = clock.AddTicks(-(clock.Ticks % TimeSpan.TicksPerSecond));
         var budget = options.ExternalToolTimeout * 3;
         var watch = Stopwatch.StartNew();
 

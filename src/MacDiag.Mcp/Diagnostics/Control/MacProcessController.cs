@@ -77,7 +77,7 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
 
         if (action != ProcessAction.Resume)
         {
-            await RequireUnprotectedAsync(processId, name, cancellationToken).ConfigureAwait(false);
+            await RequireUnprotectedAsync(processId, name, identity.ArgvZero, cancellationToken).ConfigureAwait(false);
         }
 
         if (expectedStartTime is { } wanted && (identity.Start is not { } started || (started - wanted).Duration() > StartTimeTolerance))
@@ -103,11 +103,15 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
             ? (comm.StartsWith('/') && comm == expected) || argvZero == expected
             : LastSegment(comm) == expected || (argvZero is not null && LastSegment(argvZero) == expected);
 
-    private async Task RequireUnprotectedAsync(int processId, string name, CancellationToken cancellationToken)
+    private async Task RequireUnprotectedAsync(int processId, string name, string? argvZero, CancellationToken cancellationToken)
     {
-        if (ProtectedNames.Contains(name))
+        // The executable decides; argv[0] ("sshd: admin [priv]") is also checked, because macOS's comm may follow it --
+        // refusing on either can only refuse more.
+        var argvName = argvZero is null ? null : LastSegment(argvZero).TrimEnd(':');
+        if (ProtectedNames.Contains(name) || (argvName is not null && ProtectedNames.Contains(argvName)))
         {
-            throw new ProcessControlException($"PID {processId} is {name}, which this Mac needs to stay usable or reachable. Nothing was sent.");
+            throw new ProcessControlException(
+                $"PID {processId} is {(ProtectedNames.Contains(name) ? name : argvName)}, which this Mac needs to stay usable or reachable. Nothing was sent.");
         }
 
         // Fail closed: if the protected jobs cannot be listed, a protected daemon's PID cannot be told apart.
@@ -118,7 +122,14 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
                 $"The list of protected launchd jobs could not be read ({list.StandardError.Trim()}), so only resume is allowed. Nothing was sent.");
         }
 
-        if (LaunchctlList.Parse(list.StandardOutput).FirstOrDefault(row => row.ProcessId == processId && _protection.Refusal(row.Label) is not null)
+        // A list with no jobs in it is not "nothing protected"; it is a list that could not be read.
+        var jobs = LaunchctlList.Parse(list.StandardOutput);
+        if (jobs.Count == 0)
+        {
+            throw new ProcessControlException("launchctl list returned no jobs, so protected processes cannot be told apart; only resume is allowed. Nothing was sent.");
+        }
+
+        if (jobs.FirstOrDefault(row => row.ProcessId == processId && _protection.Refusal(row.Label) is not null)
             is { Label: { Length: > 0 } label })
         {
             throw new ProcessControlException($"PID {processId} is the main process of the protected launchd job '{label}'. Nothing was sent.");

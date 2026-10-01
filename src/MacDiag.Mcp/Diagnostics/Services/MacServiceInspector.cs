@@ -28,11 +28,16 @@ public sealed class MacServiceInspector(IExternalCommand commands, MacDiagOption
 
         if (state is null)
         {
-            plistPath = await Plists.FindAsync(commands, label, [.. LaunchdPlists.DaemonDirectories, .. LaunchdPlists.AgentDirectories], cancellationToken)
+            var search = await Plists.FindAsync(commands, label, [.. LaunchdPlists.DaemonDirectories, .. LaunchdPlists.AgentDirectories], cancellationToken)
                 .ConfigureAwait(false);
+            plistPath = search.Path;
             if (plistPath is null)
             {
-                return new ServiceQueryResult(label, null, await CandidatesAsync(label, cancellationToken).ConfigureAwait(false));
+                // "Not found" would be a guess when the search stopped at its bound.
+                return search.Incomplete
+                    ? throw new ServiceQueryException(
+                        $"'{label}' is not loaded and the search of every launchd plist for it stopped at its bound ({search.Scanned} read); it may still exist.")
+                    : new ServiceQueryResult(label, null, await CandidatesAsync(label, cancellationToken).ConfigureAwait(false));
             }
 
             if (LaunchdPlists.IsAgent(plistPath))
@@ -50,7 +55,8 @@ public sealed class MacServiceInspector(IExternalCommand commands, MacDiagOption
                 }
             }
         }
-        else if (state.Missing.Count > 0)
+
+        if (state is { Missing.Count: > 0 })
         {
             limitations.Add($"launchctl print did not report: {string.Join(", ", state.Missing)}.");
         }
@@ -93,7 +99,9 @@ public sealed class MacServiceInspector(IExternalCommand commands, MacDiagOption
     private async Task<LaunchdJobState?> PrintAsync(string target, CancellationToken cancellationToken)
     {
         var result = await commands.RunAsync("launchctl", ["print", target], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
-        return result.ExitCode == 0 ? LaunchctlPrint.State(result.StandardOutput) : null;
+        return result.ExitCode == 0 ? LaunchctlPrint.State(result.StandardOutput)
+            : LaunchctlPrint.IsNotFound(result.ExitCode, result.StandardError) ? null
+            : throw new ServiceQueryException($"launchctl print {target} failed (exit {result.ExitCode}): {result.StandardError.Trim()}");
     }
 
     private async Task<int?> ConsoleUserAsync(CancellationToken cancellationToken)

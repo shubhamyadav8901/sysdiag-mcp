@@ -22,11 +22,15 @@ public sealed class ProcessControlTests
             [642] = new(1, "Z", Start, "/bin/sleep", ""),
             [777] = new(1, "Ss", Start, "/usr/sbin/sshd", "sshd: admin [priv]"),
             [88] = new(1, "Ss", Start, "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer", "WindowServer -daemon"),
+            [1234] = new(1, "Ss", Start, "/usr/local/bin/webd", "/usr/local/bin/webd --port 80"),
+            [900] = new(1, "Ss", Start, "/usr/local/bin/renamed", "sshd: admin [priv]"),
         };
 
         public bool ChangesHandsOnReread { get; init; }
 
         public bool ListFails { get; init; }
+
+        public bool ListEmpty { get; init; }
 
         public List<string> Signals { get; } = [];
 
@@ -36,7 +40,9 @@ public sealed class ProcessControlTests
         {
             "ps" => Ps(args),
             "kill" => Kill(args),
-            "launchctl" when args[0] == "list" => ListFails ? new ExternalResult(1, "", "launchctl: timed out") : FakeCommands.Ok(Fixture(Unverified, "launchctl-list")),
+            "launchctl" when args[0] == "list" => ListFails ? new ExternalResult(1, "", "launchctl: timed out")
+                : ListEmpty ? FakeCommands.Ok("PID\tStatus\tLabel\n")
+                : FakeCommands.Ok(Fixture(Unverified, "launchctl-list")),
             _ => new ExternalResult(1, "", $"unexpected {program}"),
         });
 
@@ -86,8 +92,10 @@ public sealed class ProcessControlTests
         }
     }
 
-    private static MacProcessController Controller(Mac mac) =>
-        new(mac.Commands, MacDiagOptions.FromEnvironment(new Hashtable()), NullLogger<MacProcessController>.Instance)
+    private static MacProcessController Controller(Mac mac, string? protectedLabels = null) =>
+        new(mac.Commands,
+            MacDiagOptions.FromEnvironment(protectedLabels is null ? new Hashtable() : new Hashtable { ["MACDIAG_PROTECTED_LABELS"] = protectedLabels }),
+            NullLogger<MacProcessController>.Instance)
         {
             ExitWait = TimeSpan.FromMilliseconds(200),
             PollDelay = TimeSpan.Zero,
@@ -134,6 +142,40 @@ public sealed class ProcessControlTests
         await Controller(mac).ControlAsync(777, "sshd", ProcessAction.Resume, null, CancellationToken.None);
 
         Assert.Equal(["CONT 777"], mac.Signals);
+    }
+
+    [Fact]
+    public async Task A_process_with_an_ordinary_name_is_refused_when_it_is_a_protected_jobs_main_pid()
+    {
+        // Review Focus 2, by PID alone: webd is protected by nothing but launchctl list naming it com.example.web.
+        var mac = new Mac();
+
+        await Controller(mac).ControlAsync(1234, "webd", ProcessAction.Suspend, null, CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(new Mac(), protectedLabels: "com.example.web").ControlAsync(1234, "webd", ProcessAction.Kill, null, CancellationToken.None));
+
+        Assert.Contains("com.example.web", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_argv_that_names_a_protected_daemon_refuses_too()
+    {
+        // comm may follow argv[0] on macOS; refusing on either can only refuse more.
+        var mac = new Mac();
+
+        await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(900, "renamed", ProcessAction.Kill, null, CancellationToken.None));
+        Assert.Empty(mac.Signals);
+    }
+
+    [Fact]
+    public async Task A_job_list_with_no_jobs_in_it_is_treated_as_unreadable()
+    {
+        var mac = new Mac { ListEmpty = true };
+
+        await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(640, "sleep", ProcessAction.Kill, null, CancellationToken.None));
+        Assert.Empty(mac.Signals);
     }
 
     [Fact]

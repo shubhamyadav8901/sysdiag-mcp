@@ -9,13 +9,16 @@ namespace MacDiag.Mcp.Tests;
 
 public sealed class ServiceControlTests
 {
-    /// <summary>A launchd that remembers what is loaded: bootout unloads (after a few polls when slow), bootstrap loads.</summary>
+    /// <summary>
+    /// A launchd that remembers each job: bootstrap loads it without starting it (no RunAtLoad), kickstart runs it,
+    /// bootout unloads it (after a few polls when slow).
+    /// </summary>
     private sealed class Launchd
     {
-        private readonly HashSet<string> _loaded;
+        private readonly Dictionary<string, bool> _running;
         private int _unloadPolls;
 
-        public Launchd(params string[] loaded) => _loaded = [.. loaded];
+        public Launchd(params string[] running) => _running = running.ToDictionary(l => l, _ => true, StringComparer.Ordinal);
 
         public int BootoutExit { get; init; }
 
@@ -23,25 +26,42 @@ public sealed class ServiceControlTests
 
         public bool NeverUnloads { get; init; }
 
+        public bool PrintFails { get; init; }
+
+        public int OwnPid { get; init; } = 4242;
+
         public Dictionary<string, string> PlistLabels { get; } = new(StringComparer.Ordinal);
 
         public FakeCommands Commands => new((program, args) => (program, args.FirstOrDefault()) switch
         {
             ("launchctl", "print") => Print(args[1]),
             ("launchctl", "print-disabled") => FakeCommands.Ok(Fixture(Unverified, "launchctl-print-disabled")),
-            ("launchctl", "kickstart") => FakeCommands.Ok(""),
+            ("launchctl", "kickstart") => Kickstart(args[^1]),
             ("launchctl", "bootout") => Bootout(args[1]),
             ("launchctl", "bootstrap") => Bootstrap(args[2]),
             ("plutil", "-extract") => PlistLabels.TryGetValue(args[^1], out var label) ? FakeCommands.Ok(label + "\n") : new ExternalResult(1, "", "no Label"),
             _ => new ExternalResult(1, "", $"unexpected {program} {string.Join(' ', args)}"),
         });
 
+        private ExternalResult Kickstart(string target)
+        {
+            _running[target["system/".Length..]] = true;
+            return FakeCommands.Ok("");
+        }
+
         private ExternalResult Print(string target)
         {
-            var label = target["system/".Length..];
-            if (_loaded.Contains(label))
+            if (PrintFails)
             {
-                return FakeCommands.Ok($"{target} = {{\n\tstate = running\n\tpid = 4242\n\tpath = /Library/LaunchDaemons/{label}.plist\n}}\n");
+                return new ExternalResult(1, "", "launchctl: internal error");
+            }
+
+            var label = target["system/".Length..];
+            if (_running.TryGetValue(label, out var running))
+            {
+                return FakeCommands.Ok(running
+                    ? $"{target} = {{\n\tstate = running\n\tpid = {OwnPid}\n\tpath = /Library/LaunchDaemons/{label}.plist\n}}\n"
+                    : $"{target} = {{\n\tstate = not running\n\tlast exit code = (never exited)\n\tpath = /Library/LaunchDaemons/{label}.plist\n}}\n");
             }
 
             if (_unloadPolls > 0)
@@ -58,7 +78,7 @@ public sealed class ServiceControlTests
             var label = target["system/".Length..];
             if (!NeverUnloads)
             {
-                _loaded.Remove(label);
+                _running.Remove(label);
                 _unloadPolls = PollsBeforeUnloaded;
             }
 
@@ -67,9 +87,32 @@ public sealed class ServiceControlTests
 
         private ExternalResult Bootstrap(string plist)
         {
-            _loaded.Add(PlistLabels[plist]);
+            _running[PlistLabels[plist]] = false;
             return FakeCommands.Ok("");
         }
+    }
+
+    [Fact]
+    public async Task A_print_that_fails_for_another_reason_is_an_error_not_a_job_that_is_not_loaded()
+    {
+        var commands = new Launchd("com.example.web") { PrintFails = true }.Commands;
+
+        var ex = await Assert.ThrowsAsync<ServiceControlException>(() => Controller(commands).ControlAsync("com.example.web", ServiceAction.Stop, CancellationToken.None));
+
+        Assert.Contains("internal error", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_job_whose_running_process_is_this_server_is_never_stopped_even_without_a_configured_label()
+    {
+        // Installed by hand without MACDIAG_SERVICE_LABEL: the label check cannot know, the PID can.
+        var commands = new Launchd("com.corp.renamed") { OwnPid = Environment.ProcessId }.Commands;
+
+        var ex = await Assert.ThrowsAsync<ServiceControlException>(() =>
+            Controller(commands).ControlAsync("com.corp.renamed", ServiceAction.Stop, CancellationToken.None));
+
+        Assert.Contains("this server", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(commands.Calls, c => c.Arguments[0] == "bootout");
     }
 
     private static MacServiceController Controller(FakeCommands commands, string? ownLabel = null, params string[] plists)

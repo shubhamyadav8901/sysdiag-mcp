@@ -73,6 +73,48 @@ public sealed class ServiceConfigTests
     }
 
     [Fact]
+    public async Task A_plist_search_that_stops_at_its_bound_never_answers_not_found()
+    {
+        var plists = new LaunchdPlists
+        {
+            FileExists = _ => false,
+            ListPlists = directory => directory == "/System/Library/LaunchDaemons" ? ["/System/Library/LaunchDaemons/a.plist", SshPlist] : [],
+            MaxScanned = 1,
+        };
+
+        var ex = await Assert.ThrowsAsync<ServiceQueryException>(() => Query(Launchd(loaded: false), "com.openssh.sshd", plists));
+
+        Assert.Contains("may still exist", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_launch_agents_missing_print_keys_are_named_too()
+    {
+        var agent = "/Library/LaunchAgents/com.example.agent.plist";
+        var commands = new FakeCommands((program, args) => (program, args.FirstOrDefault()) switch
+        {
+            ("launchctl", "print") when args[1] == "gui/501/com.example.agent" => FakeCommands.Ok("gui/501/com.example.agent = {\n\tstate = running\n}\n"),
+            ("launchctl", "print") => new ExternalResult(113, "", "Could not find service"),
+            ("launchctl", "print-disabled") => FakeCommands.Ok(""),
+            ("plutil", "-convert") => FakeCommands.Ok(Fixture(Unverified, "plist-sshd.xml")),
+            ("stat", _) => FakeCommands.Ok("501\n"),
+            _ => new ExternalResult(1, "", "unexpected"),
+        });
+
+        var result = await Query(commands, "com.example.agent", Plists(agent));
+
+        Assert.Contains(result.Service!.Limitations, l => l.Contains("path", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_print_that_fails_for_another_reason_is_an_error_not_a_job_that_is_not_loaded()
+    {
+        var commands = new FakeCommands((_, _) => new ExternalResult(1, "", "launchctl: internal error"));
+
+        await Assert.ThrowsAsync<ServiceQueryException>(() => Query(commands, "com.openssh.sshd"));
+    }
+
+    [Fact]
     public async Task A_label_nothing_knows_suggests_near_matches()
     {
         var result = await Query(Launchd(), "openssh");

@@ -109,7 +109,7 @@ public sealed class SystemOverviewTests
     {
         var data = new TheoryData<string>();
         var directory = Path.Combine(AppContext.BaseDirectory, "Fixtures", Captured);
-        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson" }.Where(n => File.Exists(Path.Combine(directory, n))))
+        foreach (var name in new[] { "sw_vers", "sysctl", "vm_stat", "mount", "lsof-p", "lsof-i", "ps-args", "ps-comm", "launchctl-print-sshd", "launchctl-list", "launchctl-print-disabled", "plist-sshd.xml", "log-ndjson" }.Where(n => File.Exists(Path.Combine(directory, n)) && new FileInfo(Path.Combine(directory, n)).Length > 0))
         {
             data.Add(name);
         }

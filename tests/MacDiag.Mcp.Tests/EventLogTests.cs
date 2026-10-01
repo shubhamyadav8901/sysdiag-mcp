@@ -56,6 +56,28 @@ public sealed class EventLogTests
     }
 
     [Fact]
+    public async Task Window_edges_are_whole_seconds_as_log_reads_them_so_an_event_in_an_edge_second_is_not_lost()
+    {
+        // --start/--end carry whole seconds. With the clock at 12:00:00.5 an event at 11:59:00.3 belongs to the first
+        // window as log reads it; filtering on the unrounded edge would drop it from both windows.
+        var commands = Windows(Line(60, "Error", "edge second").Replace("11:59:00.000000", "11:59:00.300000", StringComparison.Ordinal));
+
+        var result = await new MacLogInspector(commands, MacDiagOptions.FromEnvironment(new Hashtable())) { Clock = () => Now.AddMilliseconds(500) }
+            .QueryAsync(null, null, null, null, 60, null, 50, CancellationToken.None);
+
+        Assert.Equal(["edge second"], result.Events.Select(e => e.Message));
+        Assert.Contains("2024-10-01 12:00:00+0000", commands.Calls[0].Arguments);
+    }
+
+    [Theory]
+    [InlineData(-7, 0, "2024-10-01 05:00:00-0700")]
+    [InlineData(5, 30, "2024-10-01 17:30:00+0530")]
+    public void Times_reach_log_with_their_zone_as_a_plain_offset(int hours, int minutes, string expected)
+    {
+        Assert.Equal(expected, LogWindows.Format(Now.ToOffset(new TimeSpan(hours, minutes, 0))));
+    }
+
+    [Fact]
     public async Task A_window_keeps_its_newest_matches_not_its_oldest()
     {
         // log show prints oldest first: keeping the first two would return the oldest while claiming the newest.
@@ -144,8 +166,9 @@ public sealed class EventLogTests
     [Fact]
     public void The_predicate_quotes_each_value_and_carries_the_types_from_the_level_enum_only()
     {
+        // Loss events ride along unfiltered: without them a range the system dropped messages from reads as complete.
         Assert.Equal(
-            "eventType == logEvent AND (messageType == fault OR messageType == error) AND process == \"backup\" AND subsystem == \"com.example.app\"",
+            "eventType == lossEvent OR (eventType == logEvent AND (messageType == fault OR messageType == error) AND process == \"backup\" AND subsystem == \"com.example.app\")",
             LogPredicate.Build("backup", "com.example.app", null, null, [LogMessageType.Fault, LogMessageType.Error]));
     }
 

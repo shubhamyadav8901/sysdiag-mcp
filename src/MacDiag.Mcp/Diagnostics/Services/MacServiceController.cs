@@ -35,6 +35,13 @@ public sealed class MacServiceController(IExternalCommand commands, MacDiagOptio
 
         var target = $"system/{label}";
         var before = await StateAsync(target, cancellationToken).ConfigureAwait(false);
+
+        // A server installed by hand without MACDIAG_SERVICE_LABEL is still recognised by its running PID.
+        if (action != ServiceAction.Start && before?.ProcessId == Environment.ProcessId)
+        {
+            throw new ServiceControlException($"'{label}' is running this server itself; use update_self to restart it. Nothing has been done.");
+        }
+
         string verb;
         switch (action)
         {
@@ -44,9 +51,11 @@ public sealed class MacServiceController(IExternalCommand commands, MacDiagOptio
                 break;
 
             case ServiceAction.Start:
-                verb = "bootstrap";
+                // bootstrap loads the job but starts it only if its plist says RunAtLoad or KeepAlive; start means run.
+                verb = "bootstrap, then kickstart";
                 await RunAsync(["bootstrap", "system", await PlistToStartAsync(label, cancellationToken).ConfigureAwait(false)], label, cancellationToken)
                     .ConfigureAwait(false);
+                await RunAsync(["kickstart", target], label, cancellationToken).ConfigureAwait(false);
                 break;
 
             case ServiceAction.Stop when before is null:
@@ -73,13 +82,16 @@ public sealed class MacServiceController(IExternalCommand commands, MacDiagOptio
 
         logger.LogWarning("service_control: {Action} {Label}", action, label);
 
+        var afterState = action == ServiceAction.Stop ? null : await StateAsync(target, cancellationToken).ConfigureAwait(false);
         var after = action == ServiceAction.Stop
             ? await WaitUnloadedAsync(target, cancellationToken).ConfigureAwait(false)
-            : Describe(await StateAsync(target, cancellationToken).ConfigureAwait(false));
+            : Describe(afterState);
         var detail = $"{verb}: {Describe(before)} -> {after}.";
-        if (action != ServiceAction.Stop && after.StartsWith("not running", StringComparison.Ordinal))
+
+        // "waiting" or "spawn scheduled" is normal for an on-demand job; only a job that exited badly needs looking into.
+        if (afterState is { State: "not running", LastExitCode: { } exit } && exit != 0)
         {
-            detail += $" It is not running now; check event_log_tail for its process, or service_config for its last exit.";
+            detail += $" It is not running, and exited with {afterState.LastExitText}; check event_log_tail for its process.";
         }
 
         if (action == ServiceAction.Stop)
@@ -100,9 +112,10 @@ public sealed class MacServiceController(IExternalCommand commands, MacDiagOptio
                 $"launchd has '{label}' disabled, so it cannot be started; enable it with launchctl enable system/{label} first. Nothing has been done.");
         }
 
-        var plist = await Plists.FindAsync(commands, label, LaunchdPlists.DaemonDirectories, cancellationToken).ConfigureAwait(false)
-                    ?? throw new ServiceControlException(
-                        $"No daemon plist for '{label}' in {string.Join(" or ", LaunchdPlists.DaemonDirectories)}, so there is nothing to start. Nothing has been done.");
+        var search = await Plists.FindAsync(commands, label, LaunchdPlists.DaemonDirectories, cancellationToken).ConfigureAwait(false);
+        var plist = search.Path ?? throw new ServiceControlException(search.Incomplete
+            ? $"The search for '{label}''s daemon plist stopped at its bound ({search.Scanned} read) without finding it. Nothing has been done."
+            : $"No daemon plist for '{label}' in {string.Join(" or ", LaunchdPlists.DaemonDirectories)}, so there is nothing to start. Nothing has been done.");
 
         var declared = await Plutil.LabelAsync(commands, plist, JobWait, cancellationToken).ConfigureAwait(false);
         return declared == label
@@ -140,7 +153,10 @@ public sealed class MacServiceController(IExternalCommand commands, MacDiagOptio
     private async Task<LaunchdJobState?> StateAsync(string target, CancellationToken cancellationToken)
     {
         var result = await commands.RunAsync("launchctl", ["print", target], JobWait, cancellationToken).ConfigureAwait(false);
-        return result.ExitCode == 0 ? LaunchctlPrint.State(result.StandardOutput) : null;
+        return result.ExitCode == 0 ? LaunchctlPrint.State(result.StandardOutput)
+            : LaunchctlPrint.IsNotFound(result.ExitCode, result.StandardError) ? null
+            : throw new ServiceControlException(
+                $"launchctl print {target} failed (exit {result.ExitCode}): {result.StandardError.Trim()}. Nothing has been done.");
     }
 
     private static string Describe(LaunchdJobState? state) =>
