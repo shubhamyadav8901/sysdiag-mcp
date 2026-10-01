@@ -387,6 +387,85 @@ bytes land cannot be judged. The staged
 file must be an x86-64 Linux executable. The swap runs from a helper started with `systemd-run`, because
 a child of the service would be killed along with it before it could swap anything.
 
+### macOS targets
+
+`MacDiag.Mcp` is the macOS server: macOS 13 or later, Apple Silicon (`osx-arm64`) and Intel (`osx-x64`).
+It is reached through the same relay, with the same bearer token model and the same plaintext-HTTP caveat.
+
+**Preview.** It is built and unit-tested on Windows and Linux. Its Mac-only tests, the capture of real
+command output for its parsers, and an install smoke (install, a `put_file`/`get_file` round trip,
+uninstall) run in CI's `macos-latest` job, which needs the repository on a remote. It has not yet been run
+against an interactive Mac. The parsers are tested against output written from Apple's documentation
+(`tests/MacDiag.Mcp.Tests/Fixtures/macos-unverified`) until `tools/capture-macos-fixtures.sh` has run on a Mac.
+
+This first part serves:
+
+| Tool | Answers from | Notes |
+|---|---|---|
+| `system_overview` | `sw_vers`, `sysctl -n hw.model hw.memsize kern.osrelease kern.boottime`, `vm_stat`, `mount`, each volume's size | Each APFS container once, by its writable volume, because its volumes share free space; the sealed system volume is never flagged full. What could not be read is listed as a warning, never shown as zero |
+| `run_command` | `/bin/zsh -c` (default), `/bin/sh -c`, `/bin/bash -c` (bash 3.2), or a direct exec | Only with `--allow-command-execution`, never on a read-only server |
+| `capabilities`, `put_file`, `get_file` | the shared kit | As on every server |
+
+The process, file, network, launchd, log, signature and access tools, and `update_self`, follow. Programs
+are run from `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin` only (never `/usr/local` or `/opt/homebrew`, which
+an admin user can own), with `LC_ALL=C` and no pager.
+
+Publish it, then install it over SSH. Remote Login must be on, and the SSH user an administrator:
+
+```
+dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o artifacts/macdiag-osx-arm64
+.\tools\bootstrap-macos.ps1 -Target mac-01 -User admin -Grants Standard
+```
+
+Use `-r osx-x64` and `-Binary artifacts/macdiag-osx-x64/MacDiag.Mcp` for an Intel Mac. `tools/bootstrap-macos.sh`
+is the same for a Linux or macOS operator. Both do what the Linux scripts do, plus two Mac-specific steps:
+
+- After checking the hash, they clear the quarantine flag.
+- They sign the binary ad hoc (`codesign --force --sign -`) if it carries no valid signature. An Apple
+  Silicon Mac kills an unsigned binary at launch, and a build published on Windows or Linux is unsigned;
+  one published on a Mac is already signed ad hoc by the SDK.
+
+That installs:
+
+| Path | What |
+|---|---|
+| `/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp` | the binary |
+| `/etc/macdiag/macdiag.env` | root-owned `0600`: the token, bind address and grants, read with `--env-file` |
+| `/var/db/macdiag` | `0700`: the artifact directory |
+| `/var/log/macdiag` | `0700`: `macdiag.log` (rolled at 10 MiB) and `crash.log` (what the runtime writes before logging starts) |
+| `/Library/LaunchDaemons/com.windiag.macdiag.plist` | `KeepAlive` on a failed exit only, `AbandonProcessGroup`, `ProcessType Standard` |
+
+The plist is world-readable, so it never holds the token. It passes `--env-file` instead.
+
+**The server refuses to start if another account could have written its settings.** It checks:
+
+- the env file, which must be a root-owned `0600` regular file and not a link;
+- the binary;
+- every directory above either one, both as spelled and with links resolved (so `/etc` is checked as
+  `/private/etc`).
+
+Any of these that is owned by someone other than root, or writable by a group or by everyone, is named in
+the refusal. The installer runs the same check before loading the job.
+
+launchd retries a refused start every 10 seconds, writing the reason to `crash.log` each time, so the
+daemon recovers by itself once the file is fixed.
+
+The installer waits until the daemon is listening, and reports the Application Firewall's state, which
+can block the port without an error anywhere. If the daemon never listens, the installer prints the last
+lines of both logs and exits 4. `--uninstall-service [--purge]` and `--service-status` do what they say;
+`MacDiag.Mcp --help` lists every switch.
+
+Full Disk Access is needed to read other users' protected files and the TCC database. Grant it under
+System Settings → Privacy & Security → Full Disk Access by adding the binary. macOS ties that grant to the
+code signature, so an ad-hoc build loses it whenever the binary changes. A Developer ID signature, or an
+MDM privacy profile, keeps it across updates.
+
+Add it to the relay's `~/.windiag-targets.json` like any target:
+
+```json
+{ "as": "mac-01", "target": "mac-01.local", "token": "…" }
+```
+
 ### Reaching the admin share
 
 Both the first-deploy hop and `-Smb` write to `\\<target>\C$`, which only opens to an administrator whose
@@ -774,6 +853,15 @@ level through an ordinary tool call. The token is the whole boundary.
 
 The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`
 and `put_file` writes into the server's own directory only with `LINUXDIAG_ALLOW_SELF_UPDATE`. `LinuxDiag.Mcp --help` lists them.
+
+The macOS server reads them as `MACDIAG_*`, from its `--env-file` laid over the environment. They have the
+same meanings, except:
+
+- its artifact directory defaults to `/var/db/macdiag`;
+- `MACDIAG_SERVICE_LABEL` names its launchd job;
+- `MACDIAG_PROTECTED_LABELS` adds launchd labels that service control will refuse to stop.
+
+`MacDiag.Mcp --help` lists them.
 
 | Variable | Default | Meaning |
 |---|---|---|

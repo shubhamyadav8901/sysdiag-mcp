@@ -46,6 +46,10 @@ jobs:
       - name: Test LinuxDiag (parsers and registration)
         run: dotnet test tests/LinuxDiag.Mcp.Tests --no-build --verbosity normal
 
+      # Likewise for the macOS server: its [MacFact] tests skip here and run in the relay job's macOS leg.
+      - name: Test MacDiag (parsers and registration)
+        run: dotnet test tests/MacDiag.Mcp.Tests --no-build --verbosity normal
+
       # Guards a failure the unit suite structurally cannot see. EventLog reaches
       # System.Threading.AccessControl only through a named-mutex path the compiler never records, so
       # it is absent from the publish set unless referenced outright -- while the test host, which is
@@ -104,6 +108,56 @@ jobs:
 
       - name: Test LinuxDiag
         run: dotnet test tests/LinuxDiag.Mcp.Tests --no-build --verbosity normal
+
+      - name: Build MacDiag
+        run: dotnet build tests/MacDiag.Mcp.Tests -warnaserror
+
+      # Before the tests, so the parser theory runs over real output on the Mac and not only over the
+      # fixtures written from documentation. Captured into the build output, which the tests read.
+      - name: Capture macOS fixtures
+        if: runner.os == 'macOS'
+        run: |
+          sudo tools/capture-macos-fixtures.sh
+          cp -R tests/MacDiag.Mcp.Tests/Fixtures/macos tests/MacDiag.Mcp.Tests/bin/Debug/net9.0/Fixtures/
+
+      - name: Test MacDiag
+        run: dotnet test tests/MacDiag.Mcp.Tests --no-build --verbosity normal
+
+      - name: Upload macOS fixtures
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-fixtures
+          path: tests/MacDiag.Mcp.Tests/Fixtures/macos
+
+      # The whole operator path on a real Mac: install under sudo, a launchd job that is running and
+      # listening, a file round trip over the authenticated channel, and uninstall. mcp-call.ps1 exits 1 on a
+      # refusal without throwing, so each -Raw answer is checked for emptiness.
+      - name: Install smoke on macOS
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: |
+          dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -o artifacts/macdiag-smoke
+          codesign --verify artifacts/macdiag-smoke/MacDiag.Mcp
+          if ($LASTEXITCODE -ne 0) { throw 'the published arm64 binary is not validly signed' }
+          'smoke-token' | sudo artifacts/macdiag-smoke/MacDiag.Mcp --install-service --http http://127.0.0.1:4025 --token-stdin
+          if ($LASTEXITCODE -ne 0) { sudo cat /var/log/macdiag/crash.log; throw "install failed ($LASTEXITCODE)" }
+          $job = sudo launchctl print system/com.windiag.macdiag | Out-String
+          if ($job -notmatch 'state = running') { throw "the launchd job is not running:`n$job" }
+
+          $address = 'http://127.0.0.1:4025'
+          $text = 'macdiag smoke'
+          $put = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool put_file -Raw -Arguments @{
+            path = '/var/db/macdiag/smoke.txt'; contentBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)) }
+          if (-not $put) { throw 'put_file returned nothing' }
+          $get = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool get_file -Raw -Arguments @{ path = '/var/db/macdiag/smoke.txt' }
+          if (-not $get) { throw 'get_file returned nothing' }
+          $back = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($get | ConvertFrom-Json).file.content))
+          if ($back -ne $text) { throw "round trip returned '$back'" }
+          Write-Host 'put_file/get_file round trip ok'
+
+          sudo /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp --uninstall-service --purge
+          if ($LASTEXITCODE -ne 0) { throw "uninstall failed ($LASTEXITCODE)" }
 
       # The kit carries a web server; the relay is a stdio client and must not. Checked on the publish
       # set because a transitive reference would not show in the project file.

@@ -13,7 +13,8 @@ Every operator-facing knob is documented, and the source is the slowest place to
 | What CLI options exist, including every `--install-service` flag | `WinDiag.Mcp.exe --help` — authoritative; `ServerBuilder.HelpText` is the same string — for the server. The relay's options are in `DiagRelay.Mcp --help`. |
 | What `WINDIAG_*` variables exist and what each defaults to | README **Configuration** table, and each executable's `--help` |
 | Which flag sets which variable | Two spellings of one setting: `--allow-arbitrary-read` → `WINDIAG_ALLOW_ARBITRARY_READ=1`, written into the service's own registry key |
-| How to reach a machine that has never run windiag | README **Bringing up a machine that has never run windiag** |
+| How to reach a machine that has never run windiag | README **Bringing up a machine that has never run windiag**; for Linux and macOS, README **Linux targets** / **macOS targets** |
+| What `MacDiag.Mcp` installs, where, and what makes it refuse to start | README **macOS targets**, and `MacDiag.Mcp --help` |
 | What each `-Grants` preset actually passes | Same section. `None` is `--read-only` alone and **cannot read files** |
 | The `~/.windiag-targets.json` shape | README, under the relay |
 | What a tool can and cannot do on a given machine | Call `capabilities` on it — it names the missing binary or the lost privilege |
@@ -29,6 +30,7 @@ dotnet test tests/WinDiag.Mcp.Tests       # the offline suite; must be green bef
 dotnet test tests/DiagRelay.Mcp.Tests     # the relay's suite; Unix-only tests report Skipped here
 dotnet test tests/Diag.Mcp.Server.Tests   # the shared server kit; runs on Linux too
 dotnet test tests/LinuxDiag.Mcp.Tests    # the Linux server; its [LinuxFact] tests run only through tools/test-linux.sh
+dotnet test tests/MacDiag.Mcp.Tests      # the macOS server; its [MacFact] tests run only in CI's macos-latest job
 ```
 
 - **Gate on the exit code, never on grepping the output.** `dotnet build | grep "Error(s)"` *succeeds*
@@ -42,6 +44,14 @@ dotnet test tests/LinuxDiag.Mcp.Tests    # the Linux server; its [LinuxFact] tes
   rewrites the `/mnt/d/...` argument into `C:/Program Files/Git/mnt/d/...` and the script is not found.
 - The Linux server publishes with `-r linux-x64 --self-contained -p:PublishSingleFile=true` into
   `artifacts/linux-x64/`. It is **x86-64 only**, because its P/Invoke flag values are.
+- The macOS server publishes with `-r osx-arm64` and `-r osx-x64` the same way, into
+  `artifacts/macdiag-<rid>/`. A build published off a Mac is unsigned, and Apple Silicon kills an unsigned
+  binary at launch: `tools/bootstrap-macos.*` sign it ad hoc on the target; by hand, `codesign --force --sign -`.
+  There is no Mac here: its parsers are tested against `Fixtures/macos-unverified`, written from Apple's
+  documentation, until CI's capture fills `Fixtures/macos`.
+- **MacDiag is deliberately not `InvariantGlobalization`.** Invariant mode makes `string.Normalize` a silent
+  no-op (measured on .NET 9), and the kit's case/NFC gate for the server directory on APFS depends on it.
+  A test reads the server's runtimeconfig to pin this.
 - **`dotnet test --filter Name~X` matches nothing under xUnit and still exits 0.** Filter by
   `FullyQualifiedName~X`, and read the summary for a non-zero `Total` before trusting a green run —
   otherwise a mutation check's "restored" run can pass without having run anything.

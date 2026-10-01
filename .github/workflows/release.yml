@@ -117,8 +117,11 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      # The kit's tests are built explicitly: LinuxDiag's test project links the kit's guards as source and
+      # does not reference the kit's test project, so `--no-build` would find nothing to run.
       - name: Build and test
         run: |
+          dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
           dotnet build tests/LinuxDiag.Mcp.Tests -warnaserror
           dotnet test tests/Diag.Mcp.Server.Tests --no-build
           dotnet test tests/LinuxDiag.Mcp.Tests --no-build
@@ -145,3 +148,52 @@ jobs:
           path: |
             artifacts/linuxdiag-linux-x64/LinuxDiag.Mcp
             artifacts/linuxdiag-linux-x64/SHA256.txt
+
+  publish-macdiag:
+    # Built on macOS so the SDK applies the ad-hoc signature an Apple Silicon Mac needs to start the binary
+    # at all. osx-x64 has no native runner here; it is published from the same machine, its parsers and
+    # registration tested but its [MacFact] tests run only on arm64.
+    strategy:
+      matrix:
+        rid: [osx-arm64, osx-x64]
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build and test
+        run: |
+          dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
+          dotnet build tests/MacDiag.Mcp.Tests -warnaserror
+          dotnet test tests/Diag.Mcp.Server.Tests --no-build
+          dotnet test tests/MacDiag.Mcp.Tests --no-build
+
+      - name: Publish ${{ matrix.rid }}
+        run: >
+          dotnet publish src/MacDiag.Mcp
+          -c Release -r ${{ matrix.rid }} --self-contained
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o artifacts/macdiag-${{ matrix.rid }}
+
+      - name: Verify signature
+        run: codesign --verify --verbose artifacts/macdiag-${{ matrix.rid }}/MacDiag.Mcp
+
+      # The hash update_self must be given; see the publish job.
+      - name: Hash
+        shell: pwsh
+        run: |
+          $exe = "artifacts/macdiag-${{ matrix.rid }}/MacDiag.Mcp"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash
+          "$sha  MacDiag.Mcp" | Set-Content "artifacts/macdiag-${{ matrix.rid }}/SHA256.txt"
+          Write-Host "${{ matrix.rid }} $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macdiag-${{ matrix.rid }}
+          path: |
+            artifacts/macdiag-${{ matrix.rid }}/MacDiag.Mcp
+            artifacts/macdiag-${{ matrix.rid }}/SHA256.txt

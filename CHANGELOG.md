@@ -13,6 +13,31 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+### Added
+
+- **MacDiag.Mcp (preview), a macOS diagnostics server**, for macOS 13 or later on Apple Silicon and Intel,
+  reached through the same relay.
+  - This first part serves the kit tools, `run_command` (`zsh`, `sh`, `bash`, `none`) and
+    `system_overview`.
+  - `--install-service` installs it as a launchd daemon from root-only paths.
+  - It refuses to start if its settings file, its binary, or any directory above them could have been
+    written by an account other than root.
+  - `tools/bootstrap-macos.sh` and `.ps1` install it over SSH.
+  - CI builds, tests and smoke-installs it on `macos-latest`, and the release workflow publishes both
+    architectures.
+- The shared server kit now:
+  - loads libSystem on macOS;
+  - refuses a planted link when appending a chunk there, through `open(2)` with `O_NOFOLLOW`;
+  - treats a case or Unicode-normalisation variant of the server's directory as needing the self-update
+    grant, on APFS's case-insensitive volumes.
+- The system-program runner moved from LinuxDiag into the kit, with a streaming mode for output that has
+  no natural end.
+
+### Fixed
+
+- The LinuxDiag release job now builds the kit's test project before running it with `--no-build`, which
+  otherwise found nothing to run.
+
 ## [2.0.0] - 2026-10-01
 
 ### Removed
