@@ -25,6 +25,8 @@ ps -axww -o pid=,lstart=,comm= > "$out/ps-comm"
 lsof -n -P -w -F0pcuRfatdDsinPT -p $$ > "$out/lsof-p" || [ $? -eq 1 ]
 lsof -n -P -w -F0pcuRfatdDsinPT -i -Ts > "$out/lsof-i" || [ $? -eq 1 ]
 
+plutil -convert xml1 -o - /System/Library/LaunchDaemons/ssh.plist > "$out/plist-sshd.xml" || true
+
 # Readable by the user who runs the tests next, though captured as root.
 chmod a+r "$out"/*
 ls -l "$out"

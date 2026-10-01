@@ -65,9 +65,29 @@ public sealed record MacDiagOptions
             Token = NullIfBlank(Read(environment, "MACDIAG_TOKEN")),
             ArtifactDirectory = ReadDirectory(environment, "MACDIAG_ARTIFACT_DIR", DefaultArtifactDirectory),
             ServiceLabel = NullIfBlank(Read(environment, "MACDIAG_SERVICE_LABEL")),
-            ProtectedLabels = (Read(environment, "MACDIAG_PROTECTED_LABELS") ?? string.Empty)
-                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            ProtectedLabels = ProtectedLabelList(Read(environment, "MACDIAG_PROTECTED_LABELS"))
         };
+    }
+
+    /// <summary>The configured protected labels, each refused at startup unless it could actually match a label.</summary>
+    /// <remarks>
+    /// A glob such as com.corp.* would be compared as an exact label that never occurs, leaving the job unprotected
+    /// without a word. An entry is a label, or a prefix ending in "."; anything else stops the server.
+    /// </remarks>
+    private static string[] ProtectedLabelList(string? value)
+    {
+        var entries = (value ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        foreach (var entry in entries)
+        {
+            if (!Mac.Launchd.LaunchdLabel.IsValid(entry))
+            {
+                throw new ConfigurationException(
+                    $"MACDIAG_PROTECTED_LABELS entry '{entry}' is not a launchd label or prefix. Use a label such as com.corp.vpn, " +
+                    "or a prefix ending in '.' such as com.corp.; patterns like '*' are not supported.");
+            }
+        }
+
+        return entries;
     }
 
     /// <summary>A loggable summary, with the token redacted.</summary>

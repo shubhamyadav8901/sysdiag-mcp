@@ -126,9 +126,10 @@ public sealed record MacServiceInstallOptions
             }
         }
 
-        if (label.Length == 0 || label.StartsWith('.') || label.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.')))
+        // The same rule the tools apply to a label, so the installer cannot create a job service_control would refuse.
+        if (!Mac.Launchd.LaunchdLabel.IsValid(label))
         {
-            throw new ConfigurationException($"--label '{label}' may contain only letters, digits, '-', '_' and '.'.");
+            throw new ConfigurationException($"--label '{label}' may contain only letters, digits, '-', '_' and '.', and may not start with '.' or '-'.");
         }
 
         return label;

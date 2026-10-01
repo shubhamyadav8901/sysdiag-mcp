@@ -1,0 +1,37 @@
+# Source: launchd.plist(5); the shape of /System/Library/LaunchDaemons/ssh.plist as plutil -convert xml1 -o - prints it. Unverified.
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Disabled</key>
+	<true/>
+	<key>Label</key>
+	<string>com.openssh.sshd</string>
+	<key>Program</key>
+	<string>/usr/libexec/sshd-keygen-wrapper</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/sbin/sshd</string>
+		<string>-i</string>
+	</array>
+	<key>Sockets</key>
+	<dict>
+		<key>Listeners</key>
+		<dict>
+			<key>SockServiceName</key>
+			<string>ssh</string>
+		</dict>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>Created</key>
+	<date>2024-10-01T06:00:00Z</date>
+</dict>
+</plist>
