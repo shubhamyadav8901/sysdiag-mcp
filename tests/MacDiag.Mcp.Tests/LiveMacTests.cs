@@ -103,6 +103,71 @@ public sealed class LiveMacTests : IDisposable
     }
 
     [MacFact]
+    public async Task A_line_written_with_logger_is_found_by_event_log_tail()
+    {
+        var marker = $"macdiag-live-{Guid.NewGuid():N}";
+        Process.Start("/usr/bin/logger", ["-t", "macdiag-live", marker])!.WaitForExit();
+        var log = new Diagnostics.Log.MacLogInspector(Commands, Options);
+
+        // The unified log is asynchronous: give the line a few seconds to land.
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var result = await log.QueryAsync("logger", null, null, null, 5, ["all"], 50, CancellationToken.None);
+            if (result.Events.Any(e => e.Message?.Contains(marker, StringComparison.Ordinal) == true))
+            {
+                return;
+            }
+
+            await Task.Delay(1000);
+        }
+
+        Assert.Fail($"{marker} never appeared in event_log_tail");
+    }
+
+    [MacFact]
+    public async Task Remote_logins_job_is_described_from_its_plist_whose_name_is_not_its_label()
+    {
+        var result = await new Diagnostics.Services.MacServiceInspector(Commands, Options).QueryAsync("com.openssh.sshd", CancellationToken.None);
+
+        Assert.NotNull(result.Service);
+        Assert.EndsWith("ssh.plist", result.Service.PlistPath, StringComparison.Ordinal);
+        Assert.NotNull(result.Service.Program);
+    }
+
+    [MacFact]
+    public async Task A_spawned_process_is_suspended_resumed_and_terminated_and_a_wrong_name_is_refused()
+    {
+        var child = Process.Start("/bin/sleep", ["60"])!;
+        _children.Add(child);
+        var controller = new Diagnostics.Control.MacProcessController(Commands, Options, Microsoft.Extensions.Logging.Abstractions.NullLogger<Diagnostics.Control.MacProcessController>.Instance);
+
+        async Task<string> State() =>
+            (await Commands.RunAsync("ps", ["-p", child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), "-o", "stat="], TimeSpan.FromSeconds(10), CancellationToken.None)).StandardOutput.Trim();
+
+        await Assert.ThrowsAsync<Diagnostics.Control.ProcessControlException>(() =>
+            controller.ControlAsync(child.Id, "nginx", Diagnostics.Control.ProcessAction.Kill, null, CancellationToken.None));
+        Assert.False(child.HasExited);
+
+        await controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Suspend, null, CancellationToken.None);
+        Assert.Contains("T", await State(), StringComparison.Ordinal);
+
+        await controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Resume, null, CancellationToken.None);
+        Assert.DoesNotContain("T", await State(), StringComparison.Ordinal);
+
+        var terminated = await controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Terminate, null, CancellationToken.None);
+        Assert.Contains("Exited", terminated.Detail, StringComparison.Ordinal);
+    }
+
+    [MacFact]
+    public async Task Stopping_the_window_server_is_refused_before_launchctl_is_asked_anything()
+    {
+        var controller = new Diagnostics.Services.MacServiceController(Commands, Options, Microsoft.Extensions.Logging.Abstractions.NullLogger<Diagnostics.Services.MacServiceController>.Instance);
+
+        await Assert.ThrowsAsync<Diagnostics.Services.ServiceControlException>(() =>
+            controller.ControlAsync("com.apple.WindowServer", Diagnostics.Services.ServiceAction.Stop, CancellationToken.None));
+    }
+
+    [MacFact]
     public async Task A_command_line_with_spaces_and_non_ascii_comes_back_as_it_was_given()
     {
         // "; :" keeps the shell alive: a lone command after -c is exec'd, and the PID would become sleep's.
