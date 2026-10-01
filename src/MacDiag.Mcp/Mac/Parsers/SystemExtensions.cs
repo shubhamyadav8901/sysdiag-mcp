@@ -22,7 +22,8 @@ public static partial class SystemExtensions
             var line = raw.TrimEnd('\r');
             if (line.StartsWith("--- ", StringComparison.Ordinal))
             {
-                kind = line[4..].Trim();
+                // Newer releases append "(Go to 'System Settings > ...' to modify these system extension(s))".
+                kind = line[4..].Trim().Split(' ', 2)[0];
                 continue;
             }
 

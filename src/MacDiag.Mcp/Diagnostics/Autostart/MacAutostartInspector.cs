@@ -34,7 +34,6 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
         "Write access granted through an ACL is not checked; effective_access answers that for one path.";
 
     private const string SealedVolume = "/System/";
-    private const int StatBatch = 256;
     private const int AnyExecuteBit = 0b001_001_001;
 
     private static readonly string[] Interpreters =
@@ -123,6 +122,7 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
         private readonly Dictionary<string, int?> _uids = new(StringComparer.Ordinal);
         private Dictionary<string, StatLine>? _homes;
         private bool _hiddenExtensions;
+        private readonly HashSet<string> _denied = new(StringComparer.Ordinal);
 
         /// <summary>A listing command's output, or null with the failure named as a limitation.</summary>
         private async Task<string?> ListingAsync(string program, string[] arguments, string command)
@@ -502,7 +502,7 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                 result[path] = (null, "its name contains a control character");
             }
 
-            var stats = await StatBatchesAsync(paths.Where(p => !StatLines.HasControlCharacter(p))).ConfigureAwait(false);
+            var stats = await StatBatchesAsync(paths).ConfigureAwait(false);
             var links = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (path, line) in stats)
             {
@@ -527,7 +527,7 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                 }
             }
 
-            var targets = await StatBatchesAsync(links.Values.Where(t => !StatLines.HasControlCharacter(t))).ConfigureAwait(false);
+            var targets = await StatBatchesAsync(links.Values).ConfigureAwait(false);
             foreach (var (path, target) in links)
             {
                 result[path] = targets.TryGetValue(target, out var line) && line.Kind == StatKind.File
@@ -538,18 +538,12 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             return result;
         }
 
-        private async Task<Dictionary<string, StatLine>> StatBatchesAsync(IEnumerable<string> paths)
+        /// <summary>stat for every path; what stat was refused is remembered, so it is never reported as absent.</summary>
+        private async Task<IReadOnlyDictionary<string, StatLine>> StatBatchesAsync(IEnumerable<string> paths)
         {
-            var stats = new Dictionary<string, StatLine>(StringComparer.Ordinal);
-            foreach (var batch in paths.Distinct(StringComparer.Ordinal).Chunk(StatBatch))
-            {
-                foreach (var (path, line) in await StatLines.StatAsync(Commands, batch, Timeout, cancellationToken).ConfigureAwait(false))
-                {
-                    stats[path] = line;
-                }
-            }
-
-            return stats;
+            var outcome = await StatLines.StatOutcomeAsync(Commands, paths, Timeout, cancellationToken).ConfigureAwait(false);
+            _denied.UnionWith(outcome.Denied);
+            return outcome.Lines;
         }
 
         /// <summary>Whether periodic(8) would run it: a regular file with an execute bit, after following a link.</summary>
@@ -598,6 +592,7 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
         private bool Judge(Candidate candidate, IReadOnlyDictionary<string, StatLine> stats, List<string> findings, out bool missing)
         {
             missing = false;
+            var notes = new List<string>(); // reported, but not a way for another account in
             if (candidate.Problem is { } problem)
             {
                 findings.Add($"{Printable(candidate.Location)}: {problem}; it was not examined.");
@@ -618,17 +613,26 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                     continue;
                 }
 
+                if (_denied.Contains(target))
+                {
+                    // Out of this server's sight is not absent: a program in a home it may not search is still there.
+                    notes.Add($"{target} could not be examined (permission denied).");
+                    continue;
+                }
+
                 if (!stats.ContainsKey(target))
                 {
                     missing = true;
-                    findings.Add($"{target} does not exist.");
+                    notes.Add($"{target} does not exist.");
                     continue;
                 }
 
                 JudgePath(target, candidate.ImageOwners, stats, findings);
             }
 
-            return findings.Any(f => !f.EndsWith(" does not exist.", StringComparison.Ordinal));
+            var writable = findings.Count > 0;
+            findings.AddRange(notes);
+            return writable;
         }
 
         private void JudgePath(string path, IReadOnlySet<int>? owners, IReadOnlyDictionary<string, StatLine> stats, List<string> findings)
@@ -667,9 +671,9 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             {
                 resolved = owner.Resolve(path);
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                yield break;
+                yield break; // a link this server may not follow: the spelling as given is still judged
             }
 
             if (resolved != path)

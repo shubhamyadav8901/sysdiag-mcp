@@ -25,6 +25,16 @@ public sealed class AutostartExtensionTests
     }
 
     [Fact]
+    public void The_kind_of_extension_point_leaves_out_the_system_settings_hint_newer_releases_append()
+    {
+        var text = "--- com.apple.system_extension.network_extension (Go to 'System Settings > General > Login Items & Extensions > Network Extensions' to modify these system extension(s))\n" +
+                   "enabled\tactive\tteamID\tbundleID (version)\tname\t[state]\n" +
+                   "*\t*\tABCDE12345\tcom.example.vpn.extension (1.2.3/45)\tExample VPN\t[activated enabled]\n";
+
+        Assert.Equal("com.apple.system_extension.network_extension", SystemExtensions.Parse(text).Single().Kind);
+    }
+
+    [Fact]
     public void Loaded_kexts_are_recognised_by_the_shape_of_each_row_not_by_the_header()
     {
         var withoutHeader = string.Join('\n', Fixture(Unverified, "kmutil-showloaded").Split('\n').Where(l => !l.StartsWith("Index", StringComparison.Ordinal)));

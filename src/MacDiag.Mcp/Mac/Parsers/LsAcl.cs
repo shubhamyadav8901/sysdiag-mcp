@@ -16,6 +16,7 @@ public static partial class LsAcl
             .ToList();
     }
 
-    [GeneratedRegex(@"^\s*\d+: (\S+ (?:allow|deny) .+)$")]
+    // The principal is everything before the first " allow " or " deny ": a directory group's name can hold spaces.
+    [GeneratedRegex(@"^\s*\d+: ((?:user|group):.+? (?:allow|deny) .+)$")]
     private static partial Regex Entry();
 }

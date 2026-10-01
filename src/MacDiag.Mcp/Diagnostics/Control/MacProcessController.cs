@@ -32,6 +32,9 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
         "macOS has no pidfd: between the last check and the signal there is a window of milliseconds in which the PID could be reused.";
 
     private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(1);
+
+    /// <summary>macOS gives people uids from 501 up; below are system accounts.</summary>
+    private const int FirstUserId = 501;
     private readonly LaunchdProtection _protection = new(options);
 
     internal TimeSpan ExitWait { get; init; } = TimeSpan.FromSeconds(10);
@@ -39,6 +42,8 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
     internal TimeSpan PollDelay { get; init; } = TimeSpan.FromMilliseconds(250);
 
     internal Func<int> SelfPid { get; init; } = static () => Environment.ProcessId;
+
+    internal Func<bool> IsRoot { get; init; } = static () => Environment.IsPrivilegedProcess;
 
     public async Task<ProcessControlResult> ControlAsync(
         int processId, string expectedName, ProcessAction action, DateTimeOffset? expectedStartTime, CancellationToken cancellationToken)
@@ -129,10 +134,55 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
             throw new ProcessControlException("launchctl list returned no jobs, so protected processes cannot be told apart; only resume is allowed. Nothing was sent.");
         }
 
-        if (jobs.FirstOrDefault(row => row.ProcessId == processId && _protection.Refusal(row.Label) is not null)
+        // Run as root, launchctl list is the system domain; run as anyone else, it is that user's own domain.
+        var root = IsRoot();
+        Func<string, string?> refusal = root ? _protection.Refusal : _protection.RefusalInUserDomain;
+        if (jobs.FirstOrDefault(row => row.ProcessId == processId && refusal(row.Label) is not null)
             is { Label: { Length: > 0 } label })
         {
             throw new ProcessControlException($"PID {processId} is the main process of the protected launchd job '{label}'. Nothing was sent.");
+        }
+
+        if (root)
+        {
+            await RequireUnprotectedInUserDomainAsync(processId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>A human account's process may be the main process of a job in that user's own domain -- a remote-access
+    /// agent such as Tailscale's or TeamViewer's -- which root's launchctl list does not show.</summary>
+    /// <remarks>
+    /// launchctl asuser runs launchctl list in the user's bootstrap context, so it prints the same documented table.
+    /// Accounts below 501 are system accounts with no user session and so no agents; asking for one would refuse every
+    /// signal to _www and its kin. A user's list that cannot be read fails closed, like the system list.
+    /// </remarks>
+    private async Task RequireUnprotectedInUserDomainAsync(int processId, CancellationToken cancellationToken)
+    {
+        var pid = processId.ToString(CultureInfo.InvariantCulture);
+        var owner = await commands.RunAsync("ps", ["-p", pid, "-o", "uid="], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
+        if (owner.ExitCode != 0 || !int.TryParse(owner.StandardOutput.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var uid))
+        {
+            throw new ProcessControlException($"PID {processId}'s owner could not be read, so its user's protected jobs cannot be checked; only resume is allowed. Nothing was sent.");
+        }
+
+        if (uid < FirstUserId)
+        {
+            return;
+        }
+
+        var account = uid.ToString(CultureInfo.InvariantCulture);
+        var list = await commands.RunAsync("launchctl", ["asuser", account, "launchctl", "list"], options.ExternalToolTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (list.ExitCode != 0)
+        {
+            throw new ProcessControlException(
+                $"The launchd jobs of uid {uid}, who owns PID {processId}, could not be read ({list.StandardError.Trim()}), so only resume is allowed. Nothing was sent.");
+        }
+
+        if (LaunchctlList.Parse(list.StandardOutput).FirstOrDefault(row => row.ProcessId == processId && _protection.RefusalInUserDomain(row.Label) is not null)
+            is { Label: { Length: > 0 } label })
+        {
+            throw new ProcessControlException($"PID {processId} is the main process of '{label}', a protected job in uid {uid}'s own launchd domain. Nothing was sent.");
         }
     }
 

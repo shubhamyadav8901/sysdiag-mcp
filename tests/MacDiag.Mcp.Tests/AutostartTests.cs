@@ -58,6 +58,9 @@ public sealed class AutostartTests
 
         public Dictionary<string, string> Links { get; } = [];
 
+        /// <summary>Paths stat reports as Permission denied, and links this process may not follow.</summary>
+        public HashSet<string> Denied { get; } = [];
+
         public string[] Homes { get; set; } = [];
 
         public ExternalResult SystemExtensions { get; set; } = FakeCommands.Ok("0 extension(s)\n");
@@ -80,7 +83,7 @@ public sealed class AutostartTests
                 ListEntries = directory => all.Where(p => p.StartsWith(directory + "/", StringComparison.Ordinal) && !p[(directory.Length + 1)..].Contains('/')),
                 FileExists = path => all.Contains(path),
                 ReadText = path => Unreadable.Contains(path) ? throw new UnauthorizedAccessException(path) : Texts.GetValueOrDefault(path),
-                Resolve = path => Links.TryGetValue(path, out var target) ? target : path,
+                Resolve = path => Denied.Contains(path) ? throw new UnauthorizedAccessException(path) : Links.TryGetValue(path, out var target) ? target : path,
             };
         }
 
@@ -89,7 +92,7 @@ public sealed class AutostartTests
             _ when Hangs.Contains(program) || (program is "plutil" or "codesign" && Hangs.Contains(args[^1])) => FakeCommands.Hang(program),
             ("plutil", "-convert") when Unreadable.Contains(args[^1]) => new ExternalResult(1, "", $"{args[^1]}: Permission denied"),
             ("plutil", "-convert") => Plists.TryGetValue(args[^1], out var xml) ? FakeCommands.Ok(xml) : new ExternalResult(1, "", "no such file"),
-            ("stat", _) => StatLinesTests.Answer(Stats, args),
+            ("stat", _) => StatLinesTests.Answer(Stats, args, Denied),
             ("launchctl", "print-disabled") => FakeCommands.Ok(Disabled.GetValueOrDefault(args[1], "disabled services = {\n}\n")),
             ("id", "-u") => Uids.TryGetValue(args[^1], out var uid) ? FakeCommands.Ok($"{uid}\n") : new ExternalResult(1, "", "id: no such user"),
             ("codesign", "--verify") => Unsigned.Contains(args[^1]) ? new ExternalResult(1, "", $"{args[^1]}: code object is not signed at all") : new ExternalResult(0, "", ""),
@@ -299,6 +302,31 @@ public sealed class AutostartTests
 
         Assert.True(entry.WritableByOthers);
         Assert.Contains(entry.Findings, f => f.Contains("control character", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_program_stat_may_not_look_at_is_reported_as_unexamined_not_missing()
+    {
+        var mac = new FakeMac();
+        mac.Stats.Remove(AgentDProgram);
+        mac.Denied.Add(AgentDProgram);
+
+        var entry = (await Audit(mac)).Entries.Single();
+
+        Assert.False(entry.ImageMissing);
+        Assert.Contains(entry.Findings, f => f.Contains("permission denied", StringComparison.Ordinal));
+        Assert.DoesNotContain(entry.Findings, f => f.Contains("does not exist", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_link_this_server_may_not_follow_costs_nothing_but_its_resolved_spelling()
+    {
+        var mac = new FakeMac();
+        mac.Denied.Add(AgentDProgram);
+
+        var entry = (await Audit(mac)).Entries.Single();
+
+        Assert.Equal(AgentDProgram, entry.ImagePath);
     }
 
     [Fact]

@@ -47,14 +47,14 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
 
         var notes = new List<string>();
         var serverUid = await ServerUidAsync(cancellationToken).ConfigureAwait(false);
-        var subject = await SubjectAsync(account, processId, notes, cancellationToken).ConfigureAwait(false);
+        var (subject, groupIds) = await SubjectAsync(account, processId, notes, cancellationToken).ConfigureAwait(false);
 
         string real;
         try
         {
             real = Resolve(full);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new AccessInspectionException($"Could not resolve {full}: {ex.Message}", ex);
         }
@@ -98,7 +98,8 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
                 (await TestAsync(serverUid, serverUid, "-x", real, cancellationToken).ConfigureAwait(false)).Allowed,
                 false);
 
-        Explain(stat, acl, subject, mount, notes);
+        var denying = await DenyingEntriesAsync(acl, subject, groupIds, cancellationToken).ConfigureAwait(false);
+        Explain(stat, denying, subject, mount, notes);
         return new EffectiveAccessReport(
             full, real == full ? null : real, Kind(stat.Kind), ownerName, groupName, Mode(stat.Mode), acl, stat.Flags,
             mount?.MountPoint, mount is null ? [] : [mount.FileSystem, .. mount.Options], subject, read, write, execute, traversal,
@@ -133,7 +134,8 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
         };
     }
 
-    private async Task<AccessSubject> SubjectAsync(string? account, int? processId, List<string> notes, CancellationToken cancellationToken)
+    private async Task<(AccessSubject Subject, IReadOnlySet<uint> GroupIds)> SubjectAsync(
+        string? account, int? processId, List<string> notes, CancellationToken cancellationToken)
     {
         uint uid;
         string description;
@@ -165,14 +167,22 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
 
         var key = uid.ToString(CultureInfo.InvariantCulture);
         var name = await OneLineAsync("id", ["-un", "--", key], cancellationToken).ConfigureAwait(false);
-        var groups = (await OneLineAsync("id", ["-Gn", "--", key], cancellationToken).ConfigureAwait(false) ?? string.Empty)
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // id -Gn joins names with spaces, and a directory group may hold one ("Domain Users"): the names are split only
+        // when there are as many as there are gids, and the gids -- never the names -- decide whether an ACL applies.
+        var ids = (await OneLineAsync("id", ["-G", "--", key], cancellationToken).ConfigureAwait(false) ?? string.Empty)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(g => uint.TryParse(g, NumberStyles.None, CultureInfo.InvariantCulture, out var gid) ? gid : (uint?)null)
+            .OfType<uint>()
+            .ToHashSet();
+        var names = await OneLineAsync("id", ["-Gn", "--", key], cancellationToken).ConfigureAwait(false) ?? string.Empty;
+        var split = names.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        IReadOnlyList<string> groups = split.Length == ids.Count || names.Length == 0 ? split : [names];
         if (processId is null && name is not null && description != name)
         {
             description = $"{name} (uid {uid})";
         }
 
-        return new AccessSubject(description, uid, name, groups);
+        return (new AccessSubject(description, uid, name, groups), ids);
     }
 
     private async Task<uint> ServerUidAsync(CancellationToken cancellationToken) =>
@@ -197,7 +207,49 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
     private static bool Under(string path, string directory) =>
         directory == "/" || path == directory || path.StartsWith(directory + "/", StringComparison.Ordinal);
 
-    private static void Explain(StatLine stat, IReadOnlyList<string> acl, AccessSubject subject, MacMount? mount, List<string> notes)
+    /// <summary>The deny entries that name the subject: its user, everyone, or a group it is in, matched by gid.</summary>
+    private async Task<IReadOnlyList<(string Principal, string Entry)>> DenyingEntriesAsync(
+        IReadOnlyList<string> acl, AccessSubject subject, IReadOnlySet<uint> groupIds, CancellationToken cancellationToken)
+    {
+        var denying = new List<(string, string)>();
+        foreach (var entry in acl)
+        {
+            var deny = entry.IndexOf(" deny ", StringComparison.Ordinal);
+            if (deny <= 0)
+            {
+                continue;
+            }
+
+            var principal = entry[..deny];
+            var applies = principal == "group:everyone"
+                || (principal.StartsWith("user:", StringComparison.Ordinal) && principal["user:".Length..] == subject.UserName)
+                || (principal.StartsWith("group:", StringComparison.Ordinal) &&
+                    await GroupIdAsync(principal["group:".Length..], cancellationToken).ConfigureAwait(false) is { } gid && groupIds.Contains(gid));
+            if (applies)
+            {
+                denying.Add((principal, entry));
+            }
+        }
+
+        return denying;
+    }
+
+    /// <summary>A group's gid from the directory services cache, which knows directory groups as well as local ones.</summary>
+    private async Task<uint?> GroupIdAsync(string group, CancellationToken cancellationToken)
+    {
+        if (StatLines.HasControlCharacter(group))
+        {
+            return null;
+        }
+
+        var result = await commands.RunAsync("dscacheutil", ["-q", "group", "-a", "name", group], options.ExternalToolTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        var line = result.StandardOutput.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("gid: ", StringComparison.Ordinal));
+        return line is not null && uint.TryParse(line["gid: ".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out var gid) ? gid : null;
+    }
+
+    private static void Explain(
+        StatLine stat, IReadOnlyList<(string Principal, string Entry)> denying, AccessSubject subject, MacMount? mount, List<string> notes)
     {
         if (stat.Flags.Contains("uchg") || stat.Flags.Contains("schg"))
         {
@@ -214,24 +266,9 @@ public sealed partial class MacAccessInspector(IExternalCommand commands, MacDia
             notes.Add("System Integrity Protection protects it (restricted): root cannot change it while SIP is on.");
         }
 
-        var principals = new HashSet<string>(StringComparer.Ordinal) { "group:everyone" };
-        if (subject.UserName is { } user)
+        foreach (var (principal, entry) in denying)
         {
-            principals.Add($"user:{user}");
-        }
-
-        foreach (var group in subject.Groups)
-        {
-            principals.Add($"group:{group}");
-        }
-
-        foreach (var entry in acl)
-        {
-            var words = entry.Split(' ');
-            if (words.Length >= 3 && words[1] == "deny" && principals.Contains(words[0]))
-            {
-                notes.Add($"An ACL entry denies {subject.Description} through {words[0]}: '{entry}'. Deny entries are applied before allow entries.");
-            }
+            notes.Add($"An ACL entry denies {subject.Description} through {principal}: '{entry}'. Deny entries are applied before allow entries.");
         }
 
         if (mount is { ReadOnly: true })

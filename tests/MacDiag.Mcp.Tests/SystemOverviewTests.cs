@@ -183,7 +183,8 @@ public sealed class SystemOverviewTests
                 Assert.True(package is null || version is not null, text);
                 break;
             case "ls-lde":
-                Assert.All(LsAcl.Parse(text), entry => Assert.Matches(@"^\S+ (allow|deny) ", entry));
+                // A user's home carries "group:everyone deny delete" on every macOS release: an empty list would be a parser miss.
+                Assert.Contains(LsAcl.Parse(text), entry => entry.StartsWith("group:everyone deny ", StringComparison.Ordinal));
                 break;
             case "stat-lines":
                 Assert.Equal([StatKind.Directory, StatKind.File, StatKind.CharacterDevice], StatLines.Parse(text).Select(l => l.Kind));

@@ -242,6 +242,27 @@ public sealed class SignatureTests
     }
 
     [Fact]
+    public async Task A_digest_shasum_marks_with_a_backslash_for_an_escaped_name_is_still_read()
+    {
+        var mac = new Mac { Shasum = path => FakeCommands.Ok($"\\{Digest}  {path}\\\\odd\n") };
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
+
+        Assert.Equal(Digest.ToUpperInvariant(), file.Sha256);
+    }
+
+    [Fact]
+    public async Task An_app_bundle_passed_whole_is_answered_with_where_its_executable_is()
+    {
+        var mac = new Mac();
+        mac.Stats["/Applications/Example.app"] = Line("/Applications/Example.app", 0, 80, "0755", "Directory");
+
+        var result = await Inspector(mac.Commands()).InspectAsync(["/Applications/Example.app"], CancellationToken.None);
+
+        Assert.Contains(result.NotFound, n => n.Contains("app bundle", StringComparison.Ordinal) && n.Contains("Contents/MacOS", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Hashing_that_never_finishes_costs_that_file_not_the_whole_call()
     {
         var mac = new Mac();

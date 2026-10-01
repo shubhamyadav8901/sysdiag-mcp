@@ -9,12 +9,40 @@ public sealed class StatLinesTests
         $"{uid}\t{gid}\t{mode}\t{flags}\t{size}\t{modified}\t{type}\t{path}";
 
     /// <summary>A stat that answers for the paths it knows, prints nothing for the rest, and fails like BSD stat does.</summary>
-    internal static ExternalResult Answer(IReadOnlyDictionary<string, string> lines, IReadOnlyList<string> arguments)
+    internal static ExternalResult Answer(IReadOnlyDictionary<string, string> lines, IReadOnlyList<string> arguments, IReadOnlySet<string>? denied = null)
     {
         var paths = arguments.SkipWhile(a => a != "--").Skip(1).ToList();
         var known = paths.Where(lines.ContainsKey).Select(p => lines[p]).ToList();
-        var missing = paths.Where(p => !lines.ContainsKey(p)).Select(p => $"stat: {p}: stat: No such file or directory").ToList();
+        var missing = paths.Where(p => !lines.ContainsKey(p))
+            .Select(p => denied?.Contains(p) == true ? $"stat: {p}: stat: Permission denied" : $"stat: {p}: stat: No such file or directory")
+            .ToList();
         return new ExternalResult(missing.Count == 0 ? 0 : 1, string.Join('\n', known) + "\n", string.Join('\n', missing));
+    }
+
+    [Fact]
+    public async Task A_long_list_of_paths_is_statted_in_batches_so_no_argument_list_outgrows_the_system_limit()
+    {
+        var paths = Enumerable.Range(0, 600).Select(i => $"/p/{i}").ToList();
+        var lines = paths.ToDictionary(p => p, p => Line(p, 0, 0, "0644", "Regular File"));
+        var commands = new FakeCommands((_, args) => Answer(lines, args));
+
+        var stats = await StatLines.StatAsync(commands, paths, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(600, stats.Count);
+        Assert.Equal(3, commands.Calls.Count);
+        Assert.All(commands.Calls, c => Assert.True(c.Arguments.Count <= StatLines.Batch + 3, c.Arguments.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+    }
+
+    [Fact]
+    public async Task A_path_stat_may_not_look_at_is_told_apart_from_one_that_does_not_exist()
+    {
+        var lines = new Dictionary<string, string> { ["/a"] = Line("/a", 0, 0, "0644", "Regular File") };
+        var commands = new FakeCommands((_, args) => Answer(lines, args, new HashSet<string> { "/Users/bob/x: odd" }));
+
+        var outcome = await StatLines.StatOutcomeAsync(commands, ["/a", "/gone", "/Users/bob/x: odd"], TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(["/a"], outcome.Lines.Keys);
+        Assert.Equal(["/Users/bob/x: odd"], outcome.Denied);
     }
 
     [Fact]

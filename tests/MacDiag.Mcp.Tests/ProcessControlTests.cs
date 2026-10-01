@@ -10,7 +10,7 @@ public sealed class ProcessControlTests
 {
     private const string Start = "Tue Oct  1 08:00:00 2024";
 
-    private sealed record Proc(int Ppid, string Stat, string Start, string Comm, string Args);
+    private sealed record Proc(int Ppid, string Stat, string Start, string Comm, string Args, int Uid = 0);
 
     /// <summary>ps, kill and launchctl list over a little process table; kill -s TERM/KILL ends a process.</summary>
     private sealed class Mac
@@ -32,6 +32,11 @@ public sealed class ProcessControlTests
 
         public bool ListEmpty { get; init; }
 
+        /// <summary>launchctl list in each user's own domain, as launchctl asuser shows it; a uid not here fails.</summary>
+        public Dictionary<int, string> UserLists { get; } = [];
+
+        public List<int> AsUser { get; } = [];
+
         public List<string> Signals { get; } = [];
 
         private int _identityReads;
@@ -40,6 +45,7 @@ public sealed class ProcessControlTests
         {
             "ps" => Ps(args),
             "kill" => Kill(args),
+            "launchctl" when args[0] == "asuser" => UserList(int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture)),
             "launchctl" when args[0] == "list" => ListFails ? new ExternalResult(1, "", "launchctl: timed out")
                 : ListEmpty ? FakeCommands.Ok("PID\tStatus\tLabel\n")
                 : FakeCommands.Ok(Fixture(Unverified, "launchctl-list")),
@@ -65,12 +71,25 @@ public sealed class ProcessControlTests
                 return FakeCommands.Ok(p.Stat + "\n");
             }
 
+            if (columns == "uid=")
+            {
+                return FakeCommands.Ok($"  {p.Uid}\n");
+            }
+
             // The re-read just before the signal asks for pid, lstart and comm only.
             var start = columns == "pid=,lstart=,comm=" && ChangesHandsOnReread ? "Tue Oct  1 09:59:59 2024" : p.Start;
             _identityReads++;
             return columns == "pid=,lstart=,comm="
                 ? FakeCommands.Ok($"  {pid} {start}     {p.Comm}\n")
                 : FakeCommands.Ok($"  {pid}     {p.Ppid} {p.Stat}  {start}     {p.Comm}\n");
+        }
+
+        private ExternalResult UserList(int uid)
+        {
+            AsUser.Add(uid);
+            return UserLists.TryGetValue(uid, out var list)
+                ? FakeCommands.Ok("PID\tStatus\tLabel\n" + list)
+                : new ExternalResult(1, "", $"Could not switch to audit session for uid {uid}");
         }
 
         private ExternalResult Kill(IReadOnlyList<string> args)
@@ -92,7 +111,7 @@ public sealed class ProcessControlTests
         }
     }
 
-    private static MacProcessController Controller(Mac mac, string? protectedLabels = null) =>
+    private static MacProcessController Controller(Mac mac, string? protectedLabels = null, bool root = true) =>
         new(mac.Commands,
             MacDiagOptions.FromEnvironment(protectedLabels is null ? new Hashtable() : new Hashtable { ["MACDIAG_PROTECTED_LABELS"] = protectedLabels }),
             NullLogger<MacProcessController>.Instance)
@@ -100,9 +119,75 @@ public sealed class ProcessControlTests
             ExitWait = TimeSpan.FromMilliseconds(200),
             PollDelay = TimeSpan.Zero,
             SelfPid = () => 99999,
+            IsRoot = () => root,
         };
 
     private static DateTimeOffset StartTime => new(new DateTime(2024, 10, 1, 8, 0, 0, DateTimeKind.Local));
+
+    [Fact]
+    public async Task A_users_remote_access_agent_is_refused_by_its_pid_in_that_users_own_domain()
+    {
+        var mac = new Mac();
+        mac.Processes[4500] = new(1, "Ss", Start, "/Applications/Tailscale.app/Contents/MacOS/IPNExtension", "IPNExtension", Uid: 501);
+        mac.UserLists[501] = "4500\t0\tio.tailscale.ipn.macsys.login-item-helper\n";
+
+        var ex = await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(4500, "IPNExtension", ProcessAction.Kill, null, CancellationToken.None));
+
+        Assert.Contains("io.tailscale.", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("uid 501", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(mac.Signals);
+    }
+
+    [Fact]
+    public async Task Apples_own_agents_in_a_users_domain_may_be_restarted_as_launchd_relaunches_them()
+    {
+        var mac = new Mac();
+        mac.Processes[4600] = new(1, "S", Start, "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder", "Finder", Uid: 501);
+        mac.UserLists[501] = "4600\t0\tcom.apple.Finder\n";
+
+        await Controller(mac).ControlAsync(4600, "Finder", ProcessAction.Terminate, null, CancellationToken.None);
+
+        Assert.Equal(["TERM 4600"], mac.Signals);
+    }
+
+    [Fact]
+    public async Task A_users_domain_that_cannot_be_listed_fails_closed_except_for_resume()
+    {
+        var mac = new Mac();
+        mac.Processes[4700] = new(1, "T", Start, "/usr/local/bin/tool", "tool", Uid: 502);
+
+        await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(4700, "tool", ProcessAction.Terminate, null, CancellationToken.None));
+        await Controller(mac).ControlAsync(4700, "tool", ProcessAction.Resume, null, CancellationToken.None);
+
+        Assert.Equal(["CONT 4700"], mac.Signals);
+    }
+
+    [Fact]
+    public async Task A_system_accounts_process_has_no_user_domain_to_look_in()
+    {
+        var mac = new Mac();
+        mac.Processes[4800] = new(1, "S", Start, "/usr/sbin/httpd", "/usr/sbin/httpd -D FOREGROUND", Uid: 70);
+
+        await Controller(mac).ControlAsync(4800, "httpd", ProcessAction.Terminate, null, CancellationToken.None);
+
+        Assert.Empty(mac.AsUser);
+        Assert.Equal(["TERM 4800"], mac.Signals);
+    }
+
+    [Fact]
+    public async Task A_server_that_is_not_root_reads_its_own_users_domain_where_apples_agents_are_not_protected()
+    {
+        var mac = new Mac();
+        mac.Processes[88] = mac.Processes[88] with { Comm = "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock", Args = "Dock", Uid = 501 };
+
+        // launchctl list's fixture names PID 88 com.apple.WindowServer; as the user's own list, an Apple label is no refusal.
+        await Controller(mac, root: false).ControlAsync(88, "Dock", ProcessAction.Terminate, null, CancellationToken.None);
+
+        Assert.Empty(mac.AsUser);
+        Assert.Equal(["TERM 88"], mac.Signals);
+    }
 
     [Fact]
     public async Task A_matching_process_is_terminated_and_the_result_states_the_window_macos_leaves()

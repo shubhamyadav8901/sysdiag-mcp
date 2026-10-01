@@ -16,6 +16,9 @@ public enum StatKind
 
 /// <param name="Mode">The special and permission digits (%Mp%Lp): 0755, 1777.</param>
 /// <param name="Flags">chflags(1) names (uchg, schg, restricted, hidden...); empty when there are none.</param>
+/// <param name="Denied">Paths stat was refused (Permission denied): not absent, only out of this server's sight.</param>
+public sealed record StatOutcome(IReadOnlyDictionary<string, StatLine> Lines, IReadOnlySet<string> Denied);
+
 public sealed record StatLine(string Path, int Uid, int Gid, int Mode, IReadOnlyList<string> Flags, long Size, long ModifiedEpoch, StatKind Kind);
 
 /// <summary>BSD stat -f with every field the diagnostics need, tab-separated.</summary>
@@ -37,7 +40,52 @@ public static class StatLines
     /// <summary>wheel and admin: admins can become root with sudo, so a directory they can write is no way in.</summary>
     public static readonly IReadOnlySet<int> TrustedGroups = new HashSet<int> { 0, 80 };
 
+    public const int Batch = 256;
+
     public static IReadOnlyList<string> Arguments(IEnumerable<string> paths) => ["-f", Format, "--", .. paths];
+
+    /// <summary>stat run in batches of <see cref="Batch"/> paths, keyed by path, with the paths it was refused told apart.</summary>
+    /// <remarks>
+    /// <para>Batches, because thousands of paths in one argv outgrow ARG_MAX and the whole call would fail.</para>
+    /// <para>stat says why it skipped a path only on stderr, "stat: &lt;path&gt;: stat: Permission denied"; without
+    /// reading it, a path in a home this server may not search would pass for one that does not exist.</para>
+    /// </remarks>
+    public static async Task<StatOutcome> StatOutcomeAsync(
+        IExternalCommand commands, IEnumerable<string> paths, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var stats = new Dictionary<string, StatLine>(StringComparer.Ordinal);
+        var denied = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var batch in paths.Where(p => !HasControlCharacter(p)).Distinct(StringComparer.Ordinal).Chunk(Batch))
+        {
+            var result = await commands.RunAsync("stat", Arguments(batch), timeout, cancellationToken).ConfigureAwait(false);
+            var wanted = batch.ToHashSet(StringComparer.Ordinal);
+            foreach (var line in Parse(result.StandardOutput).Where(l => wanted.Contains(l.Path)))
+            {
+                stats.TryAdd(line.Path, line);
+            }
+
+            foreach (var path in result.StandardError.Split('\n').Select(Refused).OfType<string>().Where(wanted.Contains))
+            {
+                denied.Add(path);
+            }
+        }
+
+        return new StatOutcome(stats, denied);
+    }
+
+    /// <summary>The path in one "stat: &lt;path&gt;: stat: Permission denied" line, or null.</summary>
+    private static string? Refused(string line)
+    {
+        const string Prefix = "stat: ", Suffix = ": stat: Permission denied";
+        var trimmed = line.TrimEnd('\r');
+        return trimmed.StartsWith(Prefix, StringComparison.Ordinal) && trimmed.EndsWith(Suffix, StringComparison.Ordinal) &&
+               trimmed.Length > Prefix.Length + Suffix.Length
+            ? trimmed[Prefix.Length..^Suffix.Length]
+            : null;
+    }
 
     public static bool HasControlCharacter(string path) => path.Any(char.IsControl);
 
@@ -88,24 +136,7 @@ public static class StatLines
     public static async Task<IReadOnlyDictionary<string, StatLine>> StatAsync(
         IExternalCommand commands, IEnumerable<string> paths, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(commands);
-        ArgumentNullException.ThrowIfNull(paths);
-
-        var asked = paths.Where(p => !HasControlCharacter(p)).Distinct(StringComparer.Ordinal).ToList();
-        if (asked.Count == 0)
-        {
-            return new Dictionary<string, StatLine>(StringComparer.Ordinal);
-        }
-
-        var result = await commands.RunAsync("stat", Arguments(asked), timeout, cancellationToken).ConfigureAwait(false);
-        var wanted = asked.ToHashSet(StringComparer.Ordinal);
-        var stats = new Dictionary<string, StatLine>(StringComparer.Ordinal);
-        foreach (var line in Parse(result.StandardOutput).Where(l => wanted.Contains(l.Path)))
-        {
-            stats.TryAdd(line.Path, line);
-        }
-
-        return stats;
+        return (await StatOutcomeAsync(commands, paths, timeout, cancellationToken).ConfigureAwait(false)).Lines;
     }
 
     private static StatKind Kind(string type) => type switch

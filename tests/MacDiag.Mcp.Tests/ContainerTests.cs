@@ -262,6 +262,16 @@ public sealed class ContainerTests
     }
 
     [Fact]
+    public void A_reply_that_is_not_a_container_list_is_refused_without_echoing_what_the_socket_said()
+    {
+        // Between the checks and the connect a home's owner can swap the socket for a link to a root-only one;
+        // nothing that socket answers may come back to the caller.
+        var error = Assert.Throws<FormatException>(() => DockerContainers.Parse("""{"secret":"root-only-data"}"""));
+
+        Assert.DoesNotContain("root-only-data", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Without_root_the_list_says_other_users_engines_may_be_unseen()
     {
         var catalog = await Inspector(new Dictionary<string, string>(), new FakeDocker(_ => ([], null)), root: false).ListAsync(CancellationToken.None);

@@ -45,7 +45,7 @@ public sealed class MacDockerClient : IDockerQuery
             using var response = await client.GetAsync(ListRequest, deadline.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return ([], $"Docker answered {(int)response.StatusCode} {response.ReasonPhrase} on {socketPath}, so its containers are not listed.");
+                return ([], $"Docker answered HTTP {(int)response.StatusCode} on {socketPath}, so its containers are not listed.");
             }
 
             var json = await response.Content.ReadAsStringAsync(deadline.Token).ConfigureAwait(false);

@@ -30,6 +30,17 @@ public sealed class AccessTests
 
         public ExternalResult? SudoFailure { get; set; }
 
+        public string GroupNames { get; set; } = "staff everyone localaccounts";
+
+        public string GroupIds { get; set; } = "20 12 61";
+
+        public Dictionary<string, int> GroupGids { get; } = new()
+        {
+            ["staff"] = 20, ["everyone"] = 12, ["admin"] = 80, ["wheel"] = 0, ["Domain Users"] = 1234, ["Domain"] = 999,
+        };
+
+        public Func<string, string> Resolve { get; set; } = path => path;
+
         public FakeCommands Commands { get; private set; } = null!;
 
         public MacAccessInspector Inspector()
@@ -37,7 +48,7 @@ public sealed class AccessTests
             Commands = new FakeCommands(Answer);
             return new MacAccessInspector(Commands, MacDiagOptions.FromEnvironment(new Hashtable()))
             {
-                Resolve = path => path,
+                Resolve = Resolve,
                 Firmlinks = PathSpellings.BuiltInFirmlinks,
             };
         }
@@ -50,7 +61,9 @@ public sealed class AccessTests
             "id" when args.Count == 1 => FakeCommands.Ok($"{ServerUid}\n"),
             "id" when args[0] == "-u" => args[^1] switch { "alice" => FakeCommands.Ok("501\n"), "root" => FakeCommands.Ok("0\n"), _ => new ExternalResult(1, "", "id: no such user") },
             "id" when args[0] == "-un" => args[^1] switch { "501" => FakeCommands.Ok("alice\n"), "0" => FakeCommands.Ok("root\n"), _ => new ExternalResult(1, "", "id: no such user") },
-            "id" when args[0] == "-Gn" => FakeCommands.Ok(args[^1] is "501" or "alice" ? "staff everyone localaccounts\n" : "wheel daemon\n"),
+            "id" when args[0] == "-Gn" => FakeCommands.Ok(args[^1] is "501" or "alice" ? GroupNames + "\n" : "wheel daemon\n"),
+            "id" when args[0] == "-G" => FakeCommands.Ok(args[^1] is "501" or "alice" ? GroupIds + "\n" : "0 1\n"),
+            "dscacheutil" => GroupGids.TryGetValue(args[^1], out var gid) ? FakeCommands.Ok($"name: {args[^1]}\npassword: *\ngid: {gid}\n\n") : FakeCommands.Ok(""),
             "ps" => args[1] == "4242" ? FakeCommands.Ok("  501\n") : new ExternalResult(1, "", ""),
             "stat" when args[1] == "%Su" => FakeCommands.Ok("root\n"),
             "stat" when args[1] == "%Sg" => FakeCommands.Ok("wheel\n"),
@@ -201,6 +214,38 @@ public sealed class AccessTests
         Assert.Contains(report.Notes, n => n.Contains("group:everyone deny delete", StringComparison.Ordinal));
         Assert.Contains(report.Notes, n => n.Contains("group:staff deny write,append inherited", StringComparison.Ordinal));
         Assert.DoesNotContain(report.Notes, n => n.Contains("user:admin", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_acl_entry_for_a_group_whose_name_has_spaces_is_read_whole()
+    {
+        Assert.Equal(["group:Domain Users deny write,append", "user:admin allow read"],
+            LsAcl.Parse(" 0: group:Domain Users deny write,append\n 1: user:admin allow read\n"));
+    }
+
+    [Fact]
+    public async Task A_deny_entry_for_a_directory_group_whose_name_has_spaces_is_named_and_the_group_kept_whole()
+    {
+        var mac = new FakeMac
+        {
+            Acl = " 0: group:Domain Users deny write,append\n 1: group:Domain deny read\n",
+            GroupNames = "staff Domain Users everyone",
+            GroupIds = "20 1234 12",
+        };
+
+        var report = await Inspect(mac);
+
+        Assert.Contains(report.Notes, n => n.Contains("group:Domain Users deny", StringComparison.Ordinal));
+        Assert.DoesNotContain(report.Notes, n => n.Contains("'group:Domain deny", StringComparison.Ordinal));
+        Assert.Equal(["staff Domain Users everyone"], report.Subject.Groups);
+    }
+
+    [Fact]
+    public async Task A_link_this_server_may_not_follow_is_an_error_the_caller_reads()
+    {
+        var mac = new FakeMac { Resolve = _ => throw new UnauthorizedAccessException("Access to the path is denied.") };
+
+        await Assert.ThrowsAsync<AccessInspectionException>(() => Inspect(mac));
     }
 
     [Fact]

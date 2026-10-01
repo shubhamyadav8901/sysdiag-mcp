@@ -16,7 +16,9 @@ public static class DockerContainers
             using var document = JsonDocument.Parse(json);
             if (document.RootElement.ValueKind != JsonValueKind.Array)
             {
-                throw new FormatException($"Docker's container list was not a JSON array: {Excerpt(json)}");
+                // Never an excerpt: between the checks and the connect, a home's owner can swap the socket for a link to a
+                // root-only one, and what that socket says must not come back to the caller.
+                throw new FormatException($"Docker's container list was a JSON {document.RootElement.ValueKind}, not an array.");
             }
 
             var containers = new List<DockerContainer>();
@@ -53,6 +55,4 @@ public static class DockerContainers
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
-
-    private static string Excerpt(string text) => text.Length <= 120 ? text : text[..120] + "…";
 }

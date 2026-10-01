@@ -86,7 +86,9 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
             // Only regular files are handed to anything that opens them: a FIFO blocks, and a device can be anything.
             if (stat.Kind != StatKind.File)
             {
-                notFound.Add($"{full} (not a regular file)");
+                notFound.Add(stat.Kind == StatKind.Directory && real.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
+                    ? $"{full} (an app bundle: pass its executable, in Contents/MacOS, for the signature and Gatekeeper's view of the app)"
+                    : $"{full} (not a regular file)");
                 continue;
             }
 
@@ -97,7 +99,8 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
             }
 
             var hash = await RunAsync("shasum", ["-a", "256", real], Left(), cancellationToken).ConfigureAwait(false);
-            if (hash.ExitCode != 0 || hash.StandardOutput.Split(' ', 2)[0] is not { Length: 64 } digest)
+            // shasum, like GNU's sha*sum, marks a line whose file name it had to escape with a leading backslash.
+            if (hash.ExitCode != 0 || hash.StandardOutput.Split(' ', 2)[0].TrimStart('\\') is not { Length: 64 } digest)
             {
                 notFound.Add(hash.StandardError.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)
                     ? $"{full} (permission denied)"
@@ -183,13 +186,11 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
 
     private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
 
-    /// <summary>The outermost .app the path is, or is inside.</summary>
+    /// <summary>The outermost .app a file is inside; only regular files get here, so never the bundle itself.</summary>
     internal static string? AppBundle(string path)
     {
         var index = path.IndexOf(".app/", StringComparison.OrdinalIgnoreCase);
-        return index >= 0 ? path[..(index + 4)]
-            : path.EndsWith(".app", StringComparison.OrdinalIgnoreCase) ? path
-            : null;
+        return index >= 0 ? path[..(index + 4)] : null;
     }
 
     private static string? Source(string standardError) =>

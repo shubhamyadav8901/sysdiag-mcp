@@ -32,8 +32,9 @@ public sealed class ControlTools(IServiceController services, IProcessController
         "from process_list as well to catch a PID reused by a process with the same name. The name and start time are " +
         "checked, then checked again just before the signal; macOS has no pidfd, so a window of milliseconds remains, " +
         "and the result says so. PID 1 (launchd), the kernel, loginwindow, WindowServer, logd, opendirectoryd, sshd " +
-        "and screen sharing, this server itself, zombies, and the main process of any system-domain launchd job " +
-        "service_control protects are refused for everything but resume. A user's own LaunchAgents are not looked up by PID.")]
+        "and screen sharing, this server itself, zombies, and the main process of any launchd job service_control " +
+        "protects are refused for everything but resume - including a user's own remote-access or VPN agent, found in " +
+        "that user's launchd domain. Apple's per-user agents (Finder, Dock) may be restarted: launchd relaunches them.")]
     public async Task<ProcessControlToolResult> ProcessControl(
         [Description("Process id to act on. Get a current one from process_list.")] int processId,
         [Description("The name you expect that PID to be, e.g. 'nginx' or '/usr/local/bin/nginx'. Verified before anything happens.")] string expectedName,
