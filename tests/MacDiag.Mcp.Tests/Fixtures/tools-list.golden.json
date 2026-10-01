@@ -164,6 +164,237 @@
     }
   },
   {
+    "name": "named_pipes",
+    "title": "Named sockets and FIFOs",
+    "description": "List named unix sockets and named FIFOs, with which processes hold each one. Use it when a client cannot connect to a local service over its socket: a name nobody holds, or one held by an unexpected process, shows up here. macOS\u0027s lsof does not report whether a unix socket is listening, so that is left unknown. Unnamed socket pairs and anonymous pipes are left out.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "nameFilter": {
+          "description": "Match this text anywhere in the socket or FIFO name, for example a product or service name",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "pipes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "listening": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "connectedCount": {
+                "type": "integer"
+              },
+              "owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "processId": {
+                      "type": "integer"
+                    },
+                    "processName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "processId",
+                    "processName"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "listening",
+              "connectedCount",
+              "owners"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "pipes",
+        "totalMatched",
+        "truncated",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Named sockets and FIFOs",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "network_owners",
+    "title": "Network endpoints and owning processes",
+    "description": "List TCP and UDP endpoints (IPv4 and IPv6) with every process that owns each socket - a prefork server\u0027s workers all share one listening socket. Use it for \u0027what is already using port 8080\u0027, \u0027which process is talking to that address\u0027, or to confirm a service is listening where it should be. Filter by port, owning PID, or listening endpoints only. Containers run in a virtual machine on macOS; their sockets appear as the VM\u0027s forwarders, not as the container\u0027s processes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "description": "Only endpoints using this local or remote port",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "Only endpoints owned by this process id",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "listeningOnly": {
+          "description": "Only listening TCP sockets and bound UDP endpoints, excluding established connections",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "Tcp",
+                  "Udp"
+                ]
+              },
+              "localAddress": {
+                "type": "string"
+              },
+              "localPort": {
+                "type": "integer"
+              },
+              "remoteAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "remotePort": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "processId": {
+                      "type": "integer"
+                    },
+                    "processName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "processId",
+                    "processName"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "protocol",
+              "localAddress",
+              "localPort",
+              "remoteAddress",
+              "remotePort",
+              "state",
+              "owners"
+            ]
+          }
+        },
+        "totalMatched": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "endpoints",
+        "totalMatched",
+        "truncated",
+        "limitations"
+      ]
+    },
+    "annotations": {
+      "title": "Network endpoints and owning processes",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "path_handle_search",
     "title": "Exhaustive handle search",
     "description": "Search every process\u0027s open and mapped files for names containing the given text, under every spelling macOS gives a path (/Users/... and /System/Volumes/Data/Users/..., /tmp and /private/tmp). Give a full path and it also matches the same file under any other name - a hard link or a rename after opening. Give a directory and it finds everything open beneath it. Use it as the follow-up when who_locks_path does not explain a problem. Complete only when the server runs as root. By default it searches file references; set includeAllObjectTypes to also search sockets and pipes by their descriptor text. A very busy Mac can produce more open files than one call returns; narrow the text if the result says so.",
