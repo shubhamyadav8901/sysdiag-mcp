@@ -140,7 +140,7 @@ jobs:
           dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -o artifacts/macdiag-smoke
           codesign --verify artifacts/macdiag-smoke/MacDiag.Mcp
           if ($LASTEXITCODE -ne 0) { throw 'the published arm64 binary is not validly signed' }
-          'smoke-token' | sudo artifacts/macdiag-smoke/MacDiag.Mcp --install-service --http http://127.0.0.1:4025 --token-stdin
+          'smoke-token' | sudo artifacts/macdiag-smoke/MacDiag.Mcp --install-service --http http://127.0.0.1:4025 --token-stdin --allow-self-update
           if ($LASTEXITCODE -ne 0) { sudo cat /var/log/macdiag/crash.log; throw "install failed ($LASTEXITCODE)" }
           $job = sudo launchctl print system/com.windiag.macdiag | Out-String
           if ($job -notmatch 'state = running') { throw "the launchd job is not running:`n$job" }
@@ -155,6 +155,40 @@ jobs:
           $back = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($get | ConvertFrom-Json).file.content))
           if ($back -ne $text) { throw "round trip returned '$back'" }
           Write-Host 'put_file/get_file round trip ok'
+
+          # update_self end to end: a second build with different bytes, staged in chunks, installed through launchd.
+          dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true `
+            -p:InformationalVersion=0.0.0-update-smoke -o artifacts/macdiag-smoke2
+          $bytes = [IO.File]::ReadAllBytes('artifacts/macdiag-smoke2/MacDiag.Mcp')
+          $sha = (Get-FileHash artifacts/macdiag-smoke2/MacDiag.Mcp -Algorithm SHA256).Hash
+          $staged = '/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp.new'
+          $chunk = 4MB
+          for ($offset = 0; $offset -lt $bytes.Length; $offset += $chunk) {
+            $part = [byte[]]::new([Math]::Min($chunk, $bytes.Length - $offset))
+            [Array]::Copy($bytes, $offset, $part, 0, $part.Length)
+            $partSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($part))
+            $arguments = @{ path = $staged; contentBase64 = [Convert]::ToBase64String($part); append = ($offset -gt 0); chunkSha256 = $partSha }
+            if ($offset + $chunk -ge $bytes.Length) { $arguments.expectedSha256 = $sha }
+            $sent = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool put_file -Raw -Arguments $arguments -TimeoutSeconds 300
+            if (-not $sent) { throw "put_file chunk at $offset returned nothing" }
+          }
+
+          $before = sudo launchctl print system/com.windiag.macdiag | Out-String
+          $oldPid = [regex]::Match($before, '(?m)^\s*pid = (\d+)').Groups[1].Value
+          # The connection drops when the server exits: that is success, so the call's own output is not judged.
+          ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool update_self -Raw -Arguments @{ expectedSha256 = $sha; force = $true } | Out-Null
+          $deadline = (Get-Date).AddSeconds(90)
+          do {
+            Start-Sleep -Seconds 3
+            $after = sudo launchctl print system/com.windiag.macdiag | Out-String
+            $newPid = [regex]::Match($after, '(?m)^\s*pid = (\d+)').Groups[1].Value
+            $live = (sudo shasum -a 256 /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp).Split(' ')[0].ToUpperInvariant()
+          } until (($newPid -and $newPid -ne $oldPid -and $live -eq $sha) -or (Get-Date) -gt $deadline)
+          if ($live -ne $sha -or -not $newPid -or $newPid -eq $oldPid) {
+            sudo cat /var/db/macdiag/self-update.log
+            throw "update_self did not install the staged build (pid $oldPid -> $newPid, live $live, want $sha)"
+          }
+          Write-Host "update_self ok: pid $oldPid -> $newPid"
 
           sudo /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp --uninstall-service --purge
           if ($LASTEXITCODE -ne 0) { throw "uninstall failed ($LASTEXITCODE)" }
