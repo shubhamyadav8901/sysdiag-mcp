@@ -43,14 +43,7 @@ public static class StartupPermissions
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var result = new MacSystemCommand().RunAsync("stat", ["-f", "%u %Lp %HT %N", "--", .. paths], TimeSpan.FromSeconds(10), CancellationToken.None)
-            .GetAwaiter().GetResult();
-        if (result.ExitCode != 0)
-        {
-            throw new ConfigurationException($"Could not check the permissions of {envFile}: {result.StandardError.Trim()}");
-        }
-
-        var problems = Problems(ParseStat(result.StandardOutput), env, exe);
+        var problems = Problems(Inspect(paths), env, exe);
         if (problems.Count > 0)
         {
             throw new ConfigurationException(
@@ -58,6 +51,25 @@ public static class StartupPermissions
                 " Fix the ownership and modes (chown root:wheel, chmod go-w; the env file chmod 600), or reinstall with " +
                 "--install-service, which sets them.");
         }
+    }
+
+    /// <summary>One stat line per path, from BSD stat run as the system's own program.</summary>
+    /// <remarks>
+    /// %Mp%Lp, not %Lp alone: %Lp is only the user/group/other digits, and the sticky bit that marks a shared
+    /// directory such as /tmp is in %Mp.
+    /// </remarks>
+    public static IReadOnlyList<StatEntry> Inspect(IReadOnlyList<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var result = new MacSystemCommand().RunAsync("stat", ["-f", "%u %Mp%Lp %HT %N", "--", .. paths], TimeSpan.FromSeconds(10), CancellationToken.None)
+            .GetAwaiter().GetResult();
+        if (result.ExitCode != 0)
+        {
+            throw new ConfigurationException($"Could not check the permissions of {string.Join(", ", paths)}: {result.StandardError.Trim()}");
+        }
+
+        return ParseStat(result.StandardOutput);
     }
 
     /// <summary>The path and every ancestor, root first.</summary>

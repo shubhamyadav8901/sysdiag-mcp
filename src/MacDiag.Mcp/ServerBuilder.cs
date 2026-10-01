@@ -33,10 +33,11 @@ public static class ServerBuilder
                       [--allow-arbitrary-read] [--read-only]
           MacDiag.Mcp --uninstall-service [--label <l>] [--purge]
           MacDiag.Mcp --service-status [--label <l>]
-        Installs /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp, /etc/macdiag/macdiag.env
+        Installs /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp, /etc/macdiag/<l>.env
         (0600: token and grants), /var/db/macdiag and /var/log/macdiag (0700) and
         /Library/LaunchDaemons/<l>.plist (default label com.windiag.macdiag), then loads it and waits until
-        it is listening, reporting the Application Firewall's state. --token-stdin reads the token from
+        the new job is the process listening, reporting the Application Firewall's state. An existing
+        --artifacts directory is used only if root alone can write it, and is never re-chmodded. --token-stdin reads the token from
         standard input, keeping it out of sudo's log and ps. --purge also deletes /var/db/macdiag.
         Under launchd the server logs to /var/log/macdiag/macdiag.log (rolled at 10 MiB); crash.log holds
         what the runtime writes before that, including a refused configuration, which launchd retries

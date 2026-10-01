@@ -22,7 +22,8 @@ public static partial class MacServiceInstaller
     /// <summary>The plist's mode: root writes it, launchd and everyone else read it.</summary>
     private const UnixFileMode PlistMode = OwnerOnlyFile | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
 
-    private static readonly TimeSpan UnloadBudget = TimeSpan.FromSeconds(10);
+    /// <summary>How long to wait for a booted-out job to go: past the plist's ExitTimeOut, after which launchd kills it.</summary>
+    internal static readonly TimeSpan UnloadBudget = MacServiceInstallOptions.ExitTimeOut + TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ListenBudget = TimeSpan.FromSeconds(30);
 
     public static int Install(MacServiceInstallOptions options)
@@ -43,13 +44,13 @@ public static partial class MacServiceInstaller
         }
 
         OwnedDirectory(SettingsDirectory, OwnerOnlyDirectory);
-        WriteFresh(MacServiceInstallOptions.EnvironmentFilePath, options.EnvironmentFile(), OwnerOnlyFile);
-        OwnedDirectory(options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory, OwnerOnlyDirectory);
+        WriteFresh(options.EnvironmentFilePath, options.EnvironmentFile(), OwnerOnlyFile);
+        ArtifactDirectory(options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory);
         OwnedDirectory(LogDirectory, OwnerOnlyDirectory);
 
         // The same check the server makes at startup, made now, so a bad tree is reported here and not as a
         // daemon that silently never comes up.
-        StartupPermissions.Require(MacServiceInstallOptions.EnvironmentFilePath, InstalledExecutable);
+        StartupPermissions.Require(options.EnvironmentFilePath, InstalledExecutable);
 
         WriteFresh(options.PlistPath, options.Plist(InstalledExecutable), PlistMode);
 
@@ -81,9 +82,11 @@ public static partial class MacServiceInstaller
             }
         }
 
-        var listening = WaitForPort(options.Bind, ListenBudget) &&
-                        (oldPid is null || (Loaded(target, out var newPid) && newPid != oldPid));
-        var (code, message) = Outcome(listening, options.LabelName, options.Bind, LogTail());
+        var portOpen = WaitForPort(options.Bind, ListenBudget);
+        var loaded = Launchctl(["print", target], out var printed) == 0;
+        var newPid = loaded ? PidFrom(printed) : null;
+        var installed = IsInstalled(portOpen, oldPid, newPid, loaded && IsRunning(printed), Listeners(ProbeAddress(options.Bind).Port));
+        var (code, message) = Outcome(installed, options.LabelName, options.Bind, LogTail());
         Console.Error.WriteLine($"[macdiag] {message}");
         Console.Error.WriteLine($"[macdiag] Application Firewall: {FirewallState()}");
         if (code == 0 && !options.TokenWasSupplied)
@@ -113,7 +116,7 @@ public static partial class MacServiceInstaller
         if (plistExisted && bootoutExit == 0)
         {
             File.Delete(plist);
-            File.Delete(MacServiceInstallOptions.EnvironmentFilePath);
+            File.Delete(MacServiceInstallOptions.EnvironmentFilePathFor(label));
             if (purge && Directory.Exists(MacDiagOptions.DefaultArtifactDirectory))
             {
                 Directory.Delete(MacDiagOptions.DefaultArtifactDirectory, recursive: true);
@@ -159,6 +162,47 @@ public static partial class MacServiceInstaller
         int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var pid)
             ? pid
             : null;
+
+    /// <summary>Whether the job just bootstrapped is the one serving: running, a new process, and the listener itself.</summary>
+    /// <remarks>
+    /// "The port accepts" alone passed for a by-hand server left on the port, or for the previous process, while
+    /// the new job crash-looped on bind. launchd has no readiness signal, so each condition is checked outright.
+    /// </remarks>
+    internal static bool IsInstalled(bool portOpen, int? oldPid, int? newPid, bool running, IReadOnlyCollection<int> listeners) =>
+        portOpen && running && newPid is { } pid && pid != oldPid && listeners.Contains(pid);
+
+    /// <summary>Whether <c>launchctl print</c> reports the job as running.</summary>
+    internal static bool IsRunning(string printOutput) => RunningLine().IsMatch(printOutput ?? string.Empty);
+
+    /// <summary>The PIDs in <c>lsof -t</c>'s terse output, one per line; anything else is ignored.</summary>
+    internal static IReadOnlyList<int> ParsePids(string text) =>
+        (text ?? string.Empty).Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => int.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) ? pid : (int?)null)
+            .OfType<int>()
+            .ToList();
+
+    /// <summary>Why an artifact directory cannot be used, or null. One the installer just created is always fine.</summary>
+    /// <remarks>
+    /// An existing directory is used as it is, never chmodded: --artifacts /tmp once made /private/tmp 0700 and
+    /// broke every other account on the Mac. It must already be root's alone, because put_file writes there freely
+    /// and a root daemon then reads back what it finds.
+    /// </remarks>
+    internal static string? ArtifactDirectoryProblem(bool existed, StartupPermissions.StatEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (!existed)
+        {
+            return null;
+        }
+
+        const int Sticky = 0b1_000_000_000;
+        const int GroupOrOtherWrite = 0b000_010_010;
+        return entry.Kind != StartupPermissions.EntryKind.Directory ? $"{entry.Path} is not a directory."
+            : entry.Uid != 0 ? $"{entry.Path} is owned by uid {entry.Uid}, not root."
+            : (entry.Mode & Sticky) != 0 ? $"{entry.Path} is a shared sticky directory, such as /tmp."
+            : (entry.Mode & GroupOrOtherWrite) != 0 ? $"{entry.Path} is writable by its group or by everyone."
+            : null;
+    }
 
     /// <summary>Where to connect to see the daemon listening: loopback for a wildcard bind.</summary>
     internal static (string Host, int Port) ProbeAddress(string bind)
@@ -246,7 +290,42 @@ public static partial class MacServiceInstaller
         }
     }
 
+    /// <summary>The PIDs listening on the TCP port, from lsof; empty when none, or when lsof could not say.</summary>
+    private static IReadOnlyList<int> Listeners(int port)
+    {
+        try
+        {
+            var result = new Mac.MacSystemCommand().RunAsync(
+                "lsof", ["-nP", $"-iTCP:{port}", "-sTCP:LISTEN", "-t"], TimeSpan.FromSeconds(15), CancellationToken.None).GetAwaiter().GetResult();
+            return ParsePids(result.StandardOutput);
+        }
+        catch (ExternalCommandException ex)
+        {
+            Console.Error.WriteLine($"[macdiag] could not ask lsof who listens on {port}: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>Creates the artifact directory root-only, or uses an existing one root alone controls -- never re-chmodded.</summary>
+    private static void ArtifactDirectory(string path)
+    {
+        var existed = Directory.Exists(path) || File.Exists(path);
+        if (!existed)
+        {
+            OwnedDirectory(path, OwnerOnlyDirectory);
+            return;
+        }
+
+        var entry = StartupPermissions.Inspect([StartupPermissions.RealPath(path)]).Single();
+        if (ArtifactDirectoryProblem(existed, entry) is { } problem)
+        {
+            throw new ConfigurationException(
+                $"--artifacts {path} cannot be used: {problem} Choose a directory only root can write, or let the installer create one.");
+        }
+    }
+
     /// <summary>Creates the directory, or tightens an existing one: CreateDirectory leaves an existing mode alone.</summary>
+    /// <remarks>Only for the installer's own fixed directories; an operator-chosen one goes through <see cref="ArtifactDirectory"/>.</remarks>
     private static void OwnedDirectory(string path, UnixFileMode mode)
     {
         Directory.CreateDirectory(path, mode);
@@ -288,6 +367,9 @@ public static partial class MacServiceInstaller
 
     [GeneratedRegex(@"^\s*pid = (\d+)\s*$", RegexOptions.Multiline)]
     private static partial Regex PidLine();
+
+    [GeneratedRegex(@"^\s*state = running\s*$", RegexOptions.Multiline)]
+    private static partial Regex RunningLine();
 
     [GeneratedRegex(@"://[+*]:")]
     private static partial Regex WildcardHost();

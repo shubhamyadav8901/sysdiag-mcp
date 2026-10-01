@@ -402,7 +402,7 @@ This first part serves:
 
 | Tool | Answers from | Notes |
 |---|---|---|
-| `system_overview` | `sw_vers`, `sysctl -n hw.model hw.memsize kern.osrelease kern.boottime`, `vm_stat`, `mount`, each volume's size | Each APFS container once, by its writable volume, because its volumes share free space; the sealed system volume is never flagged full. What could not be read is listed as a warning, never shown as zero |
+| `system_overview` | `sw_vers`, `sysctl -n hw.model hw.memsize kern.osrelease kern.boottime`, `vm_stat`, `mount`, each volume's size | Each APFS container once, by its writable volume, because its volumes share free space; the sealed system volume is never flagged full. Anything that could not be read, or that came back in a shape it does not recognise, is listed as a warning, so a 0 is never mistaken for a real value. The page size is never guessed |
 | `run_command` | `/bin/zsh -c` (default), `/bin/sh -c`, `/bin/bash -c` (bash 3.2), or a direct exec | Only with `--allow-command-execution`, never on a read-only server |
 | `capabilities`, `put_file`, `get_file` | the shared kit | As on every server |
 
@@ -430,10 +430,10 @@ That installs:
 | Path | What |
 |---|---|
 | `/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp` | the binary |
-| `/etc/macdiag/macdiag.env` | root-owned `0600`: the token, bind address and grants, read with `--env-file` |
-| `/var/db/macdiag` | `0700`: the artifact directory |
+| `/etc/macdiag/<label>.env` | root-owned `0600`: the token, bind address and grants, read with `--env-file`; one file per label |
+| `/var/db/macdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, so `/tmp` is refused |
 | `/var/log/macdiag` | `0700`: `macdiag.log` (rolled at 10 MiB) and `crash.log` (what the runtime writes before logging starts) |
-| `/Library/LaunchDaemons/com.windiag.macdiag.plist` | `KeepAlive` on a failed exit only, `AbandonProcessGroup`, `ProcessType Standard` |
+| `/Library/LaunchDaemons/<label>.plist` | `KeepAlive` on a failed exit only, `AbandonProcessGroup`, `ProcessType Standard`, `ExitTimeOut` 20 s |
 
 The plist is world-readable, so it never holds the token. It passes `--env-file` instead.
 
@@ -450,7 +450,7 @@ the refusal. The installer runs the same check before loading the job.
 launchd retries a refused start every 10 seconds, writing the reason to `crash.log` each time, so the
 daemon recovers by itself once the file is fixed.
 
-The installer waits until the daemon is listening, and reports the Application Firewall's state, which
+The installer waits until the new job is running and is itself the process listening on the port, not a leftover by-hand server or the previous process, and reports the Application Firewall's state, which
 can block the port without an error anywhere. If the daemon never listens, the installer prints the last
 lines of both logs and exits 4. `--uninstall-service [--purge]` and `--service-status` do what they say;
 `MacDiag.Mcp --help` lists every switch.

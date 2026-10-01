@@ -13,10 +13,16 @@ public sealed record MacServiceInstallOptions
 {
     public const string DefaultLabel = "com.windiag.macdiag";
 
-    /// <summary>The env file's path. Fixed, so the startup check and the plist always agree on it.</summary>
-    public const string EnvironmentFilePath = "/etc/macdiag/macdiag.env";
+    /// <summary>How long launchd gives the daemon to stop before SIGKILL; written into the plist.</summary>
+    /// <remarks>Explicit rather than launchd's default, so the installer's wait for an unload can be derived from it.</remarks>
+    public static readonly TimeSpan ExitTimeOut = TimeSpan.FromSeconds(20);
 
     public string LabelName { get; init; } = DefaultLabel;
+
+    /// <summary>One settings file per label, so a second install never rewrites, and its uninstall never deletes, the first's.</summary>
+    public string EnvironmentFilePath => EnvironmentFilePathFor(LabelName);
+
+    public static string EnvironmentFilePathFor(string label) => $"{MacServiceInstaller.SettingsDirectory}/{label}.env";
 
     public required string Bind { get; init; }
 
@@ -190,7 +196,7 @@ public sealed record MacServiceInstallOptions
         	<array>
         		<string>{Xml(executable)}</string>
         		<string>--env-file</string>
-        		<string>{EnvironmentFilePath}</string>
+        		<string>{Xml(EnvironmentFilePath)}</string>
         	</array>
         	<key>RunAtLoad</key>
         	<true/>
@@ -203,6 +209,8 @@ public sealed record MacServiceInstallOptions
         	<true/>
         	<key>ProcessType</key>
         	<string>Standard</string>
+        	<key>ExitTimeOut</key>
+        	<integer>{(int)ExitTimeOut.TotalSeconds}</integer>
         	<key>StandardErrorPath</key>
         	<string>{MacServiceInstaller.LogDirectory}/crash.log</string>
         </dict>
