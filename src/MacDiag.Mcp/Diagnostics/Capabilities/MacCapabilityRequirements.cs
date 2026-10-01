@@ -30,6 +30,7 @@ public sealed class MacCapabilityRequirements : ICapabilityRequirements
             ["who_locks_path"] = new("lsof -f -- <path> by device and inode; lock state is not visible on macOS", "lsof", "cannot see files held by processes owned by other users, so it never reports Exhaustive"),
             ["network_owners"] = new("lsof -i -Ts, joined by each socket's kernel address", "lsof", "cannot name the owners of sockets held by processes owned by other users"),
             ["named_pipes"] = new("unix sockets and FIFOs from a full lsof listing (-b)", "lsof", "cannot name the holders of sockets and FIFOs owned by other users"),
+            ["service_config"] = new("launchctl print for runtime state (top-level keys only); the job's plist via plutil -convert xml1 -o - for configuration", "launchctl", null),
             ["update_self"] = new("staged-build swap through a detached helper and launchctl kickstart (a relaunch when not a daemon), rolled back if the new build does not come up", null, null, RequiresElevation: true),
         };
 }

@@ -1035,6 +1035,156 @@
     }
   },
   {
+    "name": "service_config",
+    "title": "launchd job configuration and state",
+    "description": "Show a launchd job\u0027s state and configuration: whether it is loaded and running, its PID, last exit status and run count, the program and arguments it runs, whether it starts at load and how KeepAlive restarts it, the account it runs as, the plist it comes from, and whether launchd has it disabled. Takes the job\u0027s label, for example \u0027com.openssh.sshd\u0027 (Remote Login). Use it for \u0027the daemon did not start\u0027, \u0027it keeps restarting\u0027, or \u0027what does this job run\u0027. If the label does not match, near matches are suggested. Configuration is read from the plist; launchctl\u0027s own output is used only for runtime state, because Apple documents it as unstable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The launchd label, for example \u0027com.openssh.sshd\u0027 or \u0027com.example.daemon\u0027",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "service": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "domain": {
+              "type": "string"
+            },
+            "plistPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "mainProcessId": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "lastExitStatus": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "lastExitText": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runs": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "program": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "runAtLoad": {
+              "type": "boolean"
+            },
+            "keepAlive": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "account": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "disabled": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "label",
+            "domain",
+            "plistPath",
+            "status",
+            "mainProcessId",
+            "lastExitStatus",
+            "lastExitText",
+            "runs",
+            "program",
+            "arguments",
+            "runAtLoad",
+            "keepAlive",
+            "account",
+            "disabled",
+            "limitations"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "query",
+        "service",
+        "candidates"
+      ]
+    },
+    "annotations": {
+      "title": "launchd job configuration and state",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "system_overview",
     "title": "System overview",
     "description": "Describe the Mac: macOS version and build, hardware model, architecture, uptime and boot time, processor count, memory, mounted volumes with free space, the account the server runs as, and whether it is root. Good first call in any investigation - it establishes the ground truth and surfaces environmental causes (a full data volume, a very recent reboot, exhausted memory) before you go looking for something subtler. APFS volumes in one container share its free space, so each container is listed once.",
