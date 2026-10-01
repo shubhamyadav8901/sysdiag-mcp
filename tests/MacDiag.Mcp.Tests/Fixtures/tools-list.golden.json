@@ -359,6 +359,284 @@
     }
   },
   {
+    "name": "effective_access",
+    "title": "Why is this access denied",
+    "description": "Explain whether an account or a running process can read, write and execute a file or directory. The decision is the kernel\u0027s own answer - access(2) through /bin/test run as that account - so ACLs, nested groups and file flags are applied exactly as macOS applies them. Shown alongside it: the mode, ACL entries (a deny entry that applies is named), file flags (uchg, schg, restricted), the mount and its options, and the first directory on the way the subject cannot search. Give account (a user name or uid) or processId (evaluated as that process\u0027s user). Asking on behalf of another account needs the server to run as root; without it that answer is reported as not evaluated. System Integrity Protection and privacy (TCC) protections are named, not evaluated.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path of the file or directory",
+          "type": "string"
+        },
+        "account": {
+          "description": "The account to evaluate: a user name or numeric uid. Give this or processId.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "processId": {
+          "description": "A running process whose user to evaluate. Give this or account.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "report": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "resolvedPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "group": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "acl": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "flags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mountPoint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mountOptions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "subject": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "userId": {
+                  "type": "integer"
+                },
+                "userName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "groups": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "description",
+                "userId",
+                "userName",
+                "groups"
+              ]
+            },
+            "read": {
+              "type": "object",
+              "properties": {
+                "allowed": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "allowed",
+                "reason"
+              ]
+            },
+            "write": {
+              "type": "object",
+              "properties": {
+                "allowed": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "allowed",
+                "reason"
+              ]
+            },
+            "execute": {
+              "type": "object",
+              "properties": {
+                "allowed": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "allowed",
+                "reason"
+              ]
+            },
+            "traversal": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "canSearch": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "canSearch",
+                  "reason"
+                ]
+              }
+            },
+            "blockedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "probe": {
+              "type": "object",
+              "properties": {
+                "userId": {
+                  "type": "integer"
+                },
+                "read": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "write": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "execute": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "sameSubject": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "userId",
+                "read",
+                "write",
+                "execute",
+                "sameSubject"
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "path",
+            "resolvedPath",
+            "kind",
+            "owner",
+            "group",
+            "mode",
+            "acl",
+            "flags",
+            "mountPoint",
+            "mountOptions",
+            "subject",
+            "read",
+            "write",
+            "execute",
+            "traversal",
+            "blockedAt",
+            "probe",
+            "notes"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "report"
+      ]
+    },
+    "annotations": {
+      "title": "Why is this access denied",
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "event_log_tail",
     "title": "Recent unified log records",
     "description": "Read recent records from the macOS unified log, newest first, filtered by age, severity, process, subsystem, category and sender. Defaults to the last hour at critical (fault) and error. \u0027warning\u0027 maps to macOS\u0027s default type, which is most of all logging, so ask for it only with a narrow filter. Use it to find out what the Mac complained about around the time of a failure. Looks back at most 7 days. Some messages read \u003Cprivate\u003E; that redaction is the system\u0027s.",
