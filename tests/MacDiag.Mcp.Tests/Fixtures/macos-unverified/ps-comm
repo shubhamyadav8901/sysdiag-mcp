@@ -1,7 +1,7 @@
-# Source: ps(1), ps -axww -o pid=,comm= under LC_ALL=C. Unverified. 777 exited between the two calls; 900 started after the first.
-    1 /sbin/launchd
-  501 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
-  612 java
-  640 /bin/sleep
-  850 /Applications/Visual Studio Code.app/Contents/MacOS/Electron
-  900 /usr/bin/newcomer
+# Source: ps(1), ps -axww -o pid=,lstart=,comm= under LC_ALL=C. Unverified. 777 exited between the two calls; 900 started after the first.
+    1 Tue Oct  1 06:00:00 2024     /sbin/launchd
+  501 Tue Oct  1 06:01:05 2024     /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
+  612 Tue Oct  1 07:15:42 2024     java
+  640 Tue Oct  1 08:00:00 2024     /bin/sleep
+  850 Tue Oct  1 10:00:00 2024     /Applications/Visual Studio Code.app/Contents/MacOS/Electron
+  900 Tue Oct  1 11:00:00 2024     /usr/bin/newcomer

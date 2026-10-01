@@ -67,19 +67,31 @@ public sealed class ProcessListTests
     [Fact]
     public async Task A_pid_comm_lists_twice_has_an_unknown_path_and_a_limitation_rather_than_a_crash()
     {
-        var table = await Table(Ps(comm: "  501 /a/forged\n  501 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder\n"));
+        var table = await Table(Ps(comm:
+            "  501 Tue Oct  1 06:01:05 2024     /a/forged\n  501 Tue Oct  1 06:01:05 2024     /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder\n"));
 
         Assert.Null(table.Processes.Single(p => p.ProcessId == 501).ExecutablePath);
         Assert.Contains(table.Limitations, l => l.Contains("501", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_pid_reused_between_the_two_calls_never_takes_the_other_process_path()
+    {
+        // Review Focus 2: PID 501 exited and a new process got its number before the comm call; the start times differ.
+        var table = await Table(Ps(comm: "  501 Tue Oct  1 12:34:56 2024     /tmp/impostor\n"));
+
+        Assert.Null(table.Processes.Single(p => p.ProcessId == 501).ExecutablePath);
     }
 
     [Theory]
     [InlineData("plain", "plain")]
     [InlineData("caf\\M-C\\M-)", "café")]
     [InlineData("a\\^Ib", "a\tb")]
-    [InlineData("a\\nb\\tc", "a\nb\tc")]
-    [InlineData("a\\040b", "a b")]
-    [InlineData("a\\\\b", "a\\b")]
+    [InlineData("a\\^Jb", "a\nb")]
+    // ps uses VIS_NOSLASH: a backslash in a real command line is printed as-is, so these are text, not escapes.
+    [InlineData("-Dre=\\d+\\s", "-Dre=\\d+\\s")]
+    [InlineData("C:\\new\\040x", "C:\\new\\040x")]
+    [InlineData("a\\\\b", "a\\\\b")]
     [InlineData("bad\\M-C", "bad\\M-C")] // not valid UTF-8: kept as ps printed it
     public void Vis_sequences_decode_to_their_bytes_then_utf8(string printed, string decoded)
     {

@@ -71,6 +71,19 @@ public sealed class PathSearchTests
     }
 
     [Fact]
+    public async Task Every_library_a_process_maps_is_its_own_match_though_lsof_names_them_all_txt()
+    {
+        const string libraries =
+            "p70\0capp\0u501\0\nftxt\0a \0tREG\0D0x10\0i1\0n/opt/homebrew/lib/a.dylib\0\n" +
+            "ftxt\0a \0tREG\0D0x10\0i2\0n/opt/homebrew/lib/b.dylib\0\nftxt\0a \0tREG\0D0x10\0i3\0n/opt/homebrew/lib/c.dylib\0\n";
+        var commands = new FakeCommands((_, arguments) => FakeCommands.Ok(arguments.Contains("--") ? "" : libraries));
+
+        var result = await Handles(commands, exists: _ => false).SearchAsync("/opt/homebrew/lib", includeAllObjectTypes: false, CancellationToken.None);
+
+        Assert.Equal(3, result.TotalMatched);
+    }
+
+    [Fact]
     public async Task A_directory_finds_what_is_open_beneath_it()
     {
         var result = await Handles(Lsof(identity: "")).SearchAsync("/Users/a", includeAllObjectTypes: false, CancellationToken.None);

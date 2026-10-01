@@ -157,7 +157,7 @@ public sealed class SystemOverviewTests
                 Assert.All(rows, r => Assert.NotNull(r.Start));
                 break;
             case "ps-comm":
-                Assert.Contains("/sbin/launchd", PsTable.ParseComm(text).Commands[1], StringComparison.Ordinal);
+                Assert.Contains("/sbin/launchd", PsTable.ParseComm(text).Commands[1].Command, StringComparison.Ordinal);
                 break;
             case "lsof-p":
                 // Read raw: lsof's NUL-separated fields are not lines, and nothing in them is a comment.

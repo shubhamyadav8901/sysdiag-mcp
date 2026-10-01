@@ -176,7 +176,12 @@ jobs:
           $before = sudo launchctl print system/com.windiag.macdiag | Out-String
           $oldPid = [regex]::Match($before, '(?m)^\s*pid = (\d+)').Groups[1].Value
           # The connection drops when the server exits: that is success, so the call's own output is not judged.
-          ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool update_self -Raw -Arguments @{ expectedSha256 = $sha; force = $true } | Out-Null
+          try {
+            ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool update_self -Raw -Arguments @{ expectedSha256 = $sha; force = $true } | Out-Null
+          }
+          catch {
+            Write-Host "connection dropped, as expected when the server restarts: $_"
+          }
           $deadline = (Get-Date).AddSeconds(90)
           do {
             Start-Sleep -Seconds 3

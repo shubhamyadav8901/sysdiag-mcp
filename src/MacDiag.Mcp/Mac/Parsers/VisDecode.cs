@@ -2,7 +2,7 @@ using System.Text;
 
 namespace MacDiag.Mcp.Mac.Parsers;
 
-/// <summary>Undoes vis(3), which BSD ps applies to command lines: \M-x, \M^x, \^x, \ooo and the C escapes.</summary>
+/// <summary>Undoes vis(3) as BSD ps applies it to command lines: \M-x, \M^x and \^x, and nothing else.</summary>
 /// <remarks>
 /// The bytes the sequences name are collected and decoded as UTF-8, so a vis-encoded "café" reads as itself. A run
 /// that is not valid UTF-8 is left exactly as ps printed it rather than turned into replacement characters.
@@ -59,34 +59,11 @@ public static class VisDecode
             return ((byte)(Control(At(3)) | 0x80), 4);
         }
 
-        if (At(1) == '^' && At(2) != '\0')
-        {
-            return (Control(At(2)), 3);
-        }
-
-        if (IsOctal(At(1)) && IsOctal(At(2)) && IsOctal(At(3)))
-        {
-            return ((byte)(((At(1) - '0') << 6) | ((At(2) - '0') << 3) | (At(3) - '0')), 4);
-        }
-
-        byte? named = At(1) switch
-        {
-            'n' => (byte)'\n',
-            't' => (byte)'\t',
-            'r' => (byte)'\r',
-            'b' => (byte)'\b',
-            'a' => 0x07,
-            'v' => 0x0B,
-            'f' => 0x0C,
-            's' => (byte)' ',
-            'E' => 0x1B,
-            '\\' => (byte)'\\',
-            _ => null,
-        };
-        return named is { } value ? (value, 2) : null;
+        // Nothing else: ps encodes with VIS_TAB | VIS_NL | VIS_NOSLASH, so a tab or newline arrives as \^I or \^J, and a
+        // backslash in a real command line (-Dre=\d+\s, C:\new) is printed as-is -- decoding C-style escapes would
+        // rewrite it.
+        return At(1) == '^' && At(2) != '\0' ? (Control(At(2)), 3) : null;
     }
 
     private static byte Control(char c) => c == '?' ? (byte)0x7F : (byte)(c & 0x1F);
-
-    private static bool IsOctal(char c) => c is >= '0' and <= '7';
 }

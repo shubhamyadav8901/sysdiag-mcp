@@ -7,8 +7,17 @@ namespace MacDiag.Mcp.Mac.Parsers;
 /// <param name="StartText">lstart as ps printed it (C locale): what an identity check compares, never the parsed form.</param>
 public sealed record PsArgsRow(int ProcessId, int ParentProcessId, long UserId, long ResidentKiB, string State, DateTimeOffset? Start, string StartText, string Arguments);
 
-/// <summary>What the comm call said about each PID: the path, or that it was listed more than once.</summary>
-public sealed record PsCommTable(IReadOnlyDictionary<int, string> Commands, IReadOnlyList<int> Duplicates);
+/// <summary>One line of <c>ps -axww -o pid=,lstart=,comm=</c>: the start time is what proves it is the same process.</summary>
+public sealed record PsCommRow(string StartText, string Command);
+
+/// <summary>What the comm call said about each PID: its start and path, or that it was listed more than once.</summary>
+public sealed record PsCommTable(IReadOnlyDictionary<int, PsCommRow> Commands, IReadOnlyList<int> Duplicates)
+{
+    /// <summary>The path for this PID only if the process that has it now started when the first call said it did.</summary>
+    /// <remarks>A PID that exits and is reused between the two calls would otherwise lend the newcomer's path to the old row.</remarks>
+    public string? For(int processId, string startText) =>
+        Commands.TryGetValue(processId, out var row) && string.Equals(row.StartText, startText, StringComparison.Ordinal) ? row.Command : null;
+}
 
 /// <summary>macOS ps in two calls: the columns with args, then comm, which is the executable path and may hold spaces.</summary>
 /// <remarks>
@@ -52,7 +61,7 @@ public static partial class PsTable
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        var commands = new Dictionary<int, string>();
+        var commands = new Dictionary<int, PsCommRow>();
         var duplicates = new HashSet<int>();
         foreach (var line in text.Split('\n').Select(l => l.TrimEnd('\r')))
         {
@@ -63,7 +72,7 @@ public static partial class PsTable
             }
 
             // A PID listed twice means one line was forged or split: neither path can be trusted for it.
-            if (!commands.TryAdd(pid, VisDecode.Decode(match.Groups[2].Value)))
+            if (!commands.TryAdd(pid, new PsCommRow(Spaces().Replace(match.Groups[2].Value, " "), VisDecode.Decode(match.Groups[3].Value))))
             {
                 duplicates.Add(pid);
             }
@@ -80,7 +89,7 @@ public static partial class PsTable
     [GeneratedRegex(@"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})(?:\s+(.*))?$")]
     private static partial Regex ArgsLine();
 
-    [GeneratedRegex(@"^\s*(\d+)\s+(.+)$")]
+    [GeneratedRegex(@"^\s*(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$")]
     private static partial Regex CommLine();
 
     [GeneratedRegex(@"\s+")]

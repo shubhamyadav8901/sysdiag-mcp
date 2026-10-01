@@ -13,7 +13,7 @@ public sealed class MacProcessTable(IExternalCommand commands, MacDiagOptions op
     public async Task<ProcessTable> ReadAsync(CancellationToken cancellationToken)
     {
         var args = await Run(["-axww", "-o", "pid=,ppid=,uid=,rss=,stat=,lstart=,args="], cancellationToken).ConfigureAwait(false);
-        var comm = await Run(["-axww", "-o", "pid=,comm="], cancellationToken).ConfigureAwait(false);
+        var comm = await Run(["-axww", "-o", "pid=,lstart=,comm="], cancellationToken).ConfigureAwait(false);
 
         var (rows, unparsed) = PsTable.ParseArgs(args);
         var paths = PsTable.ParseComm(comm);
@@ -30,7 +30,7 @@ public sealed class MacProcessTable(IExternalCommand commands, MacDiagOptions op
 
         var processes = rows.Select(row =>
         {
-            var command = paths.Commands.GetValueOrDefault(row.ProcessId);
+            var command = paths.For(row.ProcessId, row.StartText);
             var name = LastSegment(command) ?? LastSegment(FirstToken(row.Arguments)) ?? string.Empty;
             return new ProcessRecord(
                 row.ProcessId, row.ParentProcessId, name, row.State, row.Start, row.StartText, row.ResidentKiB * 1024, row.UserId,

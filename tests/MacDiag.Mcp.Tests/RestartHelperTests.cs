@@ -83,6 +83,20 @@ public sealed class RestartHelperTests
     }
 
     [Fact]
+    public void Every_program_is_run_by_its_absolute_system_path()
+    {
+        var script = UnderLaunchd() + ByHand();
+
+        foreach (var program in new[] { "/usr/bin/shasum", "/bin/launchctl", "/usr/bin/nc", "/bin/ln", "/bin/mv", "/bin/chmod", "/usr/bin/nohup" })
+        {
+            Assert.Contains(program + " ", script, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("$(shasum", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n  launchctl", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Without_an_http_address_there_is_no_port_to_check()
     {
         Assert.DoesNotContain("nc -z", UnderLaunchd(probe: false), StringComparison.Ordinal);

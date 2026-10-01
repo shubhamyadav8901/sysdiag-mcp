@@ -24,9 +24,10 @@ public sealed class MacHandleInspector(IExternalCommand commands, IPrivilegeProb
         var rooted = nameFragment.StartsWith('/');
         var wanted = rooted ? PathSpellings.Of(nameFragment.TrimEnd('/') is { Length: > 0 } trimmed ? trimmed : "/", Firmlinks) : [nameFragment];
         var listing = await Mac.Lsof.RunAsync(commands, [], fullListing: true, options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
-        var entries = listing.SelectMany(Entries)
-            .Where(e => includeAllObjectTypes || HandleKind.IsFileReference(e.Type))
-            .Where(e => e.Name.Length > 0 && PathSpellings.Of(e.Name, Firmlinks)
+        var found = listing
+            .SelectMany(p => p.Files.Select(f => (Process: p, File: f)))
+            .Where(x => includeAllObjectTypes || HandleKind.IsFileReference(HandleKind.Of(x.File)))
+            .Where(x => x.File.Name is { Length: > 0 } name && PathSpellings.Of(name, Firmlinks)
                 .Any(spelling => wanted.Any(w => spelling.Contains(w, StringComparison.OrdinalIgnoreCase))))
             .ToList();
 
@@ -34,11 +35,12 @@ public sealed class MacHandleInspector(IExternalCommand commands, IPrivilegeProb
         {
             var byIdentity = await Mac.Lsof.RunAsync(commands, ["-f", "--", nameFragment], fullListing: false, options.ExternalToolTimeout, cancellationToken)
                 .ConfigureAwait(false);
-            entries.AddRange(byIdentity.SelectMany(Entries));
+            found.AddRange(byIdentity.SelectMany(p => p.Files.Select(f => (Process: p, File: f))));
         }
 
-        var unique = entries
-            .DistinctBy(e => (e.ProcessId, e.HandleValue))
+        var unique = found
+            .DistinctBy(x => SameOpenFile(x.Process.ProcessId, x.File))
+            .Select(x => Entry(x.Process, x.File))
             .OrderBy(e => e.ProcessName, StringComparer.Ordinal).ThenBy(e => e.ProcessId)
             .ToList();
         return Cap(nameFragment, unique, includeAllObjectTypes, processScoped: false, []);
@@ -51,10 +53,23 @@ public sealed class MacHandleInspector(IExternalCommand commands, IPrivilegeProb
         return Cap($"PID {processId}", entries, includeAllObjectTypes, processScoped: true, []);
     }
 
-    internal static IEnumerable<HandleEntry> Entries(LsofProcess process) =>
-        process.Files.Select(f => new HandleEntry(
-            process.Command, process.ProcessId, HandleKind.Of(f), process.UserId, f.Descriptor, f.Name ?? string.Empty,
-            HandleKind.Access(f.Access)));
+    internal static IEnumerable<HandleEntry> Entries(LsofProcess process) => process.Files.Select(f => Entry(process, f));
+
+    private static HandleEntry Entry(LsofProcess process, LsofFile file) =>
+        new(process.Command, process.ProcessId, HandleKind.Of(file), process.UserId, file.Descriptor, file.Name ?? string.Empty,
+            HandleKind.Access(file.Access));
+
+    /// <summary>What makes two lsof lines the same open file of one process, so the listing and the -f lookup merge.</summary>
+    /// <remarks>
+    /// A numeric descriptor is unique in its process. txt, cwd and the other named ones are not -- every mapped
+    /// library is "txt" -- so those are told apart by the file itself, device and inode, falling back to the name.
+    /// </remarks>
+    private static string SameOpenFile(int processId, LsofFile file) =>
+        file.Descriptor.Length > 0 && char.IsAsciiDigit(file.Descriptor[0])
+            ? $"{processId}|{file.Descriptor}"
+            : file is { Device: { } device, Inode: { } inode }
+                ? $"{processId}|{file.Descriptor}|{device}|{inode}"
+                : $"{processId}|{file.Descriptor}|{file.Name}";
 
     internal HandleSearch Cap(string query, IReadOnlyList<HandleEntry> entries, bool includeAll, bool processScoped, IReadOnlyList<string> limitations)
     {

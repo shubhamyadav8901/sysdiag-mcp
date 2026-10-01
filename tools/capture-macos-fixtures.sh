@@ -19,7 +19,7 @@ vm_stat > "$out/vm_stat"
 mount > "$out/mount"
 
 ps -axww -o pid=,ppid=,uid=,rss=,stat=,lstart=,args= > "$out/ps-args"
-ps -axww -o pid=,comm= > "$out/ps-comm"
+ps -axww -o pid=,lstart=,comm= > "$out/ps-comm"
 
 # lsof exits 1 when it finds nothing, which set -e would read as failure.
 lsof -n -P -w -F0pcuRfatdDsinPT -p $$ > "$out/lsof-p" || [ $? -eq 1 ]
