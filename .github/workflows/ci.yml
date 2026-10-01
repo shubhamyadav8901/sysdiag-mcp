@@ -156,6 +156,30 @@ jobs:
           if ($back -ne $text) { throw "round trip returned '$back'" }
           Write-Host 'put_file/get_file round trip ok'
 
+          # service_control for real, on a throwaway daemon: start, stop, start, restart, each confirmed by its state.
+          $live = @'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>Label</key><string>com.windiag.livetest</string>
+          <key>ProgramArguments</key><array><string>/bin/sleep</string><string>3600</string></array></dict></plist>
+          '@
+          $live | sudo tee /Library/LaunchDaemons/com.windiag.livetest.plist | Out-Null
+          sudo chown root:wheel /Library/LaunchDaemons/com.windiag.livetest.plist
+          sudo chmod 644 /Library/LaunchDaemons/com.windiag.livetest.plist
+          try {
+            foreach ($step in @(@('start', 'running'), @('stop', 'not loaded'), @('start', 'running'), @('restart', 'running'))) {
+              $answer = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool service_control -Raw -Arguments @{ serviceName = 'com.windiag.livetest'; action = $step[0] }
+              if (-not $answer) { throw "service_control $($step[0]) returned nothing" }
+              $after = ($answer | ConvertFrom-Json).result.statusAfter
+              if (-not $after.StartsWith($step[1])) { throw "service_control $($step[0]) left the job '$after', expected '$($step[1])'" }
+              Write-Host "service_control $($step[0]): $after"
+            }
+          }
+          finally {
+            sudo launchctl bootout system/com.windiag.livetest 2>$null
+            sudo rm -f /Library/LaunchDaemons/com.windiag.livetest.plist
+          }
+
           # update_self end to end: a second build with different bytes, staged in chunks, installed through launchd.
           dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true `
             -p:InformationalVersion=0.0.0-update-smoke -o artifacts/macdiag-smoke2

@@ -106,6 +106,12 @@ public static class ServerBuilder
             mcp.WithTools<CommandTools>(DiagServerKit.ToolJsonOptions);
         }
 
+        // Starts and stops what runs on the Mac. A read-only server does not advertise what it would refuse.
+        if (!options.ReadOnly)
+        {
+            mcp.WithTools<ControlTools>(DiagServerKit.ToolJsonOptions);
+        }
+
         // Lets the token replace the root-owned binary and run it: its own grant, refused under read-only.
         if (options.AllowSelfUpdate && !options.ReadOnly)
         {
@@ -138,6 +144,8 @@ public static class ServerBuilder
         services.TryAddSingleton<NetworkTools>();
         services.TryAddSingleton<IServiceInspector, MacServiceInspector>();
         services.TryAddSingleton<ServiceTools>();
+        services.TryAddSingleton<IServiceController, MacServiceController>();
+        services.TryAddSingleton<ControlTools>();
         services.TryAddSingleton<IStagedBuildInspector, MacStagedBuildInspector>();
         services.TryAddSingleton<IUpdateGuard, MachOUpdateGuard>();
         services.TryAddSingleton<IRestartHelper, LaunchdRestartHelper>();
