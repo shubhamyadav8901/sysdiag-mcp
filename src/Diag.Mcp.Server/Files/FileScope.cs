@@ -94,8 +94,11 @@ internal static class FileScope
         var d = directory.TrimEnd('/');
         if (normalizationWorks)
         {
-            var c = candidate.Normalize(System.Text.NormalizationForm.FormC);
-            d = d.Normalize(System.Text.NormalizationForm.FormC);
+            // U+017F (long s) folds to 's' in APFS's case folding but not under OrdinalIgnoreCase, and .NET's
+            // upper-casing deliberately leaves it alone. It is the one non-ASCII letter that case-folds to ASCII
+            // and that NFC does not already map (the Kelvin and Angstrom signs it does), so it is folded here.
+            var c = candidate.Normalize(System.Text.NormalizationForm.FormC).Replace('\u017F', 's');
+            d = d.Normalize(System.Text.NormalizationForm.FormC).Replace('\u017F', 's');
             return c.Equals(d, StringComparison.OrdinalIgnoreCase) || c.StartsWith(d + "/", StringComparison.OrdinalIgnoreCase);
         }
 
