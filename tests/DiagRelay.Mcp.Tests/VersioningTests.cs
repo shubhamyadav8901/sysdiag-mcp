@@ -43,12 +43,12 @@ public sealed class VersioningTests
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "WinDiag.Mcp.sln")))
+            if (File.Exists(Path.Combine(directory.FullName, "Diag.Mcp.sln")))
             {
                 return directory.FullName;
             }
         }
 
-        throw new InvalidOperationException($"No WinDiag.Mcp.sln above {AppContext.BaseDirectory}.");
+        throw new InvalidOperationException($"No Diag.Mcp.sln above {AppContext.BaseDirectory}.");
     }
 }

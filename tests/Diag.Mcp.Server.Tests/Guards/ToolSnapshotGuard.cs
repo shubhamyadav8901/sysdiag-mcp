@@ -38,12 +38,12 @@ public static class ToolSnapshotGuard
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
         {
-            if (File.Exists(Path.Combine(d.FullName, "WinDiag.Mcp.sln")))
+            if (File.Exists(Path.Combine(d.FullName, "Diag.Mcp.sln")))
             {
                 return Path.Combine([d.FullName, .. parts]);
             }
         }
 
-        throw new InvalidOperationException($"No WinDiag.Mcp.sln above {AppContext.BaseDirectory}.");
+        throw new InvalidOperationException($"No Diag.Mcp.sln above {AppContext.BaseDirectory}.");
     }
 }
