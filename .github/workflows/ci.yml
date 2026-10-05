@@ -142,7 +142,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'the published arm64 binary is not validly signed' }
           'smoke-token' | sudo artifacts/macdiag-smoke/MacDiag.Mcp --install-service --http http://127.0.0.1:4025 --token-stdin --allow-self-update
           if ($LASTEXITCODE -ne 0) { sudo cat /var/log/macdiag/crash.log; throw "install failed ($LASTEXITCODE)" }
-          $job = sudo launchctl print system/com.windiag.macdiag | Out-String
+          $job = sudo launchctl print system/com.sysdiag.macdiag | Out-String
           if ($job -notmatch 'state = running') { throw "the launchd job is not running:`n$job" }
 
           $address = 'http://127.0.0.1:4025'
@@ -160,15 +160,15 @@ jobs:
           $live = @'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict><key>Label</key><string>com.windiag.livetest</string>
+          <plist version="1.0"><dict><key>Label</key><string>com.sysdiag.livetest</string>
           <key>ProgramArguments</key><array><string>/bin/sleep</string><string>3600</string></array></dict></plist>
           '@
-          $live | sudo tee /Library/LaunchDaemons/com.windiag.livetest.plist | Out-Null
-          sudo chown root:wheel /Library/LaunchDaemons/com.windiag.livetest.plist
-          sudo chmod 644 /Library/LaunchDaemons/com.windiag.livetest.plist
+          $live | sudo tee /Library/LaunchDaemons/com.sysdiag.livetest.plist | Out-Null
+          sudo chown root:wheel /Library/LaunchDaemons/com.sysdiag.livetest.plist
+          sudo chmod 644 /Library/LaunchDaemons/com.sysdiag.livetest.plist
           try {
             foreach ($step in @(@('start', 'running'), @('stop', 'not loaded'), @('start', 'running'), @('restart', 'running'))) {
-              $answer = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool service_control -Raw -Arguments @{ serviceName = 'com.windiag.livetest'; action = $step[0] }
+              $answer = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool service_control -Raw -Arguments @{ serviceName = 'com.sysdiag.livetest'; action = $step[0] }
               if (-not $answer) { throw "service_control $($step[0]) returned nothing" }
               $after = ($answer | ConvertFrom-Json).result.statusAfter
               if (-not $after.StartsWith($step[1])) { throw "service_control $($step[0]) left the job '$after', expected '$($step[1])'" }
@@ -176,8 +176,8 @@ jobs:
             }
           }
           finally {
-            sudo launchctl bootout system/com.windiag.livetest 2>$null
-            sudo rm -f /Library/LaunchDaemons/com.windiag.livetest.plist
+            sudo launchctl bootout system/com.sysdiag.livetest 2>$null
+            sudo rm -f /Library/LaunchDaemons/com.sysdiag.livetest.plist
           }
 
           # update_self end to end: a second build with different bytes, staged in chunks, installed through launchd.
@@ -185,7 +185,7 @@ jobs:
             -p:InformationalVersion=0.0.0-update-smoke -o artifacts/macdiag-smoke2
           $bytes = [IO.File]::ReadAllBytes('artifacts/macdiag-smoke2/MacDiag.Mcp')
           $sha = (Get-FileHash artifacts/macdiag-smoke2/MacDiag.Mcp -Algorithm SHA256).Hash
-          $staged = '/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp.new'
+          $staged = '/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp.new'
           $chunk = 4MB
           for ($offset = 0; $offset -lt $bytes.Length; $offset += $chunk) {
             $part = [byte[]]::new([Math]::Min($chunk, $bytes.Length - $offset))
@@ -197,7 +197,7 @@ jobs:
             if (-not $sent) { throw "put_file chunk at $offset returned nothing" }
           }
 
-          $before = sudo launchctl print system/com.windiag.macdiag | Out-String
+          $before = sudo launchctl print system/com.sysdiag.macdiag | Out-String
           $oldPid = [regex]::Match($before, '(?m)^\s*pid = (\d+)').Groups[1].Value
           # The connection drops when the server exits: that is success, so the call's own output is not judged.
           try {
@@ -209,9 +209,9 @@ jobs:
           $deadline = (Get-Date).AddSeconds(90)
           do {
             Start-Sleep -Seconds 3
-            $after = sudo launchctl print system/com.windiag.macdiag | Out-String
+            $after = sudo launchctl print system/com.sysdiag.macdiag | Out-String
             $newPid = [regex]::Match($after, '(?m)^\s*pid = (\d+)').Groups[1].Value
-            $live = (sudo shasum -a 256 /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp).Split(' ')[0].ToUpperInvariant()
+            $live = (sudo shasum -a 256 /Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp).Split(' ')[0].ToUpperInvariant()
           } until (($newPid -and $newPid -ne $oldPid -and $live -eq $sha) -or (Get-Date) -gt $deadline)
           if ($live -ne $sha -or -not $newPid -or $newPid -eq $oldPid) {
             sudo cat /var/db/macdiag/self-update.log
@@ -219,7 +219,7 @@ jobs:
           }
           Write-Host "update_self ok: pid $oldPid -> $newPid"
 
-          sudo /Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp --uninstall-service --purge
+          sudo /Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp --uninstall-service --purge
           if ($LASTEXITCODE -ne 0) { throw "uninstall failed ($LASTEXITCODE)" }
 
       # The kit carries a web server; the relay is a stdio client and must not. Checked on the publish

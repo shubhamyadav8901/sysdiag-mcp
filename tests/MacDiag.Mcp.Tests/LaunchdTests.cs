@@ -55,7 +55,7 @@ public sealed class LaunchdTests
     [InlineData("io.tailscale.ipn.macsys")]
     [InlineData("com.paloaltonetworks.gp.pangpsd")]
     [InlineData("COM.APPLE.WindowServer")] // a case variant refuses more, never less
-    [InlineData("com.windiag.macdiag")]   // the default label, always
+    [InlineData("com.sysdiag.macdiag")]   // the default label, always
     public void Jobs_that_keep_the_mac_reachable_or_run_this_server_are_refused(string label)
     {
         Assert.NotNull(new LaunchdProtection(Options()).Refusal(label));
@@ -76,6 +76,18 @@ public sealed class LaunchdTests
     public void This_servers_own_label_points_to_update_self()
     {
         Assert.Contains("update_self", new LaunchdProtection(Options(ownLabel: "com.corp.diag")).Refusal("com.corp.diag"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_renamed_default_label_is_still_protected_from_service_control()
+    {
+        // LaunchdProtection.Refusal refuses the server's own job by its default label even when this
+        // server runs under another one; the rename must carry that protection to the new label rather
+        // than leave it guarding a label nothing installs.
+        var refusal = new LaunchdProtection(Options(ownLabel: "com.corp.diag")).Refusal("com.sysdiag.macdiag");
+
+        Assert.NotNull(refusal);
+        Assert.Contains("this server's own job", refusal, StringComparison.Ordinal);
     }
 
     [Theory]

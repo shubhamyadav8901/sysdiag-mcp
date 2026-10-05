@@ -7,7 +7,7 @@ namespace MacDiag.Mcp.Tests;
 public sealed class StartupPermissionsTests
 {
     private const string Env = "/etc/macdiag/macdiag.env";
-    private const string Exe = "/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp";
+    private const string Exe = "/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp";
 
     private static StatEntry Dir(string path, int mode, int uid = 0) => new(path, uid, mode, EntryKind.Directory);
 

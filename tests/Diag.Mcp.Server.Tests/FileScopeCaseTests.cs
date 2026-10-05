@@ -6,10 +6,10 @@ namespace Diag.Mcp.Server.Tests;
 public sealed class FileScopeCaseTests
 {
     [Theory]
-    [InlineData("/Library/PrivilegedHelperTools/com.windiag.macdiag/x", "/Library/PrivilegedHelperTools/com.windiag.macdiag", true)]
-    [InlineData("/Library/PrivilegedHelperTools/COM.WINDIAG.MACDIAG/x", "/Library/PrivilegedHelperTools/com.windiag.macdiag", true)]
+    [InlineData("/Library/PrivilegedHelperTools/com.sysdiag.macdiag/x", "/Library/PrivilegedHelperTools/com.sysdiag.macdiag", true)]
+    [InlineData("/Library/PrivilegedHelperTools/COM.SYSDIAG.MACDIAG/x", "/Library/PrivilegedHelperTools/com.sysdiag.macdiag", true)]
     [InlineData("/var/db/café/x", "/var/db/café", true)] // decomposed against composed e-acute
-    [InlineData("/Library/PrivilegedHelperTool\u017F/com.windiag.macdiag/x", "/Library/PrivilegedHelperTools/com.windiag.macdiag", true)] // long s, which APFS folds to s
+    [InlineData("/Library/PrivilegedHelperTool\u017F/com.sysdiag.macdiag/x", "/Library/PrivilegedHelperTools/com.sysdiag.macdiag", true)] // long s, which APFS folds to s
     [InlineData("/var/db/other/x", "/var/db/macdiag", false)]
     [InlineData("/var/db/macdiagx", "/var/db/macdiag", false)]
     public void The_loose_comparison_ignores_case_and_unicode_normalisation_only(string candidate, string directory, bool under)

@@ -30,11 +30,11 @@ public sealed class EnvFileTests
     {
         var options = MacDiagOptions.FromEnvironment(new Hashtable
         {
-            ["MACDIAG_SERVICE_LABEL"] = "com.windiag.macdiag",
+            ["MACDIAG_SERVICE_LABEL"] = "com.sysdiag.macdiag",
             ["MACDIAG_PROTECTED_LABELS"] = " com.example.agent , org.example.vpn ,",
         });
 
-        Assert.Equal("com.windiag.macdiag", options.ServiceLabel);
+        Assert.Equal("com.sysdiag.macdiag", options.ServiceLabel);
         Assert.Equal(["com.example.agent", "org.example.vpn"], options.ProtectedLabels);
         Assert.Equal("/var/db/macdiag", options.ArtifactDirectory);
         Assert.DoesNotContain("secret", MacDiagOptions.FromEnvironment(new Hashtable { ["MACDIAG_TOKEN"] = "secret" }).ToString(), StringComparison.Ordinal);

@@ -9,7 +9,7 @@ namespace MacDiag.Mcp.Hosting;
 /// <summary>Installs, removes and reports on the launchd daemon. Runs as root; never starts a server itself.</summary>
 public static partial class MacServiceInstaller
 {
-    public const string InstallDirectory = "/Library/PrivilegedHelperTools/com.windiag.macdiag";
+    public const string InstallDirectory = "/Library/PrivilegedHelperTools/com.sysdiag.macdiag";
     public const string InstalledExecutable = InstallDirectory + "/MacDiag.Mcp";
     public const string SettingsDirectory = "/etc/macdiag";
     public const string LogDirectory = "/var/log/macdiag";

@@ -16,7 +16,7 @@ namespace MacDiag.Mcp.Tests;
 [UnsupportedOSPlatform("windows")]
 public sealed class RestartScriptRunTests : IDisposable
 {
-    private const string Label = "com.windiag.macdiag";
+    private const string Label = "com.sysdiag.macdiag";
     private readonly string _root = Directory.CreateTempSubdirectory("helper-run-").FullName;
     private readonly string _bin;
     private readonly string _live;

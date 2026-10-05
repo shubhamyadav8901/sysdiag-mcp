@@ -6,24 +6,24 @@ namespace MacDiag.Mcp.Tests;
 
 public sealed class RestartHelperTests
 {
-    private const string Live = "/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp";
+    private const string Live = "/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp";
     private const string Staged = Live + ".new";
-    private const string Label = "com.windiag.macdiag";
+    private const string Label = "com.sysdiag.macdiag";
 
     private static string UnderLaunchd(bool probe = true) =>
         LaunchdRestartHelper.Script(4242, Live, Staged, "ABC123", "/var/db/macdiag/self-update.log", Label,
-            probe ? ("127.0.0.1", 4025) : null, ["--env-file", "/etc/macdiag/com.windiag.macdiag.env"]);
+            probe ? ("127.0.0.1", 4025) : null, ["--env-file", "/etc/macdiag/com.sysdiag.macdiag.env"]);
 
     private static string ByHand() =>
         LaunchdRestartHelper.Script(4242, Live, Staged, "ABC123", "/var/db/macdiag/self-update.log", label: null,
             ("127.0.0.1", 4025), ["--http", "http://0.0.0.0:4025"]);
 
     [Theory]
-    [InlineData("com.windiag.macdiag", "com.windiag.macdiag", 1, true)]
-    [InlineData("com.windiag.macdiag", "com.windiag.macdiag", 812, false)]   // started from a launchd job's shell
-    [InlineData("com.windiag.macdiag", "com.apple.Terminal", 1, false)]
-    [InlineData(null, "com.windiag.macdiag", 1, false)]
-    [InlineData("com.windiag.macdiag", null, 1, false)]
+    [InlineData("com.sysdiag.macdiag", "com.sysdiag.macdiag", 1, true)]
+    [InlineData("com.sysdiag.macdiag", "com.sysdiag.macdiag", 812, false)]   // started from a launchd job's shell
+    [InlineData("com.sysdiag.macdiag", "com.apple.Terminal", 1, false)]
+    [InlineData(null, "com.sysdiag.macdiag", 1, false)]
+    [InlineData("com.sysdiag.macdiag", null, 1, false)]
     public void Our_launchd_job_means_the_label_matches_and_launchd_is_the_parent(string? label, string? xpcServiceName, int parent, bool ours)
     {
         Assert.Equal(ours, LaunchdJob.Matches(label, xpcServiceName, parent));

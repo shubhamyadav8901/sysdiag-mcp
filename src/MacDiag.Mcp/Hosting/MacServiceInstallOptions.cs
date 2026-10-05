@@ -11,7 +11,7 @@ namespace MacDiag.Mcp.Hosting;
 /// </remarks>
 public sealed record MacServiceInstallOptions
 {
-    public const string DefaultLabel = "com.windiag.macdiag";
+    public const string DefaultLabel = "com.sysdiag.macdiag";
 
     /// <summary>How long launchd gives the daemon to stop before SIGKILL; written into the plist.</summary>
     /// <remarks>Explicit rather than launchd's default, so the installer's wait for an unload can be derived from it.</remarks>

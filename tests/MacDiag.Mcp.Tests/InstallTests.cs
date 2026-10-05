@@ -4,6 +4,13 @@ namespace MacDiag.Mcp.Tests;
 
 public sealed class InstallTests
 {
+    [Fact]
+    public void The_default_label_and_install_folder_are_named_sysdiag()
+    {
+        Assert.Equal("com.sysdiag.macdiag", MacServiceInstallOptions.DefaultLabel);
+        Assert.Equal("/Library/PrivilegedHelperTools/com.sysdiag.macdiag", MacServiceInstaller.InstallDirectory);
+    }
+
     private static MacServiceInstallOptions Parse(params string[] args) => MacServiceInstallOptions.Parse(args, new StringReader(""));
 
     [Fact]
@@ -27,8 +34,8 @@ public sealed class InstallTests
     }
 
     [Theory]
-    [InlineData("com.windiag.macdiag", true)]
-    [InlineData("com.windiag.macdiag-2", true)]
+    [InlineData("com.sysdiag.macdiag", true)]
+    [InlineData("com.sysdiag.macdiag-2", true)]
     [InlineData("../evil", false)]
     [InlineData(".hidden", false)]
     [InlineData("a/b", false)]
@@ -52,7 +59,7 @@ public sealed class InstallTests
 
         Assert.Contains("MACDIAG_TOKEN=t0k\n", env, StringComparison.Ordinal);
         Assert.Contains("MACDIAG_HTTP_BIND=http://0.0.0.0:4025\n", env, StringComparison.Ordinal);
-        Assert.Contains("MACDIAG_SERVICE_LABEL=com.windiag.macdiag\n", env, StringComparison.Ordinal);
+        Assert.Contains("MACDIAG_SERVICE_LABEL=com.sysdiag.macdiag\n", env, StringComparison.Ordinal);
         Assert.Contains("MACDIAG_ALLOW_SELF_UPDATE=1\n", env, StringComparison.Ordinal);
         Assert.DoesNotContain("COMMAND_EXECUTION", env, StringComparison.Ordinal);
     }
@@ -61,11 +68,11 @@ public sealed class InstallTests
     public void The_plist_runs_the_binary_with_the_env_file_restarts_only_on_failure_and_never_holds_the_token()
     {
         var options = Parse("--install-service", "--http", "http://0.0.0.0:4025", "--token", "secret-token");
-        var plist = options.Plist("/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp");
+        var plist = options.Plist("/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp");
 
-        Assert.Contains("<key>Label</key>\n\t<string>com.windiag.macdiag</string>", plist, StringComparison.Ordinal);
+        Assert.Contains("<key>Label</key>\n\t<string>com.sysdiag.macdiag</string>", plist, StringComparison.Ordinal);
         Assert.Contains("<string>--env-file</string>", plist, StringComparison.Ordinal);
-        Assert.Contains("<string>/etc/macdiag/com.windiag.macdiag.env</string>", plist, StringComparison.Ordinal);
+        Assert.Contains("<string>/etc/macdiag/com.sysdiag.macdiag.env</string>", plist, StringComparison.Ordinal);
         Assert.Contains("<key>SuccessfulExit</key>\n\t\t<false/>", plist, StringComparison.Ordinal);
         Assert.Contains("<key>AbandonProcessGroup</key>\n\t<true/>", plist, StringComparison.Ordinal);
         Assert.Contains("<key>ProcessType</key>\n\t<string>Standard</string>", plist, StringComparison.Ordinal);
@@ -87,27 +94,27 @@ public sealed class InstallTests
     {
         // A disabled job refuses to bootstrap, and a loaded one must go before it is loaded again.
         Assert.Equal(
-            [["bootout", "system/com.windiag.macdiag"], ["enable", "system/com.windiag.macdiag"],
-             ["bootstrap", "system", "/Library/LaunchDaemons/com.windiag.macdiag.plist"]],
-            MacServiceInstaller.BringUpCommands("com.windiag.macdiag", "/Library/LaunchDaemons/com.windiag.macdiag.plist"));
+            [["bootout", "system/com.sysdiag.macdiag"], ["enable", "system/com.sysdiag.macdiag"],
+             ["bootstrap", "system", "/Library/LaunchDaemons/com.sysdiag.macdiag.plist"]],
+            MacServiceInstaller.BringUpCommands("com.sysdiag.macdiag", "/Library/LaunchDaemons/com.sysdiag.macdiag.plist"));
     }
 
     [Fact]
     public void The_running_pid_is_read_from_launchctl_print_and_absent_when_the_job_is_not_running()
     {
-        Assert.Equal(4242, MacServiceInstaller.PidFrom("system/com.windiag.macdiag = {\n\tactive count = 1\n\tstate = running\n\tpid = 4242\n}"));
-        Assert.Null(MacServiceInstaller.PidFrom("system/com.windiag.macdiag = {\n\tstate = not running\n}"));
+        Assert.Equal(4242, MacServiceInstaller.PidFrom("system/com.sysdiag.macdiag = {\n\tactive count = 1\n\tstate = running\n\tpid = 4242\n}"));
+        Assert.Null(MacServiceInstaller.PidFrom("system/com.sysdiag.macdiag = {\n\tstate = not running\n}"));
     }
 
     [Fact]
     public void A_job_that_loads_but_never_listens_is_reported_as_failed_with_the_logs_last_lines()
     {
         // Review Focus 5: launchd has no readiness signal, so "bootstrap returned 0" proves nothing.
-        var (code, message) = MacServiceInstaller.Outcome(listening: false, "com.windiag.macdiag", "http://0.0.0.0:4025", "line 1\nfatal: bind failed");
+        var (code, message) = MacServiceInstaller.Outcome(listening: false, "com.sysdiag.macdiag", "http://0.0.0.0:4025", "line 1\nfatal: bind failed");
 
         Assert.Equal(4, code);
         Assert.Contains("fatal: bind failed", message, StringComparison.Ordinal);
-        Assert.Equal(0, MacServiceInstaller.Outcome(listening: true, "com.windiag.macdiag", "http://0.0.0.0:4025", "").Code);
+        Assert.Equal(0, MacServiceInstaller.Outcome(listening: true, "com.sysdiag.macdiag", "http://0.0.0.0:4025", "").Code);
     }
 
     [Theory]
@@ -152,11 +159,11 @@ public sealed class InstallTests
     public void Each_label_has_its_own_settings_file_so_a_second_install_never_touches_the_first()
     {
         var a = Parse("--install-service", "--http", "http://0.0.0.0:4025");
-        var b = Parse("--install-service", "--http", "http://0.0.0.0:4026", "--label", "com.windiag.macdiag-2");
+        var b = Parse("--install-service", "--http", "http://0.0.0.0:4026", "--label", "com.sysdiag.macdiag-2");
 
-        Assert.Equal("/etc/macdiag/com.windiag.macdiag.env", a.EnvironmentFilePath);
-        Assert.Equal("/etc/macdiag/com.windiag.macdiag-2.env", b.EnvironmentFilePath);
-        Assert.Contains("<string>/etc/macdiag/com.windiag.macdiag-2.env</string>", b.Plist("/x/MacDiag.Mcp"), StringComparison.Ordinal);
+        Assert.Equal("/etc/macdiag/com.sysdiag.macdiag.env", a.EnvironmentFilePath);
+        Assert.Equal("/etc/macdiag/com.sysdiag.macdiag-2.env", b.EnvironmentFilePath);
+        Assert.Contains("<string>/etc/macdiag/com.sysdiag.macdiag-2.env</string>", b.Plist("/x/MacDiag.Mcp"), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -196,8 +203,8 @@ public sealed class InstallTests
     [Fact]
     public void Uninstall_reports_removed_only_when_the_job_was_there_and_booting_it_out_worked()
     {
-        Assert.Equal(1, MacServiceInstaller.UninstallOutcome("com.windiag.macdiag", plistExisted: false, bootoutExit: 0).Code);
-        Assert.Equal(4, MacServiceInstaller.UninstallOutcome("com.windiag.macdiag", plistExisted: true, bootoutExit: 5).Code);
-        Assert.Equal(0, MacServiceInstaller.UninstallOutcome("com.windiag.macdiag", plistExisted: true, bootoutExit: 0).Code);
+        Assert.Equal(1, MacServiceInstaller.UninstallOutcome("com.sysdiag.macdiag", plistExisted: false, bootoutExit: 0).Code);
+        Assert.Equal(4, MacServiceInstaller.UninstallOutcome("com.sysdiag.macdiag", plistExisted: true, bootoutExit: 5).Code);
+        Assert.Equal(0, MacServiceInstaller.UninstallOutcome("com.sysdiag.macdiag", plistExisted: true, bootoutExit: 0).Code);
     }
 }
