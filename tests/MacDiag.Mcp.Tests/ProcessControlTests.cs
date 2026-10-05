@@ -391,6 +391,21 @@ public sealed class ProcessControlTests
         Assert.Equal(["TERM 641", "CONT 641"], mac.Signals);
     }
 
+    [Fact]
+    public async Task Suspending_a_child_of_this_server_is_refused_because_it_would_hang_the_server_but_it_may_be_terminated()
+    {
+        var mac = new Mac();
+        mac.Processes[650] = new(99999, "S", Start, "/bin/sleep", "/bin/sleep 60");
+
+        var ex = await Assert.ThrowsAsync<ProcessControlException>(() =>
+            Controller(mac).ControlAsync(650, "sleep", ProcessAction.Suspend, null, CancellationToken.None));
+        Assert.Contains("child of this server", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(mac.Signals);
+
+        await Controller(mac).ControlAsync(650, "sleep", ProcessAction.Terminate, null, CancellationToken.None);
+        Assert.Equal(["TERM 650"], mac.Signals);
+    }
+
     [Theory]
     [InlineData(642, "zombie")]
     [InlineData(1, "PID 1")]

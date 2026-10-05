@@ -80,6 +80,17 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
                 $"PID {processId} is not '{expected}': it runs {identity.Comm} (argv[0] '{identity.ArgvZero}'). Nothing was sent.");
         }
 
+        // Measured on macOS 26: waitid(P_ALL, WEXITED | WNOHANG | WNOWAIT) also reports a *stopped* child, which POSIX
+        // says it must not. .NET's SIGCHLD handler asks exactly that, finds the child not exited, and asks again -- at
+        // 100% CPU, holding the lock every Process start and dispose needs. The server would hang on its next ps and
+        // never send the SIGCONT that frees it. Only a direct child raises SIGCHLD here, so only it is refused.
+        if (action == ProcessAction.Suspend && identity.ParentId == SelfPid())
+        {
+            throw new ProcessControlException(
+                $"PID {processId} is a child of this server, and stopping its own child would hang the server: .NET's child " +
+                "watcher on macOS then spins forever and every later command - resume included - waits behind it. Nothing was sent.");
+        }
+
         if (action != ProcessAction.Resume)
         {
             await RequireUnprotectedAsync(processId, name, identity.ArgvZero, cancellationToken).ConfigureAwait(false);
@@ -281,7 +292,7 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
         return false;
     }
 
-    private sealed record Identity(string Stat, string StartText, DateTimeOffset? Start, string Comm, string? ArgvZero);
+    private sealed record Identity(int ParentId, string Stat, string StartText, DateTimeOffset? Start, string Comm, string? ArgvZero);
 
     private async Task<Identity?> IdentityAsync(int processId, CancellationToken cancellationToken)
     {
@@ -295,11 +306,17 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
 
         var args = await commands.RunAsync("ps", ["-p", pid, "-ww", "-o", "args="], options.ExternalToolTimeout, cancellationToken).ConfigureAwait(false);
         var argvZero = args.ExitCode == 0 ? VisDecode.Decode(args.StandardOutput.Trim()).Split(' ', 2)[0] : null;
-        var startText = Spaces().Replace(match.Groups[3].Value, " ");
+        var startText = Spaces().Replace(match.Groups[4].Value, " ");
         DateTimeOffset? start = DateTime.TryParseExact(startText, "ddd MMM d HH:mm:ss yyyy", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)
             ? new DateTimeOffset(parsed)
             : null;
-        return new Identity(match.Groups[2].Value, startText, start, VisDecode.Decode(match.Groups[4].Value), string.IsNullOrEmpty(argvZero) ? null : argvZero);
+        return new Identity(
+            int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
+            match.Groups[3].Value,
+            startText,
+            start,
+            VisDecode.Decode(match.Groups[5].Value),
+            string.IsNullOrEmpty(argvZero) ? null : argvZero);
     }
 
     private async Task<PsCommRow?> CommAsync(int processId, CancellationToken cancellationToken)
@@ -312,7 +329,7 @@ public sealed partial class MacProcessController(IExternalCommand commands, MacD
 
     private static string LastSegment(string path) => path[(path.TrimEnd('/').LastIndexOf('/') + 1)..];
 
-    [GeneratedRegex(@"^(\d+)\s+\d+\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$")]
+    [GeneratedRegex(@"^(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$")]
     private static partial Regex IdentityLine();
 
     [GeneratedRegex(@"\s+")]

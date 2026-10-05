@@ -23,6 +23,7 @@ public sealed class LiveMacTests : IDisposable
     private static readonly MacDiagOptions Options = MacDiagOptions.FromEnvironment(new Hashtable());
     private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"live-{Guid.NewGuid():N}")).FullName;
     private readonly List<Process> _children = [];
+    private readonly List<int> _orphans = [];
 
     public void Dispose()
     {
@@ -37,6 +38,19 @@ public sealed class LiveMacTests : IDisposable
             }
 
             child.Dispose();
+        }
+
+        foreach (var orphan in _orphans)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(orphan);
+                process.Kill();
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                // Already gone: the test terminated it.
+            }
         }
 
         try
@@ -137,25 +151,48 @@ public sealed class LiveMacTests : IDisposable
     [MacFact]
     public async Task A_spawned_process_is_suspended_resumed_and_terminated_and_a_wrong_name_is_refused()
     {
-        var child = Process.Start("/bin/sleep", ["60"])!;
-        _children.Add(child);
         var controller = new Diagnostics.Control.MacProcessController(Commands, Options, Microsoft.Extensions.Logging.Abstractions.NullLogger<Diagnostics.Control.MacProcessController>.Instance);
 
+        // Stopping this process's own child would wedge it (see MacProcessController), so that is refused, and the
+        // process that is suspended is an orphan launchd has adopted.
+        var child = Process.Start("/bin/sleep", ["60"])!;
+        _children.Add(child);
+        var refused = await Assert.ThrowsAsync<Diagnostics.Control.ProcessControlException>(() =>
+            controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Suspend, null, CancellationToken.None));
+        Assert.Contains("child of this server", refused.Message, StringComparison.Ordinal);
+
+        var pid = await StartOrphanSleepAsync();
+        var pidText = pid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         async Task<string> State() =>
-            (await Commands.RunAsync("ps", ["-p", child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), "-o", "stat="], TimeSpan.FromSeconds(10), CancellationToken.None)).StandardOutput.Trim();
+            (await Commands.RunAsync("ps", ["-p", pidText, "-o", "stat="], TimeSpan.FromSeconds(10), CancellationToken.None)).StandardOutput.Trim();
 
         await Assert.ThrowsAsync<Diagnostics.Control.ProcessControlException>(() =>
-            controller.ControlAsync(child.Id, "nginx", Diagnostics.Control.ProcessAction.Kill, null, CancellationToken.None));
-        Assert.False(child.HasExited);
+            controller.ControlAsync(pid, "nginx", Diagnostics.Control.ProcessAction.Kill, null, CancellationToken.None));
+        Assert.NotEmpty(await State());
 
-        await controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Suspend, null, CancellationToken.None);
+        await controller.ControlAsync(pid, "sleep", Diagnostics.Control.ProcessAction.Suspend, null, CancellationToken.None);
         Assert.Contains("T", await State(), StringComparison.Ordinal);
 
-        await controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Resume, null, CancellationToken.None);
+        await controller.ControlAsync(pid, "sleep", Diagnostics.Control.ProcessAction.Resume, null, CancellationToken.None);
         Assert.DoesNotContain("T", await State(), StringComparison.Ordinal);
 
-        var terminated = await controller.ControlAsync(child.Id, "sleep", Diagnostics.Control.ProcessAction.Terminate, null, CancellationToken.None);
+        var terminated = await controller.ControlAsync(pid, "sleep", Diagnostics.Control.ProcessAction.Terminate, null, CancellationToken.None);
         Assert.Contains("Exited", terminated.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>A sleep whose shell has exited, so its parent is launchd rather than this process.</summary>
+    private async Task<int> StartOrphanSleepAsync()
+    {
+        // The sleep's output goes to /dev/null: holding the shell's pipe open, it would keep ReadToEnd waiting for 60 s.
+        using var shell = Process.Start(new ProcessStartInfo("/bin/sh", ["-c", "sleep 60 </dev/null >/dev/null 2>&1 & echo $!"])
+        {
+            RedirectStandardOutput = true,
+        })!;
+        var pid = int.Parse((await shell.StandardOutput.ReadToEndAsync()).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        await shell.WaitForExitAsync();
+        _orphans.Add(pid);
+        return pid;
     }
 
     [MacFact]

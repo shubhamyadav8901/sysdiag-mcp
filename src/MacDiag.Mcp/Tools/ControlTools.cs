@@ -34,7 +34,8 @@ public sealed class ControlTools(IServiceController services, IProcessController
         "and the result says so. PID 1 (launchd), the kernel, loginwindow, WindowServer, logd, opendirectoryd, sshd " +
         "and screen sharing, this server itself, zombies, and the main process of any launchd job service_control " +
         "protects are refused for everything but resume - including a user's own remote-access or VPN agent, found in " +
-        "that user's launchd domain. Apple's per-user agents (Finder, Dock) may be restarted: launchd relaunches them.")]
+        "that user's launchd domain. Suspending a child of this server is refused: on macOS it would hang the server. " +
+        "Apple's per-user agents (Finder, Dock) may be restarted: launchd relaunches them.")]
     public async Task<ProcessControlToolResult> ProcessControl(
         [Description("Process id to act on. Get a current one from process_list.")] int processId,
         [Description("The name you expect that PID to be, e.g. 'nginx' or '/usr/local/bin/nginx'. Verified before anything happens.")] string expectedName,
