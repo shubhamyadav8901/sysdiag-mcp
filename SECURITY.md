@@ -4,7 +4,7 @@
 
 **Do not open an issue or a pull request for a security problem.**
 
-Report it to `<security contact — fill in>` with:
+Report it privately through [GitHub's private vulnerability reporting](https://github.com/shubhamyadav8901/sysdiag-mcp/security/advisories/new), with:
 
 - what an attacker can do, and what they need to start (network position, a token, local access),
 - the smallest reproduction you have,

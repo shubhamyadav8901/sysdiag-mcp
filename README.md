@@ -16,9 +16,33 @@ of them behind one MCP registration. Most of this README is about WinDiag, the W
 
 > **Licence:** [MIT](LICENSE).
 
+## Quick start
+
+Download the zip for each machine from the [latest release](https://github.com/shubhamyadav8901/sysdiag-mcp/releases/latest):
+`windiag-win-x64` or `windiag-win-x86`, `linuxdiag-linux-x64`, `macdiag-osx-arm64` or `macdiag-osx-x64`, and `diagrelay-<platform>` for the
+relay. Each carries a `SHA256.txt`. Every binary is self-contained, so no .NET install is needed.
+
+To diagnose the machine you are on, register its server with Claude Code over stdio:
+
+```
+claude mcp add windiag -- C:/Tools/sysdiag/WinDiag.Mcp.exe      # Windows
+claude mcp add linuxdiag -- /opt/sysdiag/LinuxDiag.Mcp          # Linux, x86-64
+claude mcp add macdiag -- /usr/local/sysdiag/MacDiag.Mcp        # macOS
+```
+
+On a Mac, if Gatekeeper blocks a binary downloaded in a browser, clear its quarantine flag:
+`xattr -d com.apple.quarantine MacDiag.Mcp`. Run
+unelevated, the servers answer for what the current account can see, and `capabilities` names what is
+missing.
+
+To drive other machines, install the server on each one as a service, with HTTP and a bearer token, and
+register the relay locally. See [Deploying to a target machine](#deploying-to-a-target-machine) and
+[the relay](#one-stable-mcp-entry-for-a-fleet-of-targets--the-relay). That channel is plaintext HTTP: keep
+it on a network you trust, or tunnel it.
+
 ## Status
 
-**Current release: `v2.0.0`.** Versions before `v1.0.0` were tagged retroactively at the commits
+**Current release: `v3.0.0`.** Versions before `v1.0.0` were tagged retroactively at the commits
 that shipped something; `v1.0.0` is the first release in which every tool could actually be called
 from an MCP client. See the [changelog](CHANGELOG.md) for what each one changed.
 
@@ -63,7 +87,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | Component | Runs on |
 |---|---|
 | `WinDiag.Mcp` — the diagnostics server | **Windows only**, x64 or x86. Its tools are Windows primitives: the registry, the SCM, the event log, Authenticode, Sysinternals. |
-| `DiagRelay.Mcp` — the local relay | **Windows** and **Linux**: verified end to end against live Windows targets — pre-connect, forwarded calls, and a byte-identical `push_file`/`pull_file` round trip — and the full test suite passes on a real Linux runtime (`tools/test-linux.sh`). **macOS**: built for, **untested** until the CI job has run on a pushed branch. |
+| `DiagRelay.Mcp` — the local relay | **Windows** and **Linux**: verified end to end against live Windows targets — pre-connect, forwarded calls, and a byte-identical `push_file`/`pull_file` round trip — and the full test suite passes on a real Linux runtime (`tools/test-linux.sh`). **macOS**: its test suite runs on Apple Silicon in CI's `macos-latest` job. |
 
 The relay is what lets a Mac or Linux machine drive Windows targets. Build it for the machine you are on:
 
@@ -395,11 +419,11 @@ a child of the service would be killed along with it before it could swap anythi
 `MacDiag.Mcp` is the macOS server: macOS 13 or later, Apple Silicon (`osx-arm64`) and Intel (`osx-x64`).
 It is reached through the same relay, with the same bearer token model and the same plaintext-HTTP caveat.
 
-**Preview.** It is built and unit-tested on Windows and Linux. Its Mac-only tests, the capture of real
-command output for its parsers, and an install smoke (install, a `put_file`/`get_file` round trip,
-uninstall) run in CI's `macos-latest` job, which needs the repository on a remote. Its test suite, Mac-only
-tests included, and every read-only tool over stdio have run on an interactive Mac (macOS 26.6.2, Apple
-Silicon); the launchd install, `update_self` and the HTTP transport have not. The parsers are tested against output written from Apple's documentation
+It is built and unit-tested on Windows and Linux. CI's `macos-latest` job runs its Mac-only tests,
+captures real command output for its parsers, and smoke-installs it: install, a `put_file`/`get_file`
+round trip, `service_control`, `update_self` and uninstall. It has also run on an interactive Mac (macOS
+26.6.2, Apple Silicon): the full test suite, every read-only tool over stdio, and the launchd install
+over HTTP, with `put_file`/`get_file` and `update_self`. The parsers are tested against output written from Apple's documentation
 (`tests/MacDiag.Mcp.Tests/Fixtures/macos-unverified`) until `tools/capture-macos-fixtures.sh` has run on a Mac.
 
 It serves:
@@ -415,7 +439,7 @@ It serves:
 | `who_locks_path` | `lsof -f -- <path>` | Darwin's lsof does not report lock state, so it lists who has the path open (reading, writing, running it, mapping it, or as a working directory), never who locks it. A mount point is answered as that directory |
 | `network_owners` | `lsof -i -Ts`, joined by each socket's kernel address | Every owner of a shared listener; an IPv4 and an IPv6 listener on one port stay separate |
 | `named_pipes` | unix sockets and FIFOs from a full lsof listing | Darwin's lsof does not report whether a unix socket is listening, so `listening` is always null |
-| `update_self` | a Mach-O check (thin or universal, the slice this Mac runs, `codesign --verify` for arm64), then a detached helper that swaps the binary and runs `launchctl kickstart -k` | Only with `--allow-self-update`. Any failure before the swap starts the old build again; a new build that does not come up within 30 s (new PID, matching hash, port answering) is rolled back. **This restart path has not yet run on a Mac**; CI's macOS smoke exercises it |
+| `update_self` | a Mach-O check (thin or universal, the slice this Mac runs, `codesign --verify` for arm64), then a detached helper that swaps the binary and runs `launchctl kickstart -k` | Only with `--allow-self-update`. Any failure before the swap starts the old build again; a new build that does not come up within 30 s (new PID, matching hash, port answering) is rolled back. It has run on a Mac, in CI's macOS smoke and on an interactive one |
 | `service_config` | the job's plist (`plutil -convert xml1 -o -`) for configuration; `launchctl print` for runtime state, top-level keys only | Takes the label (`com.openssh.sshd` is Remote Login). A plist named otherwise than its label is found by the `Label` inside it. A LaunchAgent is read in the console user's `gui/<uid>` domain |
 | `service_control` | `launchctl kickstart`/`bootstrap` (start), `bootout` (stop), `kickstart -k` (restart), system domain only | Writable server only. stop unloads the job until it is started again or the Mac restarts. Refused for stop and restart: Apple's jobs (`com.apple.*`, Remote Login among them), remote-access and VPN agents (Tailscale, WireGuard, OpenVPN, ZeroTier, Cisco, GlobalProtect, Fortinet, TeamViewer, Jamf), `MACDIAG_PROTECTED_LABELS`, and this server's own job. A disabled job is not started; the refusal says how to enable it |
 | `process_control` | `/bin/kill` after a `ps` name and start-time check, checked again just before the signal | Writable server only. macOS has no pidfd: a window of milliseconds remains between the last check and the signal, and every result says so. Refused for everything but resume: PID 1, the kernel, loginwindow, WindowServer, logd, opendirectoryd, sshd and screen sharing, this server, zombies, and the main process of any job `service_control` protects, including a user's own remote-access or VPN agent, found in that user's launchd domain (`launchctl asuser <uid> sudo -n -u #<uid> launchctl list`) and refused fail-closed if that list cannot be read, is empty, or is the system list again. **That lookup has not yet run on a Mac**; CI's capture checks it. Suspending a direct child of this server is refused: macOS reports a stopped child to .NET's exit watcher, which then spins and hangs the whole server. Apple's per-user agents (Finder, Dock) may be restarted |

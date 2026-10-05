@@ -13,6 +13,8 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-06
+
 ### Breaking
 
 - The project is now **sysdiag**: WinDiag, LinuxDiag and MacDiag servers and the DiagRelay relay. The
@@ -30,7 +32,7 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Added
 
-- **MacDiag.Mcp (preview), a macOS diagnostics server**, for macOS 13 or later on Apple Silicon and Intel,
+- **MacDiag.Mcp, a macOS diagnostics server**, for macOS 13 or later on Apple Silicon and Intel,
   reached through the same relay.
   - It serves the kit tools, `run_command` (`zsh`, `sh`, `bash`, `none`), `system_overview`, `process_list`,
     `process_handles`, `process_modules`, `path_handle_search`, `who_locks_path`, `network_owners`,
@@ -62,6 +64,10 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 - The LinuxDiag release job now builds the kit's test project before running it with `--no-build`, which
   otherwise found nothing to run.
+- LinuxDiag's `system_overview` could report a healthy mount as not answering when another mount's size
+  probe was stuck and the thread pool was busy. Each probe now has a thread of its own.
+- LinuxDiag's `process_control`, given a thread's ID, said only "could not open" on newer kernels, where
+  `pidfd_open` refuses it with ENOENT (measured on 7.0). It now says it is a thread, as on older kernels.
 
 ## [2.0.0] - 2026-10-01
 
@@ -437,7 +443,8 @@ The full tool surface, verified on both bitnesses.
   without being started. Both transports, stdio locally and authenticated Streamable HTTP on a
   target.
 
-[Unreleased]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.2.0...v1.2.1

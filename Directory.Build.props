@@ -21,7 +21,7 @@
          Each project once carried its own copy and the release step bumped only the server's, so they
          would have shipped different numbers. FileVersion and AssemblyVersion are left for the SDK to
          derive from this, so there is no second number to forget. VersioningTests enforces both. -->
-    <Version>2.0.0</Version>
+    <Version>3.0.0</Version>
   </PropertyGroup>
 
 </Project>

@@ -89,6 +89,11 @@ tag:
 git tag -a v1.4.0 -m "sysdiag v1.4.0" -m "<the changelog section>"
 ```
 
+Pushing the tag runs the Release workflow. It builds and tests every server on its own OS, then
+publishes a GitHub Release with one zip per binary, `SHA256SUMS.txt`, and that version's changelog
+section as the notes. Run the workflow by hand first: it does everything except publish, and fails if
+`<Version>` has no changelog section.
+
 MAJOR is for a change that breaks a caller — a tool removed, a result field's meaning changed, a
 default that alters what an existing call returns.
 
