@@ -8,8 +8,8 @@ namespace Diag.Mcp.Server.Files;
 /// </param>
 /// <param name="AllowArbitraryWrite">Whether <c>put_file</c> may write outside the owned directories.</param>
 /// <param name="AllowArbitraryRead">Whether <c>get_file</c> may read outside the owned directories.</param>
-/// <param name="ArbitraryWriteSetting">The setting a refusal names, e.g. "WINDIAG_ALLOW_ARBITRARY_WRITE=1".</param>
-/// <param name="ArbitraryReadSetting">The setting a refusal names, e.g. "WINDIAG_ALLOW_ARBITRARY_READ=1".</param>
+/// <param name="ArbitraryWriteSetting">The setting a refusal names, e.g. "LINUXDIAG_ALLOW_ARBITRARY_WRITE=1".</param>
+/// <param name="ArbitraryReadSetting">The setting a refusal names, e.g. "LINUXDIAG_ALLOW_ARBITRARY_READ=1".</param>
 /// <param name="ServerDirectoryWritable">
 /// Whether <c>put_file</c> may write into the server's own directory without arbitrary write. It
 /// defaults to true because that is how windiag has always staged a build for <c>update_self</c>; a

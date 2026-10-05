@@ -1,15 +1,15 @@
 namespace Diag.Mcp.Server.Files;
 
-/// <summary>Where a transferred file sits, relative to the directories windiag owns.</summary>
+/// <summary>Where a transferred file sits, relative to the server's own directories.</summary>
 /// <remarks>Reported for reads as well as writes; the same boundary governs both directions.</remarks>
 public enum WriteScope
 {
     /// <summary>
-    /// Inside a directory windiag owns (its own folder or the artifact directory). Needs no arbitrary
+    /// Inside a directory the server owns (its own folder or the artifact directory). Needs no arbitrary
     /// grant; a write into the server's own folder may still need its self-update grant, on a server that
     /// reserves that folder for staging (<see cref="FileTransferOptions.ServerDirectoryWritable"/>).
     /// </summary>
-    WinDiag,
+    Owned,
 
     /// <summary>Anywhere else. Allowed only when the matching arbitrary read/write grant is enabled.</summary>
     Arbitrary
@@ -49,7 +49,7 @@ public sealed record FileWriteRequest(
 /// <summary>What writing a file produced.</summary>
 /// <param name="Scope">
 /// Which permission let the write happen. Reported so a caller can see whether it landed in a
-/// windiag-owned directory or used the arbitrary-write grant.
+/// server-owned directory or used the arbitrary-write grant.
 /// </param>
 public sealed record FileWriteResult(
     string Path,

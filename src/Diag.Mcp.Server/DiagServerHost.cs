@@ -8,7 +8,7 @@ namespace Diag.Mcp.Server;
 /// <summary>How a server is served over HTTP, and how it speaks to its operator while starting.</summary>
 /// <param name="Address">The resolved bind address, e.g. http://10.0.0.5:4024.</param>
 /// <param name="ConfiguredToken">The token from the environment, or null when one was generated.</param>
-/// <param name="LogPrefix">"[windiag]" for the Windows server; every line printed carries it.</param>
+/// <param name="LogPrefix">"[windiag]", "[linuxdiag]" or "[macdiag]", per server; every line printed carries it.</param>
 /// <param name="TokenVariable">The variable named when telling the operator how to pin a token.</param>
 /// <param name="ResolvedToken">The token actually enforced: the configured one, or a generated one.</param>
 public sealed record HttpHostSettings(

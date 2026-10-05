@@ -90,7 +90,7 @@ public sealed class ServerDirectoryWriteTests : IDisposable
 
         var result = Receiver(serverDirectoryWritable: true).Receive(Put(target), CancellationToken.None);
 
-        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.Equal(WriteScope.Owned, result.Scope);
         Assert.True(File.Exists(target));
     }
 

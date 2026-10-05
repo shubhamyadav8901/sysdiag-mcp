@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 namespace Diag.Mcp.Server.Files;
 
 /// <summary>
-/// Writes a received file to disk, confined to windiag's own directories unless arbitrary write is
+/// Writes a received file to disk, confined to the server's own directories unless arbitrary write is
 /// enabled.
 /// </summary>
 /// <remarks>
@@ -13,7 +13,7 @@ namespace Diag.Mcp.Server.Files;
 /// that previously travelled over the admin share, which is where the "System error 5" token-filtering
 /// dance and the 89&#160;MB silent-corruption both lived. Over this channel the transfer rides the same
 /// authenticated HTTP the tools already use, and is hash-verified on receipt.</para>
-/// <para>The scope check is the security boundary. A write lands freely only inside a directory windiag
+/// <para>The scope check is the security boundary. A write lands freely only inside a directory the server
 /// already owns — its own folder or the artifact directory — because that grants nothing that
 /// SMB-to-those-folders plus <c>update_self</c> did not already allow. Anywhere else is arbitrary write
 /// as the server's account, one step from code execution, and is refused unless explicitly enabled.

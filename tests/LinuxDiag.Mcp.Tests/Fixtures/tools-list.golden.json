@@ -1011,7 +1011,7 @@
             "scope": {
               "type": "string",
               "enum": [
-                "WinDiag",
+                "Owned",
                 "Arbitrary"
               ]
             }
@@ -2004,7 +2004,7 @@
             "scope": {
               "type": "string",
               "enum": [
-                "WinDiag",
+                "Owned",
                 "Arbitrary"
               ]
             },

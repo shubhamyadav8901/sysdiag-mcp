@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 namespace Diag.Mcp.Server.Files;
 
 /// <summary>
-/// Reads a file back off the target, confined to windiag's own directories unless arbitrary read is
+/// Reads a file back off the target, confined to the server's own directories unless arbitrary read is
 /// enabled.
 /// </summary>
 /// <remarks>
@@ -18,7 +18,7 @@ namespace Diag.Mcp.Server.Files;
 /// again, and a 32-bit target has to hold the encoded form in memory. The caller walks
 /// <see cref="FileReadRequest.Offset"/> forward and asks for the whole-file hash on the last slice.</para>
 /// <para><strong>The scope check is the security boundary</strong>, and it is the shared
-/// <see cref="FileScope"/> so it cannot drift from the write side's. Reading outside a windiag-owned
+/// <see cref="FileScope"/> so it cannot drift from the write side's. Reading outside a server-owned
 /// directory is arbitrary read as the server's account -- on an elevated server that is exfiltration of
 /// anything it can open -- so it is refused unless explicitly enabled.</para>
 /// </remarks>

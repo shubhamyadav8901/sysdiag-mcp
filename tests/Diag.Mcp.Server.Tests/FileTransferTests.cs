@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Diag.Mcp.Server.Tests;
 
 /// <summary>
-/// The scope boundary is the security-critical part: a write lands freely only inside a windiag-owned
+/// The scope boundary is the security-critical part: a write lands freely only inside a server-owned
 /// directory, and anywhere else needs the arbitrary-write grant.
 /// </summary>
 public sealed class FileReceiverTests : IDisposable
@@ -97,7 +97,7 @@ public sealed class FileReceiverTests : IDisposable
 
         var result = Receiver().Receive(new FileWriteRequest(link, [1, 2], Overwrite: true), CancellationToken.None);
 
-        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.Equal(WriteScope.Owned, result.Scope);
         Assert.Null(new FileInfo(link).LinkTarget);
         Assert.Equal([1, 2], File.ReadAllBytes(link));
         Assert.Equal([9], File.ReadAllBytes(outside));
@@ -182,7 +182,7 @@ public sealed class FileReceiverTests : IDisposable
 
         var result = Receiver().Receive(new FileWriteRequest(target, content), CancellationToken.None);
 
-        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.Equal(WriteScope.Owned, result.Scope);
         Assert.True(File.Exists(target));
         Assert.Equal(content, File.ReadAllBytes(target));
         Assert.Equal(Sha(content), result.Sha256);
@@ -197,7 +197,7 @@ public sealed class FileReceiverTests : IDisposable
         var result = Receiver().Receive(new FileWriteRequest(target, Bytes("x")), CancellationToken.None);
 
         Assert.True(File.Exists(target));
-        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.Equal(WriteScope.Owned, result.Scope);
     }
 
     [Fact]
@@ -391,6 +391,17 @@ public sealed class FileReceiverTests : IDisposable
 
 public sealed class PutFileToolTests
 {
+    [Fact]
+    public void An_owned_write_serializes_its_scope_as_Owned()
+    {
+        // The scope is on the wire in put_file's and get_file's structured result, so the name a client
+        // reads is the contract -- not the C# member.
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new FileWriteResult(@"C:\x\a", 1, "HASH", WriteScope.Owned, false), DiagServerKit.ToolJsonOptions);
+
+        Assert.Contains("\"scope\":\"Owned\"", json, StringComparison.Ordinal);
+    }
+
     private sealed class StubReceiver : IFileReceiver
     {
         public FileWriteRequest? Last { get; private set; }
@@ -398,7 +409,7 @@ public sealed class PutFileToolTests
         public FileWriteResult Receive(FileWriteRequest request, CancellationToken cancellationToken)
         {
             Last = request;
-            return new FileWriteResult(request.Path, request.Content.LongLength, "ABC", WriteScope.WinDiag, false);
+            return new FileWriteResult(request.Path, request.Content.LongLength, "ABC", WriteScope.Owned, false);
         }
     }
 
@@ -457,7 +468,7 @@ public sealed class PutFileToolTests
     [Fact]
     public void Render_states_the_hash_and_flags_an_arbitrary_write()
     {
-        var scoped = FileTools.Render(new FileWriteResult(@"C:\WinDiag\a", 10, "HASH", WriteScope.WinDiag, false));
+        var scoped = FileTools.Render(new FileWriteResult(@"C:\WinDiag\a", 10, "HASH", WriteScope.Owned, false));
         Assert.Contains("Wrote", scoped);
         Assert.Contains("HASH", scoped);
         Assert.DoesNotContain("arbitrary-write grant", scoped);

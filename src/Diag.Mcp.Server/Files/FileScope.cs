@@ -2,7 +2,7 @@
 namespace Diag.Mcp.Server.Files;
 
 /// <summary>
-/// Decides whether a path is inside a directory windiag owns. Shared by both directions of transfer.
+/// Decides whether a path is inside a directory the server owns. Shared by both directions of transfer.
 /// </summary>
 /// <remarks>
 /// This is the security boundary for <c>put_file</c> and <c>get_file</c> alike, and it is deliberately
@@ -74,7 +74,7 @@ internal static class FileScope
         var artifacts = OwnedDirectory(options.ArtifactDirectory);
         var inServer = IsUnder(real, server);
         var gated = inServer || (looseServerMatch && LooseIsUnder(real, server));
-        return (inServer || IsUnder(real, artifacts) ? WriteScope.WinDiag : WriteScope.Arbitrary, gated);
+        return (inServer || IsUnder(real, artifacts) ? WriteScope.Owned : WriteScope.Arbitrary, gated);
     }
 
     /// <summary>Whether this runtime really normalises: under invariant globalization Normalize is a silent no-op.</summary>

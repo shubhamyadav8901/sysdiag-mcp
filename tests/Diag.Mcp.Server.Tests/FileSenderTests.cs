@@ -72,7 +72,7 @@ public sealed class FileSenderTests : IDisposable
 
         var result = Sender().Read(new FileReadRequest(path), CancellationToken.None);
 
-        Assert.Equal(WriteScope.WinDiag, result.Scope);
+        Assert.Equal(WriteScope.Owned, result.Scope);
         Assert.Equal(1024, result.TotalBytes);
         Assert.Equal(1024, result.Length);
         Assert.True(result.EndOfFile);

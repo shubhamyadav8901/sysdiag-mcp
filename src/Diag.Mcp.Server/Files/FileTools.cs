@@ -125,7 +125,7 @@ public sealed class FileTools
         if (result.Scope == WriteScope.Arbitrary)
         {
             // Worth stating: this write used the arbitrary-write grant, i.e. it landed outside the
-            // directories windiag owns. Silent would hide that a broad permission was exercised.
+            // directories the server owns. Silent would hide that a broad permission was exercised.
             builder.AppendLine().Append("Written outside the server's own directories, using the " +
                                         "arbitrary-write grant.");
         }
