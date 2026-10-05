@@ -5,8 +5,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Read-only for the build jobs, which restore packages and run tests; only the release job may write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   publish:
@@ -20,9 +21,9 @@ jobs:
         rid: [win-x64, win-x86]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
 
@@ -52,7 +53,7 @@ jobs:
           "$sha  WinDiag.Mcp.exe" | Set-Content "artifacts/${{ matrix.rid }}/SHA256.txt"
           Write-Host "${{ matrix.rid }} $sha"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windiag-${{ matrix.rid }}
           path: |
@@ -72,9 +73,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
 
@@ -98,7 +99,7 @@ jobs:
           "$sha  ${{ matrix.exe }}" | Set-Content "artifacts/diagrelay-${{ matrix.rid }}/SHA256.txt"
           Write-Host "${{ matrix.rid }} $sha"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: diagrelay-${{ matrix.rid }}
           path: |
@@ -111,9 +112,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
 
@@ -142,7 +143,7 @@ jobs:
           "$sha  LinuxDiag.Mcp" | Set-Content "artifacts/linuxdiag-linux-x64/SHA256.txt"
           Write-Host "linux-x64 $sha"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linuxdiag-linux-x64
           path: |
@@ -159,9 +160,9 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
 
@@ -191,9 +192,68 @@ jobs:
           "$sha  MacDiag.Mcp" | Set-Content "artifacts/macdiag-${{ matrix.rid }}/SHA256.txt"
           Write-Host "${{ matrix.rid }} $sha"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macdiag-${{ matrix.rid }}
           path: |
             artifacts/macdiag-${{ matrix.rid }}/MacDiag.Mcp
             artifacts/macdiag-${{ matrix.rid }}/SHA256.txt
+
+  github-release:
+    # Everything but the last step runs on a manual run too, so the packaging and the notes are rehearsed
+    # before a tag is pushed. Only a tag publishes.
+    needs: [publish, publish-relay, publish-linuxdiag, publish-macdiag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      # The version the build carries, and on a tag, proof the tag says the same: a release whose binaries
+      # report another version would hand update_self callers the wrong build.
+      - name: Version
+        id: version
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | tr -d '\r')
+          test -n "$version"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match <Version> ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # Artifacts lose the executable bit on the way through, and zip keeps whatever mode it finds: without
+      # this, every Linux and macOS binary would arrive unable to run.
+      - name: Package
+        run: |
+          cd dist
+          find . -type f ! -name '*.txt' ! -name '*.exe' -exec chmod 755 {} +
+          for dir in */; do
+            name=${dir%/}
+            (cd "$name" && zip -q "../${name}-v${{ steps.version.outputs.version }}.zip" *)
+          done
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Notes from the changelog
+        run: |
+          awk -v v="${{ steps.version.outputs.version }}" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error::CHANGELOG.md has no section for ${{ steps.version.outputs.version }}"; exit 1; }
+          head -n 5 notes.md
+
+      - name: Publish
+        # A pushed tag only: a manual run started on a tag has ref_type tag too, and is still a rehearsal.
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/SHA256SUMS.txt
+          --title "sysdiag ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
