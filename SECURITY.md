@@ -25,7 +25,8 @@ looks alarming out of context.
 
 sysdiag is a set of diagnostics servers that **run elevated by design** and expose tools that read process
 memory, handles, the registry, ACLs and file contents. Two tools are gated behind their own flags
-because they are far more than diagnostics:
+because they are far more than diagnostics. Settings are named here with the Windows server's
+`WINDIAG_` prefix; LinuxDiag and MacDiag use the same settings with `LINUXDIAG_` and `MACDIAG_`.
 
 | Grant | Default | What it really is |
 |---|---|---|
@@ -40,12 +41,13 @@ intended, documented, and the reason both are off unless a deployment explicitly
 The server runs elevated, so a local unprivileged user is inside the threat model too. Things that
 follow from that, and which are deliberate rather than oversights:
 
-- **The token is read from the environment only, never a command-line argument.** each server's own
+- **The token is read from the environment only, never a command-line argument.** Each server's own
   `process_list` shows command lines to every local user on the machine; a token passed as an
   argument would be readable by the people it is meant to exclude.
-- **As a service, the token belongs in the service's own registry `Environment` value**, which is
-  ACL'd to SYSTEM and Administrators. A machine-wide environment variable is readable by every local
-  user and is *not* an acceptable substitute.
+- **As a Windows service, the token belongs in the service's own registry `Environment` value**, which
+  is ACL'd to SYSTEM and Administrators. A machine-wide environment variable is readable by every local
+  user and is *not* an acceptable substitute. LinuxDiag and MacDiag keep it in a root-owned `0600` env
+  file instead (`/etc/linuxdiag/linuxdiag.env`, `/etc/macdiag/<label>.env`).
 - **There is no default bind address.** `--http` with nothing to bind to is refused rather than
   quietly listening on `0.0.0.0`.
 - **File access is confined** to directories the server owns, on both the read and write sides, through

@@ -7,7 +7,7 @@ It complements `mcp-windbg`, which owns post-mortem dump analysis. A debugger se
 process; this server sees the machine.
 
 sysdiag is a set of servers: **WinDiag** (`WinDiag.Mcp`, Windows), **LinuxDiag** and **MacDiag**,
-which serve the same tool set on Linux and macOS, and **DiagRelay**, a local relay that puts any number
+which serve much the same tool set on Linux and macOS (each one's section lists its tools), and **DiagRelay**, a local relay that puts any number
 of them behind one MCP registration. Most of this README is about WinDiag, the Windows server; see
 [Linux targets](#linux-targets) and [macOS targets](#macos-targets) for the others.
 
