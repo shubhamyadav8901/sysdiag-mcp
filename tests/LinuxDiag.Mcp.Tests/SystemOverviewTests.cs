@@ -32,6 +32,18 @@ public sealed class SystemOverviewTests
     }
 
     [Fact]
+    public void Each_mount_is_probed_on_a_thread_of_its_own_so_a_starved_pool_cannot_make_a_healthy_mount_time_out()
+    {
+        var mounts = new[] { new LinuxDiag.Mcp.Linux.Parsers.MountEntry("/dev/sda1", "/", "ext4", false) };
+        bool? onPool = null;
+
+        LinuxSystemInspector.Filesystems(
+            mounts, _ => { onPool = Thread.CurrentThread.IsThreadPoolThread; return (100, 40); }, TimeSpan.FromSeconds(5));
+
+        Assert.False(onPool);
+    }
+
+    [Fact]
     public void A_mount_whose_size_never_comes_back_is_reported_unknown_instead_of_hanging_the_call()
     {
         // statvfs on a hard NFS mount whose server has gone blocks rather than failing. Waited on

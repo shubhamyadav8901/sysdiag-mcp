@@ -59,7 +59,11 @@ public sealed class LinuxSystemInspector(IPrivilegeProbe privileges) : ISystemIn
         foreach (var mount in visible)
         {
             long totalBytes = 0, freeBytes = 0;
-            var probe = Task.Run(() => size(mount.MountPoint));
+            // A thread of its own, not the pool's: a probe stuck in the kernel keeps its thread for good, and on a
+            // small, busy pool the next mount's probe then waited for a thread longer than its whole budget, so a
+            // healthy mount was reported as not answering (seen on a two-core CI runner).
+            var probe = Task.Factory.StartNew(
+                () => size(mount.MountPoint), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             try
             {
                 if (probe.Wait(perMount))
