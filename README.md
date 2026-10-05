@@ -95,7 +95,7 @@ Locally over stdio:
   "mcpServers": {
     "windiag": {
       "type": "stdio",
-      "command": "D:/Tools/sysinternals_mcp/artifacts/win-x64/WinDiag.Mcp.exe"
+      "command": "D:/Tools/sysdiag-mcp/artifacts/win-x64/WinDiag.Mcp.exe"
     }
   }
 }

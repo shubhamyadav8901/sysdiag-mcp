@@ -2,8 +2,8 @@
 # Captures every /proc format LinuxDiag parses, from the distro it runs in, into
 # tests/LinuxDiag.Mcp.Tests/Fixtures/<ID from os-release>/. Run once per distro, from PowerShell:
 #
-#   wsl -d Ubuntu -- bash "/mnt/d/Tools/sysinternals_mcp/tools/capture-linux-fixtures.sh"
-#   wsl -d Debian -- bash "/mnt/d/Tools/sysinternals_mcp/tools/capture-linux-fixtures.sh"
+#   wsl -d Ubuntu -- bash "/mnt/d/Tools/sysdiag-mcp/tools/capture-linux-fixtures.sh"
+#   wsl -d Debian -- bash "/mnt/d/Tools/sysdiag-mcp/tools/capture-linux-fixtures.sh"
 #
 # Captured rather than written by hand: a parser tested against the format as someone remembered it
 # passes on text the kernel never prints. The docker-* files are written only where the docker CLI can

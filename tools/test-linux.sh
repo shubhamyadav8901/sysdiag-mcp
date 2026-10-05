@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the cross-platform relay tests on a real Linux runtime. Invoked from Windows through WSL:
 #
-#   wsl -d Ubuntu -- bash "/mnt/d/Tools/sysinternals_mcp/tools/test-linux.sh"
+#   wsl -d Ubuntu -- bash "/mnt/d/Tools/sysdiag-mcp/tools/test-linux.sh"
 #
 # Extra arguments pass through to `dotnet test` (for example --filter "FullyQualifiedName~PathScope").
 #
