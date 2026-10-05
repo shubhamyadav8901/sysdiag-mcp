@@ -38,8 +38,7 @@ public static partial class MacServiceInstaller
             // Copied beside the target and renamed over it, so a running daemon's binary is replaced atomically
             // rather than written into while it executes.
             var temp = InstalledExecutable + ".installing";
-            File.Copy(source, temp, overwrite: true);
-            File.SetUnixFileMode(temp, Executable);
+            CopyFresh(source, temp, Executable);
             File.Move(temp, InstalledExecutable, overwrite: true);
         }
 
@@ -325,6 +324,24 @@ public static partial class MacServiceInstaller
     private static void OwnedDirectory(string path, UnixFileMode mode)
     {
         Directory.CreateDirectory(path, mode);
+        File.SetUnixFileMode(path, mode);
+    }
+
+    /// <summary>Copies into a file this process creates, so it is owned by the installer (root), with exactly this mode.</summary>
+    /// <remarks>
+    /// Not File.Copy: on macOS it clones the file, and a clone made by root keeps the source's owner. The binary an
+    /// admin copied over was theirs, so the installed one was too, and the startup check refused it -- every install
+    /// failed (first seen in CI's install smoke).
+    /// </remarks>
+    internal static void CopyFresh(string source, string path, UnixFileMode mode)
+    {
+        File.Delete(path);
+        using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var output = new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, UnixCreateMode = mode
+        });
+        input.CopyTo(output);
         File.SetUnixFileMode(path, mode);
     }
 

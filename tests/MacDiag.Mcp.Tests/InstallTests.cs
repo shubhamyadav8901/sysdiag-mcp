@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using MacDiag.Mcp.Hosting;
 
 namespace MacDiag.Mcp.Tests;
@@ -206,5 +207,37 @@ public sealed class InstallTests
         Assert.Equal(1, MacServiceInstaller.UninstallOutcome("com.sysdiag.macdiag", plistExisted: false, bootoutExit: 0).Code);
         Assert.Equal(4, MacServiceInstaller.UninstallOutcome("com.sysdiag.macdiag", plistExisted: true, bootoutExit: 5).Code);
         Assert.Equal(0, MacServiceInstaller.UninstallOutcome("com.sysdiag.macdiag", plistExisted: true, bootoutExit: 0).Code);
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void The_installed_binary_is_a_new_file_with_exactly_its_mode_written_past_a_link_never_through_it()
+    {
+        // A new file is what makes it root's: a copy that cloned the source kept the admin's ownership, and the
+        // daemon refused to start. Ownership needs root to observe, so CI's install smoke checks that part.
+        var root = Directory.CreateTempSubdirectory("install-").FullName;
+        try
+        {
+            var source = Path.Combine(root, "MacDiag.Mcp");
+            File.WriteAllBytes(source, [1, 2, 3, 4]);
+            File.SetUnixFileMode(source, (UnixFileMode)0b111_111_111);
+            var victim = Path.Combine(root, "victim");
+            File.WriteAllText(victim, "untouched");
+            var target = Path.Combine(root, "MacDiag.Mcp.installing");
+            File.CreateSymbolicLink(target, victim);
+            var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead
+                       | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+
+            MacServiceInstaller.CopyFresh(source, target, mode);
+
+            Assert.Null(new FileInfo(target).LinkTarget);
+            Assert.Equal([1, 2, 3, 4], File.ReadAllBytes(target));
+            Assert.Equal(mode, File.GetUnixFileMode(target));
+            Assert.Equal("untouched", File.ReadAllText(victim));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }
