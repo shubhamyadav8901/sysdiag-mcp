@@ -134,6 +134,13 @@ public static class CodesignDisplay
     /// </remarks>
     public static IReadOnlyList<string> AppleAnchoredArguments(string path) => ["--verify", "--strict", "-R=anchor apple", "--", path];
 
+    /// <summary>A leaf that is not Apple's, quoted as the signer named it.</summary>
+    /// <remarks>
+    /// Always quoted and labelled, never bare: the name is the signer's choice, so a certificate called "Apple" printed
+    /// as "Signed by Apple" would read exactly like the anchor-checked verdict.
+    /// </remarks>
+    public static string Certificate(string leaf) => $"certificate \"{leaf.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+
     public static (string Verdict, string? Detail) Verdict(int exitCode, string standardError)
     {
         var text = standardError ?? string.Empty;

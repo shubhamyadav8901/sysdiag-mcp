@@ -135,7 +135,7 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
             { ExitCode: 0 } when details.AdHoc => (SignatureVerdict.AdHoc, "Signed ad hoc: no identity vouches for it"),
             { ExitCode: 0 } when signedByApple => (SignatureVerdict.Valid, "Signed by Apple, verified"),
             { ExitCode: 0 } when details.Authorities.Count > 0 =>
-                (SignatureVerdict.Valid, $"Signed by {details.Authorities[0]}{(details.TeamId is { } team ? $" (team {team})" : string.Empty)}, verified"),
+                (SignatureVerdict.Valid, $"Signed by {CodesignDisplay.Certificate(details.Authorities[0])}{(details.TeamId is { } team ? $" (team {team})" : string.Empty)}, verified"),
             { ExitCode: 0 } => (SignatureVerdict.Valid, "Signed, verified"),
             _ when verify.StandardError.Contains("code object is not signed at all", StringComparison.Ordinal) => (SignatureVerdict.Unsigned, "Not signed"),
             { ExitCode: 1 or 3 } => (SignatureVerdict.Invalid, $"Signature does NOT verify: {Reason(verify.StandardError, real)}"),

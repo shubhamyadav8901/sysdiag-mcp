@@ -121,7 +121,7 @@ public sealed class SignatureTests
         var file = (await Inspector(mac.Commands()).InspectAsync([AppBinary], CancellationToken.None)).Files.Single();
 
         Assert.Equal(SignatureVerdict.Valid, file.Verdict);
-        Assert.Equal("Signed by Developer ID Application: Example Corp (ABCDE12345) (team ABCDE12345), verified", file.Detail);
+        Assert.Equal("Signed by certificate \"Developer ID Application: Example Corp (ABCDE12345)\" (team ABCDE12345), verified", file.Detail);
         Assert.Equal("accepted (Notarized Developer ID)", file.Gatekeeper);
         Assert.True(file.HardenedRuntime);
         Assert.Null(file.Package);
@@ -162,6 +162,16 @@ public sealed class SignatureTests
     }
 
     [Fact]
+    public async Task A_certificate_named_apple_is_quoted_so_it_cannot_read_as_the_anchor_checked_verdict()
+    {
+        var mac = new Mac { Display = _ => new ExternalResult(0, "", "Identifier=x\nAuthority=Apple\" x\nAuthority=Apple Root CA\n") };
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
+
+        Assert.Equal("Signed by certificate \"Apple\\\" x\", verified", file.Detail);
+    }
+
+    [Fact]
     public async Task A_platform_binary_is_signed_by_apple()
     {
         var mac = new Mac
@@ -186,7 +196,7 @@ public sealed class SignatureTests
 
         var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
 
-        Assert.Equal((SignatureVerdict.Valid, "Signed by macOS Software Signing, verified"), (file.Verdict, file.Detail));
+        Assert.Equal((SignatureVerdict.Valid, "Signed by certificate \"macOS Software Signing\", verified"), (file.Verdict, file.Detail));
     }
 
     [Fact]

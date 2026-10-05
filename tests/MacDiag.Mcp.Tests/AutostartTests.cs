@@ -171,7 +171,7 @@ public sealed class AutostartTests
         var result = await Audit(mac, new AutostartQuery(VerifySignatures: true));
 
         var entry = result.Entries.Single(e => e.Entry == "com.apple.updater");
-        Assert.Equal((true, "Software Signing"), (entry.Signed, entry.SignatureDetail));
+        Assert.Equal((true, "Signed by certificate \"Software Signing\""), (entry.Signed, entry.SignatureDetail));
     }
 
     [Fact]
