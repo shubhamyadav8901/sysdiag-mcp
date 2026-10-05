@@ -12,6 +12,16 @@ namespace DiagRelay.Mcp.Tests;
 public sealed class RelayTargetsFileTests
 {
     [Fact]
+    public void The_targets_file_is_dot_sysdiag_targets_json_in_the_home_directory()
+    {
+        // A hard rename: ~/.windiag-targets.json is not read at all after this.
+        Assert.Equal(".sysdiag-targets.json", RelayTargetsFile.FileName);
+        Assert.Equal(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".sysdiag-targets.json"),
+            RelayTargetsFile.DefaultPath());
+    }
+
+    [Fact]
     public void Parses_each_target_with_its_alias_address_and_token()
     {
         var entries = RelayTargetsFile.Parse("""
@@ -99,7 +109,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Load_returns_null_when_the_file_is_absent()
     {
-        var missing = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var missing = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
 
         Assert.Null(RelayTargetsFile.Load(missing));
     }
@@ -107,7 +117,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Load_reads_and_parses_an_existing_file()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, """{"targets":[{"as":"w11","target":"192.168.32.93","token":"t"}]}""");
         try
         {
@@ -125,7 +135,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Upsert_creates_the_file_when_it_does_not_exist()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             RelayTargetsFile.Upsert(path, new RelayTargetEntry("srv1", "http://192.168.36.46:4024", "secret", null));
@@ -145,7 +155,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Upsert_appends_a_new_target_and_keeps_the_others()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, """{"targets":[{"as":"w11","target":"192.168.32.93","token":"t"}]}""");
         try
         {
@@ -165,7 +175,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Upsert_replaces_an_existing_alias_case_insensitively_a_repoint()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, """{"targets":[{"as":"w11","target":"10.0.0.1","token":"old"}]}""");
         try
         {
@@ -184,7 +194,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Upsert_refuses_to_overwrite_a_malformed_file()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, "{ this is not json");
         try
         {
@@ -203,7 +213,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void Upsert_requires_an_alias()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
 
         Assert.ThrowsAny<ArgumentException>(() =>
             RelayTargetsFile.Upsert(path, new RelayTargetEntry(null, "192.168.36.46", "secret", null)));
@@ -218,7 +228,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void An_empty_file_is_healed_rather_than_treated_as_malformed()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, string.Empty);
         try
         {
@@ -238,7 +248,7 @@ public sealed class RelayTargetsFileTests
     [Fact]
     public void A_write_leaves_a_backup_that_a_later_corruption_is_recovered_from()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "first", null));
@@ -265,7 +275,7 @@ public sealed class RelayTargetsFileTests
     {
         // Every Claude Code session runs its own relay against this one file, so connect races connect.
         // Unlocked, the read-modify-write silently dropped whichever entry lost the race.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         const int writers = 12;
         try
         {
@@ -292,7 +302,7 @@ public sealed class RelayTargetsFileTests
     {
         // It still occupies the alias derived from its address, so matching the raw field would append a
         // twin that races the original on every launch.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, """{"targets":[{"target":"192.168.32.93","token":"old"}]}""");
         try
         {
@@ -325,7 +335,7 @@ public sealed class RelayTargetsFileTests
         // and on these targets a bearer token is command execution at the server's privilege level.
         // Asserted after a SECOND write on purpose: File.Replace keeps the destination's ACL, so hardening
         // only the temporary file passes on the first write and silently does nothing thereafter.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "t", null));
@@ -359,7 +369,7 @@ public sealed class RelayTargetsFileTests
     {
         // The Unix counterpart of the ACL test above, and asserted after a SECOND write for the same
         // reason: the backup is the previous file renamed, so it carries whatever mode that file had.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             RelayTargetsFile.Upsert(path, new RelayTargetEntry("w11", "192.168.32.93", "t", null));
@@ -379,7 +389,7 @@ public sealed class RelayTargetsFileTests
     public void A_hand_made_world_readable_file_is_tightened_by_the_next_write()
     {
         // The usual first contact: an operator creates the file in an editor, under the default umask.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             File.WriteAllText(path, """{"targets":[{"as":"w11","target":"192.168.32.93","token":"t"}]}""");
@@ -403,7 +413,7 @@ public sealed class RelayTargetsFileTests
         // Every token is written into the .tmp before anything restricts it, so restricting afterwards
         // leaves a window. Worse, FileMode.Create on a .tmp left by a crashed write keeps THAT file's
         // mode. Asserted while the stream is still open -- i.e. before any restriction could run.
-        var temp = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json.tmp");
+        var temp = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json.tmp");
         try
         {
             File.WriteAllText(temp, "stale");
@@ -424,7 +434,7 @@ public sealed class RelayTargetsFileTests
     public void A_held_lock_makes_a_second_relay_wait_and_then_give_up_with_a_reason()
     {
         // Two relays racing the same file is the normal case: one per Claude Code session.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             using (RelayTargetsFile.Lock(path, TimeSpan.FromSeconds(10)))
@@ -457,7 +467,7 @@ public sealed class RelayTargetsFileTests
         // What this does NOT prove: that the file is 0600 at the moment it is created. TightenLeftover
         // repairs the mode right after the open, so removing UnixCreateMode alone leaves this green.
         // UnixCreateMode only closes the instant between create and chmod, which no test observes.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             using (RelayTargetsFile.Lock(path, TimeSpan.FromSeconds(5)))
@@ -475,7 +485,7 @@ public sealed class RelayTargetsFileTests
     [UnsupportedOSPlatform("windows")]
     public void A_loose_lock_file_left_behind_is_tightened_on_unix()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             File.WriteAllText(path + RelayTargetsFile.LockSuffix, "");
@@ -498,7 +508,7 @@ public sealed class RelayTargetsFileTests
         // Only contention is worth waiting out. Anything else -- here a symlink loop, ELOOP -- used to
         // spin for the whole timeout and then be reported as another relay holding the lock, which sent
         // the operator looking for a process that did not exist.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         var lockPath = path + RelayTargetsFile.LockSuffix;
         try
         {
@@ -522,7 +532,7 @@ public sealed class RelayTargetsFileTests
     public void A_lock_file_left_by_a_relay_that_died_does_not_block_the_next_one()
     {
         // The kernel drops the lock with its holder; the file itself staying behind means nothing.
-        var path = Path.Combine(Path.GetTempPath(), $"windiag-targets-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"sysdiag-targets-{Guid.NewGuid():N}.json");
         try
         {
             File.WriteAllText(path + RelayTargetsFile.LockSuffix, "");

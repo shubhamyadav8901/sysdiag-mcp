@@ -21,7 +21,7 @@ namespace DiagRelay.Mcp;
 internal static class RelayFileScope
 {
     /// <summary>Semicolon-separated roots, overriding the defaults entirely when set.</summary>
-    public const string RootsVariable = "WINDIAG_RELAY_FILE_ROOT";
+    public const string RootsVariable = "SYSDIAG_RELAY_FILE_ROOT";
 
     /// <summary>
     /// Where the roots come from: the variable if set, otherwise the two directories a deploy and a
@@ -56,7 +56,7 @@ internal static class RelayFileScope
             {
                 // A typo in one root must not silently widen or void the others.
                 Console.Error.WriteLine(
-                    $"[windiag-relay] ignoring unusable {RootsVariable} entry '{root}': {ex.Message}");
+                    $"[sysdiag-relay] ignoring unusable {RootsVariable} entry '{root}': {ex.Message}");
             }
         }
 
@@ -97,13 +97,13 @@ internal static class RelayFileScope
     /// <remarks>
     /// Per-user on every platform. %TEMP% already is on Windows, and so is $TMPDIR on macOS, but on Linux
     /// the temp directory is /tmp: shared and world-writable. There another user could create
-    /// /tmp/windiag first and own it, read every dump pulled into it, and plant files inside push_file's
+    /// /tmp/sysdiag first and own it, read every dump pulled into it, and plant files inside push_file's
     /// default scope for the next deploy to send to a target. So off Windows it is the user's own XDG
     /// cache directory instead.
     /// </remarks>
     public static string DefaultArtifactRoot => OperatingSystem.IsWindows()
-        ? Path.Combine(Path.GetTempPath(), "windiag")
-        : Path.Combine(UserCacheDirectory(), "windiag");
+        ? Path.Combine(Path.GetTempPath(), "sysdiag")
+        : Path.Combine(UserCacheDirectory(), "sysdiag");
 
     /// <summary>$XDG_CACHE_HOME if it is set and absolute, otherwise ~/.cache.</summary>
     /// <remarks>The XDG spec says a relative value is invalid and must be ignored.</remarks>

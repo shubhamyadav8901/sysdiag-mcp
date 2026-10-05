@@ -22,7 +22,7 @@ internal sealed record RelayTargetEntry(string? As, string Target, string Token,
 /// <c>tools/list</c>. Changing the fleet is an edit to this file plus a fresh session, never a change to
 /// the MCP registration -- the addresses still live in data, not configuration.</para>
 /// <para>One shape, one path: a JSON object with a <c>targets</c> array at
-/// <c>%USERPROFILE%\.windiag-targets.json</c>.</para>
+/// <c>%USERPROFILE%\.sysdiag-targets.json</c>.</para>
 /// <para><strong>Every relay process shares this one file.</strong> Each Claude Code session spawns its
 /// own relay, and each <c>connect</c> rewrites the file, so reads and writes are serialised on a named
 /// cross-process mutex and every write lands atomically through a temporary file. Without both, two
@@ -31,7 +31,7 @@ internal sealed record RelayTargetEntry(string? As, string Target, string Token,
 /// </remarks>
 internal static class RelayTargetsFile
 {
-    public const string FileName = ".windiag-targets.json";
+    public const string FileName = ".sysdiag-targets.json";
 
     /// <summary>Kept beside the file by every atomic write, so a torn or corrupted file has a fallback.</summary>
     private const string BackupSuffix = ".bak";
@@ -319,7 +319,7 @@ internal static class RelayTargetsFile
                                        or NotSupportedException or IOException or InvalidOperationException)
         {
             Console.Error.WriteLine(
-                $"[windiag-relay] WARNING: could not restrict {path} to your account ({ex.Message}). " +
+                $"[sysdiag-relay] WARNING: could not restrict {path} to your account ({ex.Message}). " +
                 "It holds bearer tokens in plain text -- tighten its permissions by hand.");
         }
     }
@@ -468,7 +468,7 @@ internal static class RelayTargetsFile
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
             Console.Error.WriteLine(
-                $"[windiag-relay] WARNING: could not restrict {lockPath} to your account ({ex.Message}).");
+                $"[sysdiag-relay] WARNING: could not restrict {lockPath} to your account ({ex.Message}).");
         }
     }
 
@@ -482,11 +482,11 @@ internal static class RelayTargetsFile
         try
         {
             // Global so a relay under a different session still serialises against this one.
-            return new Mutex(initiallyOwned: false, $"Global\\windiag-targets-{key}");
+            return new Mutex(initiallyOwned: false, $"Global\\sysdiag-targets-{key}");
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or NotSupportedException)
         {
-            return new Mutex(initiallyOwned: false, $"Local\\windiag-targets-{key}");
+            return new Mutex(initiallyOwned: false, $"Local\\sysdiag-targets-{key}");
         }
     }
 

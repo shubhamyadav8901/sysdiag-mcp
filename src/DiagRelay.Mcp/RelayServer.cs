@@ -8,7 +8,7 @@ using ModelContextProtocol.Server;
 namespace DiagRelay.Mcp;
 
 /// <summary>
-/// A local stdio MCP server that forwards to whichever target windiag it is pointed at.
+/// A local stdio MCP server that forwards to whichever target server it is pointed at.
 /// </summary>
 /// <remarks>
 /// Registered once in Claude Code as a plain stdio command with no address, so its registration never
@@ -52,7 +52,7 @@ public static class RelayServer
 
         builder.Services.AddMcpServer(options =>
             {
-                options.ServerInfo = new Implementation { Name = "windiag-relay", Version = "1.0.0" };
+                options.ServerInfo = new Implementation { Name = "sysdiag-relay", Version = "1.0.0" };
             })
             .WithStdioServerTransport()
             .WithListToolsHandler((ctx, ct) => ListTools(state, ct))
@@ -67,7 +67,7 @@ public static class RelayServer
         await PreConnectAsync(state, defaultPort).ConfigureAwait(false);
 
         Console.Error.WriteLine(
-            "[windiag-relay] stdio relay started. Call 'connect' with a target windiag address and token; " +
+            "[sysdiag-relay] stdio relay started. Call 'connect' with a target server's address and token; " +
             "its tools then appear here and calls forward to it. 'connect' again to repoint.");
 
         await host.RunAsync().ConfigureAwait(false);
@@ -176,7 +176,7 @@ public static class RelayServer
             $"Connected to {address} as '{used}'. Its {count} tools forward as {used}{sep}<tool>. " +
             Persisted(used, address, token, persist) + "\n" +
             $"If {used}{sep}* are not callable yet, this client only reads its tool list at startup: " +
-            "reconnect windiag (/mcp) or start a fresh session and they will be pre-connected. " +
+            "reconnect sysdiag (/mcp) or start a fresh session and they will be pre-connected. " +
             "Connect more targets under other aliases to drive several at once; connect the same alias to repoint.");
     }
 
@@ -281,7 +281,7 @@ public static class RelayServer
         catch (Exception ex)
         {
             Console.Error.WriteLine(
-                $"[windiag-relay] ignoring the targets file {path}: {Describe(ex)} " +
+                $"[sysdiag-relay] ignoring the targets file {path}: {Describe(ex)} " +
                 "Starting with no pre-connected targets; use 'connect' to add them.");
             return;
         }
@@ -304,7 +304,7 @@ public static class RelayServer
             if (clash >= 0)
             {
                 Console.Error.WriteLine(
-                    $"[windiag-relay] WARNING: two targets in {path} both resolve to alias '{alias}' " +
+                    $"[sysdiag-relay] WARNING: two targets in {path} both resolve to alias '{alias}' " +
                     $"({deduplicated[clash].Target} and {entry.Target}). Using the later one; give them " +
                     "distinct \"as\" values so this is not decided for you.");
                 deduplicated[clash] = entry;
@@ -316,7 +316,7 @@ public static class RelayServer
         }
 
         Console.Error.WriteLine(
-            $"[windiag-relay] pre-connecting {deduplicated.Count} target(s) from {path} " +
+            $"[sysdiag-relay] pre-connecting {deduplicated.Count} target(s) from {path} " +
             $"(up to {PreConnectBudget.TotalSeconds:0}s)...");
 
         using var budget = new CancellationTokenSource(PreConnectBudget);
@@ -334,18 +334,18 @@ public static class RelayServer
         try
         {
             var (used, count) = await state.ConnectAsync(alias, address, entry.Token, ct).ConfigureAwait(false);
-            Console.Error.WriteLine($"[windiag-relay] pre-connected {address} as '{used}' ({count} tools).");
+            Console.Error.WriteLine($"[sysdiag-relay] pre-connected {address} as '{used}' ({count} tools).");
         }
         catch (OperationCanceledException)
         {
             Console.Error.WriteLine(
-                $"[windiag-relay] pre-connect to {address} (as '{alias}') timed out. " +
+                $"[sysdiag-relay] pre-connect to {address} (as '{alias}') timed out. " +
                 $"Retry once it is up with: connect target={entry.Target} token=<token>{AsArgument(entry)}.");
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine(
-                $"[windiag-relay] could not pre-connect {address} (as '{alias}'): {Describe(ex)} " +
+                $"[sysdiag-relay] could not pre-connect {address} (as '{alias}'): {Describe(ex)} " +
                 $"Retry with: connect target={entry.Target} token=<token>{AsArgument(entry)}.");
         }
     }
@@ -367,9 +367,9 @@ public static class RelayServer
         yield return new Tool
         {
             Name = ConnectName,
-            Title = "Point the relay at a target windiag",
+            Title = "Point the relay at a target server",
             Description =
-                "Connect to a windiag server on a target machine so its tools appear here and calls " +
+                "Connect to a sysdiag server (WinDiag, LinuxDiag or MacDiag) on a target machine so its tools appear here and calls " +
                 "forward to it. Pass target as the host or IP (or a full http URL) and token as its " +
                 "bearer token. Its tools are listed as <alias>__<tool> - the alias defaults to the host, " +
                 "or set 'as' to name it. Connect several targets under different aliases to drive them " +
@@ -382,7 +382,7 @@ public static class RelayServer
                 {"type":"object",
                  "properties":{
                    "target":{"type":"string","description":"Target host or IP, or a full http URL, e.g. 192.168.32.93 or http://192.168.32.93:4024"},
-                   "token":{"type":"string","description":"The target server's WINDIAG_TOKEN bearer token"},
+                   "token":{"type":"string","description":"The target server's bearer token (WINDIAG_TOKEN, LINUXDIAG_TOKEN or MACDIAG_TOKEN on the target)"},
                    "as":{"type":"string","description":"Alias for this connection, prefixing its tools. Letters, digits, single _ or -, no __. Defaults to the host."},
                    "port":{"type":"integer","description":"Port, if target is a bare host and not the default 4024"},
                    "persist":{"type":"boolean","description":"Save this target (with its token) to the targets file so a restart pre-connects it. Default true; set false for a one-off connection."}},
@@ -423,7 +423,7 @@ public static class RelayServer
                 "would be ~63 MB of base64 that the caller has to produce. Here the relay reads the file " +
                 "off local disk and streams it in hash-verified 4 MB chunks; you get back a summary. " +
                 "A refused chunk is re-sent on its own rather than restarting the transfer. Local paths " +
-                "are confined to the relay's permitted roots (see WINDIAG_RELAY_FILE_ROOT).",
+                "are confined to the relay's permitted roots (see SYSDIAG_RELAY_FILE_ROOT).",
             InputSchema = RelayState.Schema("""
                 {"type":"object",
                  "properties":{
@@ -446,7 +446,7 @@ public static class RelayServer
                 "multi-megabyte dump lands in the caller's context. Here the relay walks the slices, " +
                 "checks each one's SHA-256 before appending, and verifies the reassembled copy against " +
                 "the whole-file hash the target reports. It streams to disk, so a large dump is practical. " +
-                "Local paths are confined to the relay's permitted roots (see WINDIAG_RELAY_FILE_ROOT).",
+                "Local paths are confined to the relay's permitted roots (see SYSDIAG_RELAY_FILE_ROOT).",
             InputSchema = RelayState.Schema("""
                 {"type":"object",
                  "properties":{

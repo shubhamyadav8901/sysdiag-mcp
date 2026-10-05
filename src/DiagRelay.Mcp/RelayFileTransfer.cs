@@ -390,7 +390,7 @@ internal static class RelayFileTransfer
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"[windiag-relay] could not remove the partial file {path}: {ex.Message}");
+            Console.Error.WriteLine($"[sysdiag-relay] could not remove the partial file {path}: {ex.Message}");
         }
     }
 

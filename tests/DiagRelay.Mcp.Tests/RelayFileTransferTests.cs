@@ -20,7 +20,7 @@ namespace DiagRelay.Mcp.Tests;
 public sealed class RelayFileTransferTests : IDisposable
 {
     private readonly string _directory =
-        Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "windiag-relay-tests", Guid.NewGuid().ToString("N")))
+        Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "sysdiag-relay-tests", Guid.NewGuid().ToString("N")))
             .FullName;
 
     public void Dispose()

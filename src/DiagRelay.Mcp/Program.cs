@@ -10,13 +10,13 @@ if (args.Any(a => a is "--help" or "-h" or "/?"))
           DiagRelay.Mcp            run the relay on stdio (what an MCP client launches)
           DiagRelay.Mcp --help     show this text
 
-        Targets listed in ~/.windiag-targets.json are connected at launch; the 'connect' tool adds more.
+        Targets listed in ~/.sysdiag-targets.json are connected at launch; the 'connect' tool adds more.
 
         Environment:
-          WINDIAG_RELAY_FILE_ROOT  semicolon-separated local directories push_file may read from and
+          SYSDIAG_RELAY_FILE_ROOT  semicolon-separated local directories push_file may read from and
                                    pull_file may write to (default: the parent of this executable's
-                                   directory, plus a per-user 'windiag' folder: %TEMP%\windiag on
-                                   Windows, $XDG_CACHE_HOME/windiag or ~/.cache/windiag elsewhere)
+                                   directory, plus a per-user 'sysdiag' folder: %TEMP%\sysdiag on
+                                   Windows, $XDG_CACHE_HOME/sysdiag or ~/.cache/sysdiag elsewhere)
         """);
     return 0;
 }

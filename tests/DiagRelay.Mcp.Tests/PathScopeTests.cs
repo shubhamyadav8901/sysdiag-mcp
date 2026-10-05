@@ -57,7 +57,7 @@ public sealed class PathScopeTests
     public void A_differently_cased_variable_is_not_read_on_unix()
     {
         // Environment variable names are case-sensitive on Unix, and this one sets the confinement root.
-        var roots = RelayFileScope.Roots(new Hashtable { ["windiag_relay_file_root"] = "/" });
+        var roots = RelayFileScope.Roots(new Hashtable { ["sysdiag_relay_file_root"] = "/" });
 
         Assert.DoesNotContain("/", roots);
         Assert.Contains(RelayFileScope.DefaultBuildRoot, roots);
@@ -68,7 +68,7 @@ public sealed class PathScopeTests
     {
         var elsewhere = Path.Combine(Path.GetTempPath(), "elsewhere");
 
-        var roots = RelayFileScope.Roots(new Hashtable { ["windiag_relay_file_root"] = elsewhere });
+        var roots = RelayFileScope.Roots(new Hashtable { ["sysdiag_relay_file_root"] = elsewhere });
 
         Assert.Equal([elsewhere], roots);
     }
@@ -87,11 +87,37 @@ public sealed class RelayFileScopePortableTests
     public void The_default_artifact_root_is_not_the_shared_temp_directory_on_unix()
     {
         // On Linux the temp directory is /tmp, shared and world-writable: another user could create
-        // /tmp/windiag first and own it, read every dump pulled into it, and plant files inside
+        // /tmp/sysdiag first and own it, read every dump pulled into it, and plant files inside
         // push_file's default scope for the next deploy to send to a target.
         Assert.False(
             PathScope.IsUnder(RelayFileScope.DefaultArtifactRoot, Path.GetTempPath()),
             $"'{RelayFileScope.DefaultArtifactRoot}' is under the shared temp directory '{Path.GetTempPath()}'.");
+    }
+
+    [Fact]
+    public void The_roots_variable_is_SYSDIAG_RELAY_FILE_ROOT()
+    {
+        // Pinned as a literal: the other tests use the constant, so they cannot notice it being renamed.
+        var builds = Path.Combine(_root, "builds");
+
+        var roots = RelayFileScope.Roots(new Hashtable { ["SYSDIAG_RELAY_FILE_ROOT"] = builds });
+
+        Assert.Equal([builds], roots);
+    }
+
+    [Fact]
+    public void The_old_variable_name_is_no_longer_read()
+    {
+        // A hard rename: an operator who still sets the old name gets the defaults, never the old value.
+        var roots = RelayFileScope.Roots(new Hashtable { ["WINDIAG_RELAY_FILE_ROOT"] = Path.GetPathRoot(_root)! });
+
+        Assert.Equal([RelayFileScope.DefaultBuildRoot, RelayFileScope.DefaultArtifactRoot], roots);
+    }
+
+    [Fact]
+    public void The_per_user_artifact_folder_is_named_sysdiag()
+    {
+        Assert.Equal("sysdiag", Path.GetFileName(RelayFileScope.DefaultArtifactRoot));
     }
 
     [Fact]

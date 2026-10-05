@@ -11,7 +11,7 @@ namespace DiagRelay.Mcp;
 /// </summary>
 /// <remarks>
 /// <para>The relay is one stdio MCP server registered once on the base machine, with no address of its
-/// own. Each <c>connect</c> points it at a target windiag over HTTP under an alias; the target's tools
+/// own. Each <c>connect</c> points it at a target server over HTTP under an alias; the target's tools
 /// then appear here prefixed by that alias (<c>web1__process_list</c>), and calls route to the right
 /// VM. Several targets can be connected at once, so one registration drives a whole fleet, and a
 /// target's address is always runtime data in a tool call, never configuration -- which is what a set
@@ -103,14 +103,14 @@ internal sealed class RelayState : IAsyncDisposable
             endpoint.Scheme is not ("http" or "https"))
         {
             throw new RelayException(
-                $"'{address}' is not an http(s) URL. Pass the target's windiag address, for example " +
+                $"'{address}' is not an http(s) URL. Pass the target server's address, for example " +
                 "http://192.168.32.93:4024.");
         }
 
         var transport = new HttpClientTransport(new HttpClientTransportOptions
         {
             Endpoint = endpoint,
-            Name = $"windiag-relay/{alias}",
+            Name = $"sysdiag-relay/{alias}",
             AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {token}" }
         });
 
@@ -126,7 +126,7 @@ internal sealed class RelayState : IAsyncDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new RelayException(
-                $"Could not reach a windiag server at {address}: {ex.Message}. Check the target is up, " +
+                $"Could not reach a sysdiag server at {address}: {ex.Message}. Check the target is up, " +
                 "the port is right, the firewall allows this machine, and the token matches.", ex);
         }
 
