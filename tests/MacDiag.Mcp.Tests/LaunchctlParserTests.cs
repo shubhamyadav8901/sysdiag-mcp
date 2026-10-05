@@ -60,6 +60,17 @@ public sealed class LaunchctlParserTests
     }
 
     [Fact]
+    public void Print_disabled_as_a_real_mac_indents_it_by_a_tab_is_read_and_stops_at_its_own_block()
+    {
+        // launchctl print-disabled system on macOS 26.6.2: a blank line, then the whole listing indented by a tab.
+        var disabled = LaunchctlDisabled.Parse(
+            "\n\tdisabled services = {\n\t\t\"com.apple.ftpd\" => disabled\n\t\t\"com.openssh.sshd\" => enabled\n\t}\n" +
+            "\n\tlogin item associations = {\n\t\t\"com.example.helper\" => disabled\n\t}\n");
+
+        Assert.Equal(new Dictionary<string, bool> { ["com.apple.ftpd"] = true, ["com.openssh.sshd"] = false }, disabled);
+    }
+
+    [Fact]
     public void Disabled_overrides_read_both_spellings_and_only_from_their_own_block()
     {
         var disabled = LaunchctlDisabled.Parse(Fixture(Unverified, "launchctl-print-disabled"));

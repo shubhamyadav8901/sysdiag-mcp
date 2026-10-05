@@ -119,7 +119,9 @@ public static partial class LaunchctlDisabled
         var inBlock = false;
         foreach (var raw in text.Split('\n'))
         {
-            var line = raw.TrimEnd('\r');
+            // Trimmed both ends: a real Mac indents the whole listing by a tab ("\tdisabled services = {", "\t}"),
+            // which the documented form leaves out, and a header matched only at column 0 found no block at all.
+            var line = raw.Trim();
             if (!inBlock)
             {
                 inBlock = line.StartsWith("disabled services = {", StringComparison.Ordinal);
