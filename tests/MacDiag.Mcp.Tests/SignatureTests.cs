@@ -25,6 +25,10 @@ public sealed class SignatureTests
 
         public Func<string, ExternalResult> Verify { get; set; } = _ => new ExternalResult(0, "", "");
 
+        /// <summary>codesign -R="anchor apple": by default nothing here was signed by Apple, as codesign reports it.</summary>
+        public Func<string, ExternalResult> AppleAnchored { get; set; } = path =>
+            new ExternalResult(3, "", $"{path}: test-requirement: code failed to satisfy specified code requirement(s)");
+
         public Func<string, ExternalResult> Display { get; set; } = path =>
             new ExternalResult(0, "", Fixture(Unverified, path == AppBinary ? "codesign-dvvv-devid" : "codesign-dvvv-adhoc"));
 
@@ -43,6 +47,7 @@ public sealed class SignatureTests
             _ when Hangs.Contains(program) || Hangs.Contains($"{program} {args[0]}") => FakeCommands.Hang(program),
             "stat" => Answer(Stats, args),
             "shasum" => Shasum(args[^1]),
+            "codesign" when args.Contains("-R=anchor apple") => AppleAnchored(args[^1]),
             "codesign" when args[0] == "--verify" => Verify(args[^1]),
             "codesign" when args[0] == "-dvvv" => Display(args[^1]),
             "spctl" => Spctl,
@@ -73,7 +78,7 @@ public sealed class SignatureTests
     }
 
     [Fact]
-    public void A_platform_binary_on_macos_26_whose_leaf_is_macos_software_signing_is_signed_by_apple()
+    public void A_platform_binary_on_macos_26_names_macos_software_signing_as_its_leaf()
     {
         // codesign -dvvv /bin/ls on macOS 26.6.2 (25G83), trimmed to the lines the parser reads.
         var details = CodesignDisplay.Details("""
@@ -88,14 +93,7 @@ public sealed class SignatureTests
             TeamIdentifier=not set
             """);
 
-        Assert.True(details.SignedByApple);
         Assert.Equal(["macOS Software Signing", "Apple Code Signing Certification Authority", "Apple Root CA"], details.Authorities);
-    }
-
-    [Fact]
-    public void A_developer_id_leaf_is_not_signed_by_apple()
-    {
-        Assert.False(CodesignDisplay.Details(Fixture(Unverified, "codesign-dvvv-devid")).SignedByApple);
     }
 
     [Fact]
@@ -166,11 +164,29 @@ public sealed class SignatureTests
     [Fact]
     public async Task A_platform_binary_is_signed_by_apple()
     {
-        var mac = new Mac { Display = _ => new ExternalResult(0, "", Fixture(Unverified, "codesign-dvvv-apple")) };
+        var mac = new Mac
+        {
+            Display = _ => new ExternalResult(0, "", Fixture(Unverified, "codesign-dvvv-apple")),
+            AppleAnchored = _ => new ExternalResult(0, "", ""),
+        };
 
         var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
 
         Assert.Equal((SignatureVerdict.Valid, "Signed by Apple, verified"), (file.Verdict, file.Detail));
+    }
+
+    [Fact]
+    public async Task A_valid_signature_whose_leaf_is_only_named_like_apples_is_not_reported_as_signed_by_apple()
+    {
+        // A self-signed chain verifies, and its certificates can be called anything: only the anchor check tells.
+        var mac = new Mac
+        {
+            Display = _ => new ExternalResult(0, "", "Identifier=com.apple.ls\nAuthority=macOS Software Signing\nAuthority=Apple Root CA\n"),
+        };
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
+
+        Assert.Equal((SignatureVerdict.Valid, "Signed by macOS Software Signing, verified"), (file.Verdict, file.Detail));
     }
 
     [Fact]

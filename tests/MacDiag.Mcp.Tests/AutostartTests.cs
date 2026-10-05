@@ -51,6 +51,9 @@ public sealed class AutostartTests
 
         public HashSet<string> AppleSigned { get; } = ["/usr/sbin/syslogd"];
 
+        /// <summary>Programs whose signature verifies and names Apple's leaf, but whose chain is not Apple's.</summary>
+        public HashSet<string> NamedLikeApple { get; } = [];
+
         public HashSet<string> Unreadable { get; } = [];
 
         /// <summary>Paths plutil or codesign never finishes on, and programs that hang outright.</summary>
@@ -95,8 +98,11 @@ public sealed class AutostartTests
             ("stat", _) => StatLinesTests.Answer(Stats, args, Denied),
             ("launchctl", "print-disabled") => FakeCommands.Ok(Disabled.GetValueOrDefault(args[1], "disabled services = {\n}\n")),
             ("id", "-u") => Uids.TryGetValue(args[^1], out var uid) ? FakeCommands.Ok($"{uid}\n") : new ExternalResult(1, "", "id: no such user"),
+            ("codesign", _) when args.Contains("-R=anchor apple") => AppleSigned.Contains(args[^1])
+                ? new ExternalResult(0, "", "")
+                : new ExternalResult(3, "", $"{args[^1]}: test-requirement: code failed to satisfy specified code requirement(s)"),
             ("codesign", "--verify") => Unsigned.Contains(args[^1]) ? new ExternalResult(1, "", $"{args[^1]}: code object is not signed at all") : new ExternalResult(0, "", ""),
-            ("codesign", "-dvvv") => new ExternalResult(0, "", AppleSigned.Contains(args[^1]) ? "Authority=Software Signing\n" : "Authority=Developer ID Application: Example (ABCDE12345)\n"),
+            ("codesign", "-dvvv") => new ExternalResult(0, "", AppleSigned.Contains(args[^1]) || NamedLikeApple.Contains(args[^1]) ? "Authority=Software Signing\n" : "Authority=Developer ID Application: Example (ABCDE12345)\n"),
             ("systemextensionsctl", "list") => SystemExtensions,
             ("kmutil", "showloaded") => Kexts,
             ("sfltool", "dumpbtm") => Btm,
@@ -149,6 +155,23 @@ public sealed class AutostartTests
         var result = await Audit(mac);
 
         Assert.Contains(result.Entries, e => e.Entry == "com.apple.updater");
+    }
+
+    [Fact]
+    public async Task A_program_whose_leaf_is_only_named_like_apples_is_not_reported_as_signed_by_apple()
+    {
+        // The certificate's name is the signer's choice; Apple's anchor is not. A planted job must not read as Apple's.
+        var mac = new FakeMac();
+        const string Planted = "/Library/LaunchDaemons/com.apple.updater.plist";
+        mac.Plists[Planted] = Plist("com.apple.updater", ["/usr/local/libexec/updater"]);
+        mac.Stats[Planted] = Line(Planted, 0, 0, "0644", "Regular File");
+        mac.Stats["/usr/local/libexec/updater"] = Line("/usr/local/libexec/updater", 0, 0, "0755", "Regular File");
+        mac.NamedLikeApple.Add("/usr/local/libexec/updater");
+
+        var result = await Audit(mac, new AutostartQuery(VerifySignatures: true));
+
+        var entry = result.Entries.Single(e => e.Entry == "com.apple.updater");
+        Assert.Equal((true, "Software Signing"), (entry.Signed, entry.SignatureDetail));
     }
 
     [Fact]

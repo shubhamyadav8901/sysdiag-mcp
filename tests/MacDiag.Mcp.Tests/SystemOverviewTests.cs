@@ -181,7 +181,7 @@ public sealed class SystemOverviewTests
                 Assert.Contains(text.Split('\n').Select(LogNdjson.Parse), l => l?.Kind == LogLineKind.Event);
                 break;
             case "codesign-dvvv-apple":
-                Assert.True(CodesignDisplay.Details(text).SignedByApple, text);
+                Assert.EndsWith("Software Signing", CodesignDisplay.Details(text).Authorities[0], StringComparison.Ordinal);
                 break;
             case "pkgutil-file-info":
                 // /bin/ls may or may not have a receipt on a sealed system; a receipt that is there must parse whole.

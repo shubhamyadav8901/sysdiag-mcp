@@ -725,7 +725,22 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             }
 
             var details = CodesignDisplay.Details(display.StandardError);
-            return (true, details.SignedByApple ? "Signed by Apple" : details.Authorities.FirstOrDefault() ?? "Signed");
+            if (details.AdHoc)
+            {
+                return (true, details.Authorities.FirstOrDefault() ?? "Signed");
+            }
+
+            ExternalResult anchored;
+            try
+            {
+                anchored = await Commands.RunAsync("codesign", CodesignDisplay.AppleAnchoredArguments(image), Timeout, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ExternalCommandException ex)
+            {
+                return (null, $"codesign did not finish: {ex.Message}");
+            }
+
+            return (true, anchored.ExitCode == 0 ? "Signed by Apple" : details.Authorities.FirstOrDefault() ?? "Signed");
         }
 
         private async Task<PlistDictionary?> ReadPlistAsync(string path)

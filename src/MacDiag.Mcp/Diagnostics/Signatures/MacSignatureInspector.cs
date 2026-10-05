@@ -127,11 +127,13 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
         var verify = await RunAsync("codesign", ["--verify", "--strict", "--", real], left(), cancellationToken).ConfigureAwait(false);
         var display = await RunAsync("codesign", ["-dvvv", "--", real], left(), cancellationToken).ConfigureAwait(false);
         var details = CodesignDisplay.Details(display.StandardError);
+        var signedByApple = verify.ExitCode == 0 && !details.AdHoc &&
+            (await RunAsync("codesign", CodesignDisplay.AppleAnchoredArguments(real), left(), cancellationToken).ConfigureAwait(false)).ExitCode == 0;
 
         var (verdict, detail) = verify switch
         {
             { ExitCode: 0 } when details.AdHoc => (SignatureVerdict.AdHoc, "Signed ad hoc: no identity vouches for it"),
-            { ExitCode: 0 } when details.SignedByApple => (SignatureVerdict.Valid, "Signed by Apple, verified"),
+            { ExitCode: 0 } when signedByApple => (SignatureVerdict.Valid, "Signed by Apple, verified"),
             { ExitCode: 0 } when details.Authorities.Count > 0 =>
                 (SignatureVerdict.Valid, $"Signed by {details.Authorities[0]}{(details.TeamId is { } team ? $" (team {team})" : string.Empty)}, verified"),
             { ExitCode: 0 } => (SignatureVerdict.Valid, "Signed, verified"),

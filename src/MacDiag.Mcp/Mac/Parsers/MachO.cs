@@ -123,6 +123,17 @@ public static class MachO
 /// <summary>The verdict codesign -dv gives a file, from its standard error, where codesign writes it.</summary>
 public static class CodesignDisplay
 {
+    /// <summary>
+    /// codesign arguments that succeed only when Apple itself signed <paramref name="path"/>: the chain is checked by the
+    /// Security framework against Apple's anchor, which a Developer ID or App Store signature does not satisfy.
+    /// </summary>
+    /// <remarks>
+    /// Not the leaf's name from -dvvv. Anyone can make a certificate called "Software Signing", and --verify accepts a
+    /// self-signed chain, so a name match reported a home-made signature as Apple's. The name is not stable either:
+    /// macOS 26 calls the leaf "macOS Software Signing" (measured on 26.6.2). codesign exits 3 when the requirement fails.
+    /// </remarks>
+    public static IReadOnlyList<string> AppleAnchoredArguments(string path) => ["--verify", "--strict", "-R=anchor apple", "--", path];
+
     public static (string Verdict, string? Detail) Verdict(int exitCode, string standardError)
     {
         var text = standardError ?? string.Empty;
@@ -191,15 +202,6 @@ public static class CodesignDisplay
 /// <param name="Authorities">The certificate chain, leaf first; empty for an ad hoc signature.</param>
 public sealed record CodesignDetails(string? Identifier, string? TeamId, IReadOnlyList<string> Authorities, bool AdHoc, bool HardenedRuntime)
 {
-    /// <summary>The leaf certificate of Apple's own platform binaries; Developer ID and App Store chains also end in Apple Root CA.</summary>
-    /// <remarks>
-    /// macOS 26 renamed the leaf from "Software Signing" to "macOS Software Signing" (measured on 26.6.2, /bin/ls), so
-    /// matching the documented name alone reported every platform binary as signed by an unknown authority. Both are
-    /// exact names: a Developer ID leaf always begins "Developer ID", so neither can be claimed by a third party.
-    /// </remarks>
-    public bool SignedByApple => Authorities.Count > 0 && AppleLeaves.Contains(Authorities[0]);
-
-    private static readonly HashSet<string> AppleLeaves = new(StringComparer.Ordinal) { "Software Signing", "macOS Software Signing" };
 }
 
 /// <summary>pkgutil --file-info: the first receipt that names the file.</summary>
