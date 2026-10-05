@@ -127,15 +127,24 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
         var verify = await RunAsync("codesign", ["--verify", "--strict", "--", real], left(), cancellationToken).ConfigureAwait(false);
         var display = await RunAsync("codesign", ["-dvvv", "--", real], left(), cancellationToken).ConfigureAwait(false);
         var details = CodesignDisplay.Details(display.StandardError);
-        var signedByApple = verify.ExitCode == 0 && !details.AdHoc &&
-            (await RunAsync("codesign", CodesignDisplay.AppleAnchoredArguments(real), left(), cancellationToken).ConfigureAwait(false)).ExitCode == 0;
+        // Apple's own code carries no team, so a signature with one is not asked: the check repeats the whole verification,
+        // seconds for a large app, and a team ID a signer forged can only cost the question, never answer it.
+        var anchored = verify.ExitCode == 0 && !details.AdHoc && details.TeamId is null
+            ? await RunAsync("codesign", CodesignDisplay.AppleAnchoredArguments(real), left(), cancellationToken).ConfigureAwait(false)
+            : null;
+        var signer = details.Authorities.Count > 0
+            ? $"Signed by {CodesignDisplay.Certificate(details.Authorities[0])}{(details.TeamId is { } team ? $" (team {team})" : string.Empty)}, verified"
+            : "Signed, verified";
 
         var (verdict, detail) = verify switch
         {
             { ExitCode: 0 } when details.AdHoc => (SignatureVerdict.AdHoc, "Signed ad hoc: no identity vouches for it"),
-            { ExitCode: 0 } when signedByApple => (SignatureVerdict.Valid, "Signed by Apple, verified"),
-            { ExitCode: 0 } when details.Authorities.Count > 0 =>
-                (SignatureVerdict.Valid, $"Signed by {CodesignDisplay.Certificate(details.Authorities[0])}{(details.TeamId is { } team ? $" (team {team})" : string.Empty)}, verified"),
+            { ExitCode: 0 } when anchored is { ExitCode: 0 } => (SignatureVerdict.Valid, "Signed by Apple, verified"),
+            // 3 is codesign's "requirement not satisfied"; anything else (a timeout is -1) left the question open, and
+            // reporting it as not Apple's would be a guess the caller cannot see.
+            { ExitCode: 0 } when anchored is { ExitCode: not 3 } =>
+                (SignatureVerdict.Valid, $"{signer}; whether Apple signed it was not determined: {Reason(anchored.StandardError, real)}"),
+            { ExitCode: 0 } when details.Authorities.Count > 0 => (SignatureVerdict.Valid, signer),
             { ExitCode: 0 } => (SignatureVerdict.Valid, "Signed, verified"),
             _ when verify.StandardError.Contains("code object is not signed at all", StringComparison.Ordinal) => (SignatureVerdict.Unsigned, "Not signed"),
             { ExitCode: 1 or 3 } => (SignatureVerdict.Invalid, $"Signature does NOT verify: {Reason(verify.StandardError, real)}"),

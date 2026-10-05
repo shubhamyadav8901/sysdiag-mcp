@@ -54,6 +54,9 @@ public sealed class AutostartTests
         /// <summary>Programs whose signature verifies and names Apple's leaf, but whose chain is not Apple's.</summary>
         public HashSet<string> NamedLikeApple { get; } = [];
 
+        /// <summary>Programs for which the anchor check itself errs, rather than answering yes (0) or no (3).</summary>
+        public HashSet<string> AnchorCheckErrs { get; } = [];
+
         public HashSet<string> Unreadable { get; } = [];
 
         /// <summary>Paths plutil or codesign never finishes on, and programs that hang outright.</summary>
@@ -98,6 +101,7 @@ public sealed class AutostartTests
             ("stat", _) => StatLinesTests.Answer(Stats, args, Denied),
             ("launchctl", "print-disabled") => FakeCommands.Ok(Disabled.GetValueOrDefault(args[1], "disabled services = {\n}\n")),
             ("id", "-u") => Uids.TryGetValue(args[^1], out var uid) ? FakeCommands.Ok($"{uid}\n") : new ExternalResult(1, "", "id: no such user"),
+            ("codesign", _) when args.Contains("-R=anchor apple") && AnchorCheckErrs.Contains(args[^1]) => new ExternalResult(1, "", "internal error"),
             ("codesign", _) when args.Contains("-R=anchor apple") => AppleSigned.Contains(args[^1])
                 ? new ExternalResult(0, "", "")
                 : new ExternalResult(3, "", $"{args[^1]}: test-requirement: code failed to satisfy specified code requirement(s)"),
@@ -155,6 +159,24 @@ public sealed class AutostartTests
         var result = await Audit(mac);
 
         Assert.Contains(result.Entries, e => e.Entry == "com.apple.updater");
+    }
+
+    [Fact]
+    public async Task An_anchor_check_that_errs_is_reported_as_undetermined_rather_than_as_another_signer()
+    {
+        var mac = new FakeMac();
+        const string Job = "/Library/LaunchDaemons/com.example.job.plist";
+        mac.Plists[Job] = Plist("com.example.job", ["/usr/local/libexec/job"]);
+        mac.Stats[Job] = Line(Job, 0, 0, "0644", "Regular File");
+        mac.Stats["/usr/local/libexec/job"] = Line("/usr/local/libexec/job", 0, 0, "0755", "Regular File");
+        mac.NamedLikeApple.Add("/usr/local/libexec/job");
+        mac.AnchorCheckErrs.Add("/usr/local/libexec/job");
+
+        var result = await Audit(mac, new AutostartQuery(VerifySignatures: true));
+
+        var entry = result.Entries.Single(e => e.Entry == "com.example.job");
+        Assert.Equal(true, entry.Signed);
+        Assert.Contains("whether Apple signed it was not determined", entry.SignatureDetail, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -172,6 +172,34 @@ public sealed class SignatureTests
     }
 
     [Fact]
+    public async Task An_apple_check_that_does_not_finish_is_reported_as_undetermined_rather_than_as_another_signer()
+    {
+        var mac = new Mac
+        {
+            Display = _ => new ExternalResult(0, "", Fixture(Unverified, "codesign-dvvv-apple")),
+            AppleAnchored = _ => FakeCommands.Hang("codesign"),
+        };
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
+
+        Assert.Equal(SignatureVerdict.Valid, file.Verdict);
+        Assert.Contains("whether Apple signed it was not determined", file.Detail, StringComparison.Ordinal);
+        Assert.Contains("did not finish", file.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_signature_with_a_team_is_not_asked_whether_apple_signed_it()
+    {
+        // Apple's own code carries no team, and the check repeats the whole verification: seconds for a large app.
+        var commands = new Mac().Commands();
+
+        var file = (await Inspector(commands).InspectAsync([AppBinary], CancellationToken.None)).Files.Single();
+
+        Assert.Equal("ABCDE12345", file.TeamId);
+        Assert.DoesNotContain(commands.Calls, c => c.Arguments.Contains("-R=anchor apple"));
+    }
+
+    [Fact]
     public async Task A_platform_binary_is_signed_by_apple()
     {
         var mac = new Mac

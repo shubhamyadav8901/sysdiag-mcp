@@ -730,6 +730,13 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
                 return (true, "Signed ad hoc");
             }
 
+            var signer = details.Authorities.Count > 0 ? $"Signed by {CodesignDisplay.Certificate(details.Authorities[0])}" : "Signed";
+            if (details.TeamId is not null)
+            {
+                // Apple's own code carries no team; asking would repeat the whole verification for nothing.
+                return (true, signer);
+            }
+
             ExternalResult anchored;
             try
             {
@@ -737,11 +744,15 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             }
             catch (ExternalCommandException ex)
             {
-                return (null, $"codesign did not finish: {ex.Message}");
+                return (true, $"{signer}; whether Apple signed it was not determined: codesign did not finish: {ex.Message}");
             }
 
-            return (true, anchored.ExitCode == 0 ? "Signed by Apple"
-                : details.Authorities.Count > 0 ? $"Signed by {CodesignDisplay.Certificate(details.Authorities[0])}" : "Signed");
+            return anchored.ExitCode switch
+            {
+                0 => (true, "Signed by Apple"),
+                3 => (true, signer),
+                _ => (true, $"{signer}; whether Apple signed it was not determined: codesign exit {anchored.ExitCode}"),
+            };
         }
 
         private async Task<PlistDictionary?> ReadPlistAsync(string path)
