@@ -39,7 +39,7 @@ public sealed class ServiceControlTests
             ("launchctl", "kickstart") => Kickstart(args[^1]),
             ("launchctl", "bootout") => Bootout(args[1]),
             ("launchctl", "bootstrap") => Bootstrap(args[2]),
-            ("plutil", "-extract") => PlistLabels.TryGetValue(args[^1], out var label) ? FakeCommands.Ok(label + "\n") : new ExternalResult(1, "", "no Label"),
+            ("plutil", "-extract") => FakeCommands.PlutilLabels(args, plist => PlistLabels.GetValueOrDefault(plist)),
             _ => new ExternalResult(1, "", $"unexpected {program} {string.Join(' ', args)}"),
         });
 

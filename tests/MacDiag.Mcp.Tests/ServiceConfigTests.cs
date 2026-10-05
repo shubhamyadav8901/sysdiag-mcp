@@ -20,7 +20,7 @@ public sealed class ServiceConfigTests
             ("launchctl", "print-disabled") => FakeCommands.Ok(Fixture(Unverified, "launchctl-print-disabled")),
             ("launchctl", "list") => FakeCommands.Ok(Fixture(Unverified, "launchctl-list")),
             ("plutil", "-convert") => plistReadable ? FakeCommands.Ok(Fixture(Unverified, "plist-sshd.xml")) : new ExternalResult(1, "", "plutil: permission denied"),
-            ("plutil", "-extract") => args[^1] == SshPlist ? FakeCommands.Ok("com.openssh.sshd\n") : FakeCommands.Ok("com.other\n"),
+            ("plutil", "-extract") => FakeCommands.PlutilLabels(args, plist => plist == SshPlist ? "com.openssh.sshd" : "com.other"),
             ("stat", _) => FakeCommands.Ok(console + "\n"),
             _ => new ExternalResult(1, "", $"unexpected {program} {string.Join(' ', args)}"),
         });
@@ -85,6 +85,62 @@ public sealed class ServiceConfigTests
         var ex = await Assert.ThrowsAsync<ServiceQueryException>(() => Query(Launchd(loaded: false), "com.openssh.sshd", plists));
 
         Assert.Contains("may still exist", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Like a real Mac: ssh.plist sits near the end of ~900 plists, one with no Label among them.</summary>
+    private static (FakeCommands Commands, LaunchdPlists Plists) ManyPlists(string? noLabel = null)
+    {
+        var files = Enumerable.Range(0, 900).Select(i => $"/System/Library/LaunchDaemons/com.apple.job{i:D3}.plist").ToList();
+        files.Insert(420, SshPlist);
+        var commands = new FakeCommands((program, args) => (program, args.FirstOrDefault()) switch
+        {
+            ("launchctl", "print") => new ExternalResult(113, "", "Could not find service in domain for port"),
+            ("launchctl", "print-disabled") => FakeCommands.Ok(Fixture(Unverified, "launchctl-print-disabled")),
+            ("launchctl", "list") => FakeCommands.Ok(""),
+            ("plutil", "-convert") => FakeCommands.Ok(Fixture(Unverified, "plist-sshd.xml")),
+            ("plutil", "-extract") => FakeCommands.PlutilLabels(args, plist =>
+                plist == SshPlist ? "com.openssh.sshd" : plist == noLabel ? null : Path.GetFileNameWithoutExtension(plist)),
+            _ => new ExternalResult(1, "", $"unexpected {program} {string.Join(' ', args)}"),
+        });
+        return (commands, Plists([.. files]));
+    }
+
+    private static int LabelRuns(FakeCommands commands) => commands.Calls.Count(c => c is ("plutil", ["-extract", ..]));
+
+    [Fact]
+    public async Task A_label_search_reads_plists_in_a_few_plutil_runs_not_one_per_plist()
+    {
+        // A run per plist took ~40 ms each on a real Mac: 16 s to reach ssh.plist, and over the 20 s budget under load.
+        var (commands, plists) = ManyPlists();
+
+        var result = await Query(commands, "com.openssh.sshd", plists);
+
+        Assert.Equal(SshPlist, result.Service!.PlistPath);
+        Assert.InRange(LabelRuns(commands), 1, 5);
+    }
+
+    [Fact]
+    public async Task A_plist_with_no_label_before_the_match_does_not_hide_it_or_move_it_to_a_neighbour()
+    {
+        // With one plist silent, plutil's lines no longer line up with its files: the batch is asked again in halves.
+        var (commands, plists) = ManyPlists(noLabel: "/System/Library/LaunchDaemons/com.apple.job400.plist");
+
+        var result = await Query(commands, "com.openssh.sshd", plists);
+
+        Assert.Equal(SshPlist, result.Service!.PlistPath);
+        Assert.InRange(LabelRuns(commands), 1, 25);
+    }
+
+    [Fact]
+    public async Task A_label_in_no_plist_is_not_found_after_reading_every_one_including_one_with_no_label()
+    {
+        var (commands, plists) = ManyPlists(noLabel: "/System/Library/LaunchDaemons/com.apple.job400.plist");
+
+        var result = await Query(commands, "com.example.absent", plists);
+
+        Assert.Null(result.Service);
+        var read = commands.Calls.Where(c => c is ("plutil", ["-extract", ..])).SelectMany(c => c.Arguments.Skip(5)).ToHashSet();
+        Assert.Equal(901, read.Count);
     }
 
     [Fact]

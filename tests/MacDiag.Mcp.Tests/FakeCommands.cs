@@ -33,6 +33,23 @@ internal sealed class FakeCommands(Func<string, IReadOnlyList<string>, ExternalR
 
     public static ExternalResult Ok(string output) => new(0, output, string.Empty);
 
+    /// <summary>plutil -extract Label raw -o - over one or more plists, as macOS 26's plutil answers it.</summary>
+    /// <remarks>Measured: a line on stdout per plist with a Label, an error on stderr per plist without one, which then
+    /// leaves no line of its own, and exit 1 if any had none.</remarks>
+    public static ExternalResult PlutilLabels(IReadOnlyList<string> arguments, Func<string, string?> labelOf)
+    {
+        var output = new System.Text.StringBuilder();
+        var error = new System.Text.StringBuilder();
+        foreach (var plist in arguments.Skip(5))
+        {
+            _ = labelOf(plist) is { } label
+                ? output.Append(label).Append('\n')
+                : error.Append(plist).Append(": Could not extract value, error: No value at that key path or invalid key path: Label\n");
+        }
+
+        return new ExternalResult(error.Length == 0 ? 0 : 1, output.ToString(), error.ToString());
+    }
+
     /// <summary>What the real runner throws when a program outlives its timeout.</summary>
     public static ExternalResult Hang(string program) => throw new ExternalCommandException($"{program} did not finish within its timeout and was killed.", timedOut: true);
 }

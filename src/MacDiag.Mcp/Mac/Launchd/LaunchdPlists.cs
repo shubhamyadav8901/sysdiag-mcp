@@ -10,7 +10,8 @@ public sealed record PlistSearch(string? Path, bool Incomplete, int Scanned);
 /// <remarks>
 /// The file name is usually the label, but not always: com.openssh.sshd lives in ssh.plist. When &lt;label&gt;.plist is
 /// not there, each plist's own Label key is read, bounded in count and time, first match wins -- and a search that
-/// hits its bound says so, so "not found" is never a guess.
+/// hits its bound says so, so "not found" is never a guess. The Labels are read in batches, one plutil per batch:
+/// see <see cref="Plutil.LabelsAsync"/> for why a process per plist was not good enough.
 /// </remarks>
 public sealed class LaunchdPlists
 {
@@ -20,6 +21,12 @@ public sealed class LaunchdPlists
     internal int MaxScanned { get; init; } = 2000;
 
     internal TimeSpan ScanBudget { get; init; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>Plists per plutil run. 128 take ~25 ms; the bound keeps one run's argument list and output modest.</summary>
+    internal int BatchSize { get; init; } = 128;
+
+    /// <summary>One plutil run's bound: the 5 s a single plist had, with room for a batch of them.</summary>
+    private static readonly TimeSpan BatchTimeout = TimeSpan.FromSeconds(15);
 
     internal Func<string, bool> FileExists { get; init; } = File.Exists;
 
@@ -44,20 +51,55 @@ public sealed class LaunchdPlists
 
         var watch = Stopwatch.StartNew();
         var scanned = 0;
-        foreach (var plist in directories.SelectMany(ListPlists))
+        using var plists = directories.SelectMany(ListPlists).GetEnumerator();
+        while (true)
         {
-            if (scanned >= MaxScanned || watch.Elapsed > ScanBudget)
+            var batch = new List<string>(BatchSize);
+            while (batch.Count < Math.Min(BatchSize, MaxScanned - scanned) && plists.MoveNext())
+            {
+                batch.Add(plists.Current);
+            }
+
+            if (batch.Count == 0)
+            {
+                return new PlistSearch(null, scanned >= MaxScanned && plists.MoveNext(), scanned);
+            }
+
+            if (watch.Elapsed > ScanBudget)
             {
                 return new PlistSearch(null, true, scanned);
             }
 
-            scanned++;
-            if (await Plutil.LabelAsync(commands, plist, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false) == label)
+            scanned += batch.Count;
+            if (await FindInAsync(commands, label, batch, cancellationToken).ConfigureAwait(false) is { } found)
             {
-                return new PlistSearch(plist, false, scanned);
+                return new PlistSearch(found, false, scanned);
             }
         }
+    }
 
-        return new PlistSearch(null, false, scanned);
+    /// <summary>The first of these plists whose Label is the label, asking plutil once for all of them.</summary>
+    /// <remarks>
+    /// When plutil cannot say which line is whose (a plist with no Label, or one it cannot read), the batch is halved
+    /// and each half asked again, first half first so the first match still wins. One such plist costs about two runs
+    /// per halving instead of dropping back to a process per plist; a single plist plutil cannot answer for is not a
+    /// match, as it always was.
+    /// </remarks>
+    private static async Task<string?> FindInAsync(IExternalCommand commands, string label, IReadOnlyList<string> plists, CancellationToken cancellationToken)
+    {
+        if (await Plutil.LabelsAsync(commands, plists, BatchTimeout, cancellationToken).ConfigureAwait(false) is { } labels)
+        {
+            var index = Array.IndexOf(labels, label);
+            return index >= 0 ? plists[index] : null;
+        }
+
+        if (plists.Count == 1)
+        {
+            return null;
+        }
+
+        var half = plists.Count / 2;
+        return await FindInAsync(commands, label, plists.Take(half).ToArray(), cancellationToken).ConfigureAwait(false)
+            ?? await FindInAsync(commands, label, plists.Skip(half).ToArray(), cancellationToken).ConfigureAwait(false);
     }
 }

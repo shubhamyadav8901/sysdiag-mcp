@@ -43,4 +43,33 @@ public static class Plutil
         var result = await commands.RunAsync(Program, ["-extract", "Label", "raw", "-o", "-", plistPath], timeout, cancellationToken).ConfigureAwait(false);
         return result.ExitCode == 0 && result.StandardOutput.Trim() is { Length: > 0 } label ? label : null;
     }
+
+    /// <summary>Several plists' Labels from one plutil run: the i-th entry is the i-th plist's, or null when plutil did
+    /// not answer for every plist, one line each.</summary>
+    /// <remarks>
+    /// <para>One process for many files, because a process per file is what made a label search slow: ~40 ms each from
+    /// this server, and ssh.plist is the 421st of ~900 plists, so service_config took 16 s and ran into its 20 s
+    /// scan budget. plutil takes "file..." for every command; one run over all ~900 takes under 200 ms.</para>
+    /// <para>plutil prints a line per plist that has a Label and only an error on stderr for one that has none, so
+    /// after a failure the lines no longer say which file they came from -- and whether it carried on past the
+    /// failure is not documented. Then this answers null rather than guess, and the caller asks again in parts.</para>
+    /// </remarks>
+    public static async Task<string[]?> LabelsAsync(
+        IExternalCommand commands, IReadOnlyList<string> plistPaths, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        ArgumentNullException.ThrowIfNull(plistPaths);
+
+        var result = await commands.RunAsync(Program, ["-extract", "Label", "raw", "-o", "-", .. plistPaths], timeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            return null;
+        }
+
+        var lines = result.StandardOutput.Split('\n');
+        var count = lines.Length > 0 && lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+
+        // A Label holding a newline spans two lines, which would shift every later one onto the wrong file.
+        return count == plistPaths.Count ? lines[..count].Select(l => l.Trim()).ToArray() : null;
+    }
 }
