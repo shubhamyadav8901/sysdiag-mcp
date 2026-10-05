@@ -5,7 +5,7 @@
 #
 #   sudo tools/capture-macos-fixtures.sh
 #
-# Captured under the environment the server's runner gives a program -- LC_ALL=C and only the system
+# Captured under the environment the server's runner gives a program -- LC_ALL=C (ps excepted) and only the system
 # directories on PATH -- so the fixtures are what the parsers will really be handed.
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,8 +18,10 @@ sysctl -n hw.model hw.memsize kern.osrelease kern.boottime > "$out/sysctl"
 vm_stat > "$out/vm_stat"
 mount > "$out/mount"
 
-ps -axww -o pid=,ppid=,uid=,rss=,stat=,lstart=,args= > "$out/ps-args"
-ps -axww -o pid=,lstart=,comm= > "$out/ps-comm"
+# ps alone gets a UTF-8 LC_CTYPE from the runner (MacSystemCommand), so it does here. env -i, not -u LC_ALL: sudo
+# keeps the caller's LC_TIME, which LC_ALL=C was masking, and a localized lstart is not what the server sees.
+env -i PATH="$PATH" LANG=C LC_CTYPE=en_US.UTF-8 ps -axww -o pid=,ppid=,uid=,rss=,stat=,lstart=,args= > "$out/ps-args"
+env -i PATH="$PATH" LANG=C LC_CTYPE=en_US.UTF-8 ps -axww -o pid=,lstart=,comm= > "$out/ps-comm"
 
 # lsof exits 1 when it finds nothing, which set -e would read as failure.
 lsof -n -P -w -F0pcuRfatdDsinPT -p $$ > "$out/lsof-p" || [ $? -eq 1 ]

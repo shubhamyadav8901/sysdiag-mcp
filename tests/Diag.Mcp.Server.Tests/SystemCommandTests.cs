@@ -11,6 +11,30 @@ public sealed class SystemCommandTests
 
     private sealed class Capped(int max) : SystemCommand(Unix, max);
 
+    private sealed class UnicodeEnv : SystemCommand
+    {
+        public UnicodeEnv()
+            : base(Unix)
+        {
+        }
+
+        protected override string? CharacterLocaleFor(string program) => program == "env" ? "en_US.UTF-8" : null;
+    }
+
+    [UnixFact]
+    public async Task A_program_given_its_own_character_locale_gets_only_lc_ctype_changed_and_others_keep_lc_all()
+    {
+        var env = await new UnicodeEnv().RunAsync("env", [], TimeSpan.FromSeconds(10), CancellationToken.None);
+        var other = await new UnicodeEnv().RunAsync("sh", ["-c", "env"], TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        // LC_ALL would override LC_CTYPE, so it must be absent; LANG keeps every other category (LC_TIME) at C.
+        Assert.Contains("LC_CTYPE=en_US.UTF-8\n", env.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("LANG=C\n", env.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("LC_ALL=", env.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("LC_ALL=C\n", other.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("LC_CTYPE=", other.StandardOutput, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public async Task Lines_arrive_one_by_one_and_returning_false_stops_the_program_early()
     {

@@ -426,7 +426,9 @@ It serves:
 
 MacDiag serves the same tool list as LinuxDiag. Programs
 are run from `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin` only (never `/usr/local` or `/opt/homebrew`, which
-an admin user can own), with `LC_ALL=C` and no pager.
+an admin user can own), with `LC_ALL=C` and no pager -- except `ps`, which gets `LANG=C LC_CTYPE=en_US.UTF-8`
+so that a non-ASCII command line comes back as itself; under C, macOS ps prints it as `M-` escapes that cannot be
+told apart from text.
 
 Publish it, then install it over SSH. Remote Login must be on, and the SSH user an administrator:
 

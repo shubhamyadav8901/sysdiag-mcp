@@ -1,4 +1,4 @@
-# Source: ps(1), ps -axww -o pid=,lstart=,comm= under LC_ALL=C. Unverified. 777 exited between the two calls; 900 started after the first.
+# Source: ps(1), ps -axww -o pid=,lstart=,comm= under LANG=C LC_CTYPE=en_US.UTF-8. Unverified. 777 exited between the two calls; 900 started after the first.
     1 Tue Oct  1 06:00:00 2024     /sbin/launchd
   501 Tue Oct  1 06:01:05 2024     /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
   612 Tue Oct  1 07:15:42 2024     java

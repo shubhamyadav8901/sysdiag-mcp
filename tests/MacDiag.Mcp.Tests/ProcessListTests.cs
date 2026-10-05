@@ -85,15 +85,17 @@ public sealed class ProcessListTests
 
     [Theory]
     [InlineData("plain", "plain")]
-    [InlineData("caf\\M-C\\M-)", "café")]
-    [InlineData("a\\^Ib", "a\tb")]
-    [InlineData("a\\^Jb", "a\nb")]
-    // ps uses VIS_NOSLASH: a backslash in a real command line is printed as-is, so these are text, not escapes.
+    [InlineData("café", "café")] // ps under a UTF-8 LC_CTYPE prints valid UTF-8 as itself
+    [InlineData("a\\011b", "a\tb")]
+    [InlineData("a\\012b", "a\nb")]
+    // A backslash in a real command line is printed as-is, so these are text, not escapes.
     [InlineData("-Dre=\\d+\\s", "-Dre=\\d+\\s")]
     [InlineData("C:\\new\\040x", "C:\\new\\040x")]
     [InlineData("a\\\\b", "a\\\\b")]
-    [InlineData("bad\\M-C", "bad\\M-C")] // not valid UTF-8: kept as ps printed it
-    public void Vis_sequences_decode_to_their_bytes_then_utf8(string printed, string decoded)
+    // ^x and M-x carry no backslash, so they are indistinguishable from text like this and are left as printed.
+    [InlineData("grep ^[a-z] ^A", "grep ^[a-z] ^A")]
+    [InlineData("cafM-CM-) M^@", "cafM-CM-) M^@")]
+    public void Only_the_tab_and_newline_escapes_are_decoded_and_everything_else_is_kept_as_ps_printed_it(string printed, string decoded)
     {
         Assert.Equal(decoded, VisDecode.Decode(printed));
     }

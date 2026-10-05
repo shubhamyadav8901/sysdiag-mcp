@@ -1,8 +1,8 @@
-# Source: ps(1), ps -axww -o pid=,ppid=,uid=,rss=,stat=,lstart=,args= under LC_ALL=C. Unverified. Non-ASCII args arrive vis(3)-encoded (\M-x).
+# Source: ps(1), ps -axww -o pid=,ppid=,uid=,rss=,stat=,lstart=,args= under LANG=C LC_CTYPE=en_US.UTF-8. Unverified. Valid UTF-8 args arrive as themselves; a tab arrives as \011.
     1     0     0  12345 Ss   Tue Oct  1 06:00:00 2024     /sbin/launchd
   501     1   501 204800 S    Tue Oct  1 06:01:05 2024     /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
   612     1   501  98304 S    Tue Oct  1 07:15:42 2024     /usr/bin/java -jar /Users/a b/app.jar  --port 8080
-  640     1   501   4096 S+   Tue Oct  1 08:00:00 2024     /bin/sleep 30 caf\M-C\M-)
+  640     1   501   4096 S+   Tue Oct  1 08:00:00 2024     /bin/sleep 30 café
   777     1     0   1024 R    Tue Oct  1 09:30:00 2024     /usr/bin/short-lived
   850     1   501  65536 S    Tue Oct  1 10:00:00 2024     /Applications/Visual Studio Code.app/Contents/MacOS/Electron --type=renderer
 garbage line that is not ps output

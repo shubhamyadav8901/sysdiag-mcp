@@ -208,7 +208,7 @@ public sealed class LiveMacTests : IDisposable
     public async Task A_command_line_with_spaces_and_non_ascii_comes_back_as_it_was_given()
     {
         // "; :" keeps the shell alive: a lone command after -c is exec'd, and the PID would become sleep's.
-        var child = Process.Start("/bin/sh", ["-c", "sleep 30; :", "arg with space café", "-Dre=\\d+\\s"])!;
+        var child = Process.Start("/bin/sh", ["-c", "sleep 30; :", "arg with space café", "-Dre=\\d+\\s", "^[a-z]M-C\tend"])!;
         _children.Add(child);
         await Task.Delay(500);
 
@@ -217,6 +217,8 @@ public sealed class LiveMacTests : IDisposable
         var row = table.Processes.Single(p => p.ProcessId == child.Id);
         Assert.Contains("arg with space café", row.CommandLine, StringComparison.Ordinal);
         Assert.Contains("-Dre=\\d+\\s", row.CommandLine, StringComparison.Ordinal);
+        // Text that looks like ps's unmarked escapes is text; a real tab comes back as one.
+        Assert.Contains("^[a-z]M-C\tend", row.CommandLine, StringComparison.Ordinal);
         // /bin/sh hands over to the selected shell, so comm may name bash, zsh or sh: only its shape is certain.
         Assert.NotNull(row.ExecutablePath);
         Assert.StartsWith("/", row.ExecutablePath, StringComparison.Ordinal);

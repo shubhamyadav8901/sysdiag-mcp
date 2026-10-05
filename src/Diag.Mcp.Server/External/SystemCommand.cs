@@ -100,6 +100,14 @@ public class SystemCommand : IExternalCommand
     /// <summary>The child's LC_ALL. "C" exists everywhere; a server that knows a UTF-8 C locale exists says so.</summary>
     protected virtual string Locale => "C";
 
+    /// <summary>The character set (LC_CTYPE) this program runs under, or null for <see cref="Locale"/> throughout.</summary>
+    /// <remarks>
+    /// For a program whose text output depends on the character set alone: macOS ps escapes every non-ASCII byte of a
+    /// command line under C, ambiguously. Only LC_CTYPE moves -- LC_TIME and the rest stay <see cref="Locale"/>, because
+    /// the parsers depend on them (lstart is German under de_DE.UTF-8).
+    /// </remarks>
+    protected virtual string? CharacterLocaleFor(string program) => null;
+
     /// <summary>Adds program-specific settings (pagers, colours) to the child's otherwise empty environment.</summary>
     protected virtual void AddEnvironment(IDictionary<string, string?> environment)
     {
@@ -258,7 +266,18 @@ public class SystemCommand : IExternalCommand
         // A clean environment: nothing inherited can change what the program does or where it looks.
         start.Environment.Clear();
         start.Environment["PATH"] = string.Join(':', _directories);
-        start.Environment["LC_ALL"] = Locale;
+        if (CharacterLocaleFor(program) is { } characters)
+        {
+            // Not LC_ALL: it overrides every category, LC_CTYPE included. LANG sets the rest, and the cleared
+            // environment means no other LC_* can override them.
+            start.Environment["LANG"] = Locale;
+            start.Environment["LC_CTYPE"] = characters;
+        }
+        else
+        {
+            start.Environment["LC_ALL"] = Locale;
+        }
+
         start.Environment["PAGER"] = "cat";
         AddEnvironment(start.Environment);
 
