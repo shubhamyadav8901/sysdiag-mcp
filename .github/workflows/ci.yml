@@ -200,8 +200,9 @@ jobs:
           $before = sudo launchctl print system/com.sysdiag.macdiag | Out-String
           $oldPid = [regex]::Match($before, '(?m)^\s*pid = (\d+)').Groups[1].Value
           # The connection drops when the server exits: that is success, so the call's own output is not judged.
+          $updateReply = $null
           try {
-            ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool update_self -Raw -Arguments @{ expectedSha256 = $sha; force = $true } | Out-Null
+            $updateReply = ./tools/mcp-call.ps1 -Address $address -Token smoke-token -Tool update_self -Raw -Arguments @{ expectedSha256 = $sha; force = $true } 2>&1 | Out-String
           }
           catch {
             Write-Host "connection dropped, as expected when the server restarts: $_"
@@ -214,7 +215,17 @@ jobs:
             $live = (sudo shasum -a 256 /Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp).Split(' ')[0].ToUpperInvariant()
           } until (($newPid -and $newPid -ne $oldPid -and $live -eq $sha) -or (Get-Date) -gt $deadline)
           if ($live -ne $sha -or -not $newPid -or $newPid -eq $oldPid) {
-            sudo cat /var/db/macdiag/self-update.log
+            # Everything that says where it stopped: the reply (a refusal names its reason), the helper's log and
+            # script, the job as launchd sees it now, and what the server and the runtime wrote.
+            Write-Host "--- update_self reply:"; Write-Host $updateReply
+            Write-Host "--- launchctl print before:"; Write-Host $before
+            Write-Host "--- launchctl print after:"; Write-Host $after
+            Write-Host "--- /var/db/macdiag:"; sudo ls -la /var/db/macdiag
+            Write-Host "--- self-update.log:"; sudo cat /var/db/macdiag/self-update.log
+            Write-Host "--- self-update.sh:"; sudo cat /var/db/macdiag/self-update.sh
+            Write-Host "--- macdiag.log (tail):"; sudo tail -n 80 /var/log/macdiag/macdiag.log
+            Write-Host "--- crash.log:"; sudo cat /var/log/macdiag/crash.log
+            Write-Host "--- helper processes:"; ps -axo pid,ppid,pgid,stat,command | grep -E 'self-update|MacDiag' | grep -v grep
             throw "update_self did not install the staged build (pid $oldPid -> $newPid, live $live, want $sha)"
           }
           Write-Host "update_self ok: pid $oldPid -> $newPid"
