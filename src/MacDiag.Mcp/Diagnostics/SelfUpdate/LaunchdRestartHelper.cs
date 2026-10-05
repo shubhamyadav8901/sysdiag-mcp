@@ -10,6 +10,10 @@ namespace MacDiag.Mcp.Diagnostics.SelfUpdate;
 /// <remarks>
 /// <para>The helper is a detached shell in its own process group. When the daemon stops, launchd would kill the whole
 /// group; the plist's AbandonProcessGroup is what lets the helper outlive it. set -m is a best effort on top.</para>
+/// <para>SIGHUP is ignored with trap rather than nohup. Under the system launchd domain the helper never ran -- the
+/// server exited, nothing was swapped and nothing restarted it (CI's install smoke) -- while the same line worked in a
+/// login session; macOS's nohup also tries to detach from a console session, which a daemon has none of. The helper's
+/// stderr goes to its log, so a helper that cannot start leaves a reason there instead of in /dev/null.</para>
 /// <para>The server exits 0 for an update, and KeepAlive restarts only a failed exit, so nothing brings it back but
 /// this script: every branch that gives up starts the existing build again before it exits.</para>
 /// </remarks>
@@ -36,11 +40,12 @@ public sealed class LaunchdRestartHelper(MacDiagOptions options, ILogger<Launchd
             writer.Write(body);
         }
 
-        // The script's path travels as $0, never spliced into the command text.
+        // The script's and the log's paths travel as $0 and $1, never spliced into the command text.
         var start = new ProcessStartInfo("/bin/sh") { UseShellExecute = false };
         start.ArgumentList.Add("-c");
-        start.ArgumentList.Add("set -m; nohup /bin/sh \"$0\" >/dev/null 2>&1 &");
+        start.ArgumentList.Add("trap '' HUP; set -m; /bin/sh \"$0\" </dev/null >/dev/null 2>>\"$1\" &");
         start.ArgumentList.Add(script);
+        start.ArgumentList.Add(logPath);
         using var process = Process.Start(start)
                             ?? throw new SelfUpdateRejectedException("Could not start /bin/sh for the update helper. Nothing has been changed.");
         process.WaitForExit();
@@ -74,7 +79,8 @@ public sealed class LaunchdRestartHelper(MacDiagOptions options, ILogger<Launchd
         var s = ShellQuote(staged);
         var old = ShellQuote(live + ".old");
         var job = label is null ? null : ShellQuote("system/" + label);
-        var relaunch = $"{t.Nohup} {l} {string.Join(' ', args.Select(ShellQuote))} >/dev/null 2>&1 &".Replace("  >", " >", StringComparison.Ordinal);
+        // SIGHUP stays ignored from the launch line, so the relaunched server inherits that without nohup.
+        var relaunch = $"{l} {string.Join(' ', args.Select(ShellQuote))} </dev/null >/dev/null 2>&1 &".Replace("  <", " <", StringComparison.Ordinal);
         var startOld = job is null ? relaunch : $"{t.Launchctl} kickstart {job}";
         var startNew = job is null ? relaunch : $"{t.Launchctl} kickstart -k {job}";
         var newPid = job is null
@@ -138,10 +144,10 @@ public sealed class LaunchdRestartHelper(MacDiagOptions options, ILogger<Launchd
 /// <summary>The absolute path of every program the update helper runs.</summary>
 internal sealed record HelperTools(
     string Shasum, string Launchctl, string Nc, string Ln, string Mv, string Chmod, string Sed, string Head, string Cut,
-    string Tr, string Nohup, string Sleep, string Date)
+    string Tr, string Sleep, string Date)
 {
     /// <summary>Where macOS keeps them; all in the runner's system directories.</summary>
     public static readonly HelperTools System = new(
         "/usr/bin/shasum", "/bin/launchctl", "/usr/bin/nc", "/bin/ln", "/bin/mv", "/bin/chmod", "/usr/bin/sed",
-        "/usr/bin/head", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/nohup", "/bin/sleep", "/bin/date");
+        "/usr/bin/head", "/usr/bin/cut", "/usr/bin/tr", "/bin/sleep", "/bin/date");
 }

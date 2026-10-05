@@ -87,7 +87,7 @@ public sealed class RestartHelperTests
     {
         var script = UnderLaunchd() + ByHand();
 
-        foreach (var program in new[] { "/usr/bin/shasum", "/bin/launchctl", "/usr/bin/nc", "/bin/ln", "/bin/mv", "/bin/chmod", "/usr/bin/nohup" })
+        foreach (var program in new[] { "/usr/bin/shasum", "/bin/launchctl", "/usr/bin/nc", "/bin/ln", "/bin/mv", "/bin/chmod" })
         {
             Assert.Contains(program + " ", script, StringComparison.Ordinal);
         }
@@ -108,7 +108,8 @@ public sealed class RestartHelperTests
         var script = ByHand();
 
         Assert.DoesNotContain("launchctl", script, StringComparison.Ordinal);
-        Assert.Contains("nohup '" + Live + "' '--http' 'http://0.0.0.0:4025' >/dev/null 2>&1 &", script, StringComparison.Ordinal);
+        Assert.Contains("\n  '" + Live + "' '--http' 'http://0.0.0.0:4025' </dev/null >/dev/null 2>&1 &", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("nohup", script, StringComparison.Ordinal);
     }
 
     [UnixFact]

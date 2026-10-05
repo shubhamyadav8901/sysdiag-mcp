@@ -37,7 +37,7 @@ public sealed class RestartScriptRunTests : IDisposable
         _deadPid = done.Id;
         File.WriteAllText(Path.Combine(_bin, "old-pid"), _deadPid.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-        foreach (var tool in new[] { "ln", "mv", "chmod", "sed", "head", "cut", "tr", "date", "nohup" })
+        foreach (var tool in new[] { "ln", "mv", "chmod", "sed", "head", "cut", "tr", "date" })
         {
             Wrap(tool, $"exec {Real(tool)} \"$@\"");
         }
@@ -84,7 +84,7 @@ public sealed class RestartScriptRunTests : IDisposable
     private HelperTools Fakes() => new(
         Path.Combine(_bin, "shasum"), Path.Combine(_bin, "launchctl"), Path.Combine(_bin, "nc"), Path.Combine(_bin, "ln"),
         Path.Combine(_bin, "mv"), Path.Combine(_bin, "chmod"), Path.Combine(_bin, "sed"), Path.Combine(_bin, "head"),
-        Path.Combine(_bin, "cut"), Path.Combine(_bin, "tr"), Path.Combine(_bin, "nohup"), Path.Combine(_bin, "sleep"),
+        Path.Combine(_bin, "cut"), Path.Combine(_bin, "tr"), Path.Combine(_bin, "sleep"),
         Path.Combine(_bin, "date"));
 
     private static string Sha(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
