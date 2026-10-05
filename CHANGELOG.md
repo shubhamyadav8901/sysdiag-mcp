@@ -437,18 +437,18 @@ The full tool surface, verified on both bitnesses.
   without being started. Both transports, stdio locally and authenticated Streamable HTTP on a
   target.
 
-[Unreleased]: https://example.internal/windiag/compare/v2.0.0...HEAD
-[2.0.0]: https://example.internal/windiag/compare/v1.3.0...v2.0.0
-[1.3.0]: https://example.internal/windiag/compare/v1.2.1...v1.3.0
-[1.2.1]: https://example.internal/windiag/compare/v1.2.0...v1.2.1
-[1.2.0]: https://example.internal/windiag/compare/v1.1.0...v1.2.0
-[1.1.0]: https://example.internal/windiag/compare/v1.0.0...v1.1.0
-[1.0.0]: https://example.internal/windiag/compare/v0.8.0...v1.0.0
-[0.8.0]: https://example.internal/windiag/compare/v0.7.0...v0.8.0
-[0.7.0]: https://example.internal/windiag/compare/v0.6.0...v0.7.0
-[0.6.0]: https://example.internal/windiag/compare/v0.5.0...v0.6.0
-[0.5.0]: https://example.internal/windiag/compare/v0.4.0...v0.5.0
-[0.4.0]: https://example.internal/windiag/compare/v0.3.0...v0.4.0
-[0.3.0]: https://example.internal/windiag/compare/v0.2.0...v0.3.0
-[0.2.0]: https://example.internal/windiag/compare/v0.1.0...v0.2.0
-[0.1.0]: https://example.internal/windiag/releases/tag/v0.1.0
+[Unreleased]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.3.0...v2.0.0
+[1.3.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.8.0...v1.0.0
+[0.8.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/shubhamyadav8901/sysdiag-mcp/releases/tag/v0.1.0

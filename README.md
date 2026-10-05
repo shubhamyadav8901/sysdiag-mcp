@@ -14,9 +14,7 @@ of them behind one MCP registration. Most of this README is about WinDiag, the W
 **[Changelog](CHANGELOG.md)** · **[Contributing](CONTRIBUTING.md)** · **[Security](SECURITY.md)** ·
 **[Code of conduct](CODE_OF_CONDUCT.md)**
 
-> **Licence:** not yet declared. Until a `LICENSE` file lands, treat this as
-> © 2026 Shubham Yadav, all rights reserved — no permission to use, copy or redistribute is granted by its
-> presence here.
+> **Licence:** [MIT](LICENSE).
 
 ## Status
 
