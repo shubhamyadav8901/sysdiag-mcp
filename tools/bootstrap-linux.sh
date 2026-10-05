@@ -96,4 +96,4 @@ remote="trap 'rm -f ~/LinuxDiag.Mcp ~/.linuxdiag-token' EXIT; trap 'exit 1' HUP 
 echo "==> installing on $target ($grants grants)"
 ssh ${ssh_opts[@]+"${ssh_opts[@]}"} -t -p "$port" "$user@$target" "$remote" || { rc=$?; remove_leftovers; exit $rc; }
 
-echo "==> done. If a token was generated it was printed above, once: put it in ~/.windiag-targets.json."
+echo "==> done. If a token was generated it was printed above, once: put it in ~/.sysdiag-targets.json."

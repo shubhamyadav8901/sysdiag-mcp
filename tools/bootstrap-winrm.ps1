@@ -29,7 +29,7 @@
     install as somebody else.
 
 .PARAMETER Token
-    Bearer token to pin. Must match what the relay's ~/.windiag-targets.json holds for this machine, or
+    Bearer token to pin. Must match what the relay's ~/.sysdiag-targets.json holds for this machine, or
     the alias connects and then 401s every call.
 
 .EXAMPLE
@@ -207,13 +207,13 @@ try {
         Step 'calling capabilities'
 
         # -Raw and an emptiness check, not an exit code: mcp-call.ps1 reports a refusal to the host and
-        # exits 1, which does not throw here. A token disagreeing with ~/.windiag-targets.json is the
+        # exits 1, which does not throw here. A token disagreeing with ~/.sysdiag-targets.json is the
         # likeliest mistake this step exists to catch, and unchecked it prints its 401 and falls
         # through to the success banner.
         $raw = & "$PSScriptRoot\mcp-call.ps1" -Address "http://${targetIp}:${Port}" -Token $Token -Tool capabilities -Raw
         if (-not $raw) {
             throw ("$Target is listening but refused the token. The service is installed; correct the " +
-                   "token and re-register, or fix ~/.windiag-targets.json to match it.")
+                   "token and re-register, or fix ~/.sysdiag-targets.json to match it.")
         }
         Note ($raw | ConvertFrom-Json).summary
     }

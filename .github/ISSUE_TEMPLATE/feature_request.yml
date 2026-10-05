@@ -1,5 +1,5 @@
 name: Tool or feature request
-description: A question about a live machine that windiag cannot answer yet
+description: A question about a live machine that sysdiag cannot answer yet
 labels: [enhancement]
 body:
   - type: textarea

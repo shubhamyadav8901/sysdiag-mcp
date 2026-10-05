@@ -1,10 +1,15 @@
-# windiag — Windows diagnostics MCP server
+# sysdiag — live-machine diagnostics MCP servers for Windows, Linux and macOS
 
 Answers live-machine debugging questions that a debugger structurally cannot: who has this file
 locked, what is the machine actually doing, why is this access denied, what is set to autostart.
 
 It complements `mcp-windbg`, which owns post-mortem dump analysis. A debugger sees inside one
 process; this server sees the machine.
+
+sysdiag is a set of servers: **WinDiag** (`WinDiag.Mcp`, Windows), **LinuxDiag** and **MacDiag**,
+which serve the same tool set on Linux and macOS, and **DiagRelay**, a local relay that puts any number
+of them behind one MCP registration. Most of this README is about WinDiag, the Windows server; see
+[Linux targets](#linux-targets) and [macOS targets](#macos-targets) for the others.
 
 **[Changelog](CHANGELOG.md)** · **[Contributing](CONTRIBUTING.md)** · **[Security](SECURITY.md)** ·
 **[Code of conduct](CODE_OF_CONDUCT.md)**
@@ -111,11 +116,11 @@ at *at runtime*.
 Register it once:
 
 ```json
-{ "mcpServers": { "windiag": { "type": "stdio",
+{ "mcpServers": { "sysdiag": { "type": "stdio",
     "command": "…/artifacts/diagrelay/DiagRelay.Mcp.exe", "args": [] } } }
 ```
 
-Keep the entry named `windiag`: forwarded tools are named after the registration — `windiag__runner1__capabilities` — not after the executable, so the name is what keeps them stable.
+Keep the entry named `sysdiag`: forwarded tools are named after the registration — `sysdiag__runner1__capabilities` — not after the executable, so the name is what keeps them stable.
 
 On Linux or macOS the command is the `DiagRelay.Mcp` binary — no `.exe` — from a `-r linux-x64` or `-r osx-arm64` publish. A binary downloaded from a release artifact arrives without its execute bit, so `chmod +x DiagRelay.Mcp` before registering it.
 
@@ -138,7 +143,7 @@ and so on, and calls route by that prefix.
 **Pre-connecting at launch.** Some MCP clients (Claude Code among them) fix the callable tool set when
 they first enumerate the server, so a target you `connect` mid-session isn't picked up until a reload —
 and a reload restarts the relay and drops the connection. To make a target's tools available from the
-start, list it in `%USERPROFILE%\.windiag-targets.json` and the relay connects it *before* it answers,
+start, list it in `%USERPROFILE%\.sysdiag-targets.json` and the relay connects it *before* it answers,
 putting its `alias__tool` tools in the very first `tools/list`:
 
 ```json
@@ -157,12 +162,12 @@ logged to stderr.
 The file holds bearer tokens in plaintext, so the relay **restricts it to your account** on every write —
 inheritance off, SYSTEM and local administrators removed. Because every session runs its own relay
 against this one file, reads and writes take a named cross-process lock and each write lands atomically
-through a temporary file, keeping the previous contents as `.windiag-targets.json.bak`. That backup is
+through a temporary file, keeping the previous contents as `.sysdiag-targets.json.bak`. That backup is
 what a corrupted file is recovered from; an empty one (what a relay killed mid-write leaves behind) is
 treated as "no targets" rather than an error, so persistence heals itself instead of wedging.
 
 You rarely edit it by hand: a successful `connect` **writes the target (with its token) into this file**
-by default, so the naive fix — reconnect `windiag` or start a fresh session — actually works, because
+by default, so the naive fix — reconnect `sysdiag` or start a fresh session — actually works, because
 the relaunch pre-connects what the last `connect` saved. (A plain reconnect *without* that would drop a
 runtime connection and surface only the control tools — which is the trap to avoid.) Pass
 `persist: false` for a one-off connection you do not want written to disk; `disconnect` is session-only
@@ -205,7 +210,7 @@ because an unverified copy is a different artifact from a verified one.
 
 **These are the first thing the relay does that touches local disk**, so the local side is confined the
 way the target side already confines `put_file` and `get_file` — reusing `FileScope`, not a second copy
-of it. `WINDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of the
+of it. `SYSDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of the
 build tree the relay sits in plus the local artifact directory; a `..` is judged by where it lands.
 
 That first default is the directory *above* the relay executable's own, which is what makes
@@ -365,7 +370,7 @@ The unit is deliberately **not** sandboxed (no `ProtectSystem` and similar): a d
 see every process's `/proc`, and a sandbox would silently hide exactly what it is asked about.
 `--uninstall-service` and `--service-status` do what they say; `LinuxDiag.Mcp --help` lists every switch.
 
-Add it to the relay's `~/.windiag-targets.json` like any target:
+Add it to the relay's `~/.sysdiag-targets.json` like any target:
 
 ```json
 { "as": "build-01", "target": "build-01", "token": "…" }
@@ -444,7 +449,7 @@ That installs:
 
 | Path | What |
 |---|---|
-| `/Library/PrivilegedHelperTools/com.windiag.macdiag/MacDiag.Mcp` | the binary |
+| `/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp` | the binary |
 | `/etc/macdiag/<label>.env` | root-owned `0600`: the token, bind address and grants, read with `--env-file`; one file per label |
 | `/var/db/macdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, so `/tmp` is refused |
 | `/var/log/macdiag` | `0700`: `macdiag.log` (rolled at 10 MiB) and `crash.log` (what the runtime writes before logging starts) |
@@ -475,7 +480,7 @@ System Settings → Privacy & Security → Full Disk Access by adding the binary
 code signature, so an ad-hoc build loses it whenever the binary changes. A Developer ID signature, or an
 MDM privacy profile, keeps it across updates.
 
-Add it to the relay's `~/.windiag-targets.json` like any target:
+Add it to the relay's `~/.sysdiag-targets.json` like any target:
 
 ```json
 { "as": "mac-01", "target": "mac-01.local", "token": "…" }
@@ -762,7 +767,7 @@ $c = Get-Credential
 .\tools\bootstrap-winrm.ps1 -Target host.example.com -Token $token -Grants All -Bind 'http://0.0.0.0:4024'
 ```
 
-Adding a target to the relay's `~/.windiag-targets.json` does **not** deploy or start anything; it
+Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
 addresses in that file** for the same reason as the bind: a DHCP lease that moves breaks every entry
 pinned to an address.
@@ -891,7 +896,7 @@ same meanings, except:
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
-| `WINDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus a per-user `windiag` folder: `%TEMP%\windiag` on Windows, `$XDG_CACHE_HOME/windiag` or `~/.cache/windiag` elsewhere — never the shared `/tmp` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/diagrelay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
+| `SYSDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/diagrelay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
 silently defaulting, because the flag removes capability.

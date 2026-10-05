@@ -1,4 +1,4 @@
-# Editor settings for windiag. The build runs with -warnaserror, so anything here that maps to a
+# Editor settings for sysdiag. The build runs with -warnaserror, so anything here that maps to a
 # compiler or analyzer diagnostic is enforced rather than advisory.
 root = true
 

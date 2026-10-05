@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Calls a tool on a windiag server over HTTP and prints the result.
+    Calls a tool on a sysdiag server (WinDiag, LinuxDiag or MacDiag) over HTTP and prints the result.
 
 .DESCRIPTION
-    A minimal MCP client for driving a windiag server running on another machine, the way cdb drives
+    A minimal MCP client for driving a sysdiag server running on another machine, the way cdb drives
     dbgsrv. Handles the initialize handshake, the session header and the server-sent-event framing, so
     a caller can just name a tool and pass arguments.
 
@@ -14,7 +14,7 @@
     Base URL of the target server, e.g. http://10.0.0.5:7777
 
 .PARAMETER Token
-    Bearer token. Printed by the server at startup when WINDIAG_TOKEN is not set.
+    Bearer token. Printed by the server at startup when its token variable (WINDIAG_TOKEN, LINUXDIAG_TOKEN or MACDIAG_TOKEN) is not set.
 
 .PARAMETER Tool
     Tool name. Omit to list the available tools.
@@ -149,7 +149,7 @@ if ($Raw) {
     Write-Output ($result.structuredContent | ConvertTo-Json -Depth 12)
 }
 else {
-    # Every windiag tool returns a rendered summary alongside its structured content.
+    # Every sysdiag tool returns a rendered summary alongside its structured content.
     $summary = $result.structuredContent.summary
     if ($summary) { Write-Output $summary }
     else { Write-Output ($result.structuredContent | ConvertTo-Json -Depth 12) }

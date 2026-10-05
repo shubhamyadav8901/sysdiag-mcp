@@ -6,7 +6,7 @@ namespace Diag.Mcp.Server.Tests;
 
 /// <summary>
 /// Reading a file back off the host. The scope boundary is the security-critical part and is the same
-/// one the write side is held to: a read lands freely only inside a windiag-owned directory, and
+/// one the write side is held to: a read lands freely only inside a server-owned directory, and
 /// anywhere else needs the arbitrary-read grant.
 /// </summary>
 public sealed class FileSenderTests : IDisposable

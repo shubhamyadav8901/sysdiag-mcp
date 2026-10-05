@@ -1,9 +1,9 @@
 ---
-name: windiag-target
-description: Use when standing up, updating, or recovering a windiag target machine — "set up windiag on <host>", "add this VM to windiag", "deploy the latest build to <host>", "the target is down / not answering / refusing the token", "register windiag as a service", "give me read-only access to that box", "runner1 is unreachable". Covers choosing a transport from what the target actually answers on, choosing grants, first install, later updates via update_self, and the failures that look like something else. Do NOT read src/ to answer a configuration question — `--help` and the README are authoritative.
+name: sysdiag-target
+description: Use when standing up, updating, or recovering a sysdiag target machine (WinDiag, LinuxDiag or MacDiag) — "set up windiag on <host>", "add this VM to windiag", "deploy the latest build to <host>", "the target is down / not answering / refusing the token", "register windiag as a service", "give me read-only access to that box", "runner1 is unreachable". Covers choosing a transport from what the target actually answers on, choosing grants, first install, later updates via update_self, and the failures that look like something else. Do NOT read src/ to answer a configuration question — `--help` and the README are authoritative.
 ---
 
-# Setting up and recovering a windiag target
+# Setting up and recovering a sysdiag target
 
 ## First, never skip this
 
@@ -11,7 +11,7 @@ description: Use when standing up, updating, or recovering a windiag target mach
 `WINDIAG_*` variable, both bootstrap routes, and the `-Grants` presets. **Reading `src/` to find out
 what a flag is called is a bug in the docs — fix the doc rather than working around it.**
 
-Adding an entry to `~/.windiag-targets.json` deploys nothing. It only tells the relay where to
+Adding an entry to `~/.sysdiag-targets.json` deploys nothing. It only tells the relay where to
 connect to a server that is *already listening*. A new machine always needs a bootstrap first.
 
 ## 1. Ask the target what it answers on

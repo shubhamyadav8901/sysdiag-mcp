@@ -1,6 +1,6 @@
-# Contributing to windiag
+# Contributing to sysdiag
 
-windiag answers questions about a live machine, usually an elevated one, often somebody else's. That
+sysdiag answers questions about a live machine, usually an elevated one, often somebody else's. That
 shapes the rules below more than any style preference does: a wrong answer here is worse than no
 answer, because the caller acts on it.
 
@@ -86,7 +86,7 @@ and assembly versions are derived from it — move the `Unreleased` entries into
 tag:
 
 ```
-git tag -a v1.4.0 -m "windiag v1.4.0" -m "<the changelog section>"
+git tag -a v1.4.0 -m "sysdiag v1.4.0" -m "<the changelog section>"
 ```
 
 MAJOR is for a change that breaks a caller — a tool removed, a result field's meaning changed, a

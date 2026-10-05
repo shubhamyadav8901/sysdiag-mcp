@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Proves a relay build works end to end before any MCP registration is pointed at it. The relay
-    pre-connects ~/.windiag-targets.json, so the forwarded tool named by -Tool must appear in tools/list
+    pre-connects ~/.sysdiag-targets.json, so the forwarded tool named by -Tool must appear in tools/list
     and answer. A registration swapped to an untested binary is only discovered broken after a session
     restart, with the old relay already gone.
 
@@ -99,7 +99,7 @@ try {
     $call = Receive 3 "tools/call $Tool"
     if ($call.result.isError) { throw "$Tool returned an error: $($call.result.content[0].text)" }
 
-    # Every windiag tool carries a rendered summary, but a forwarded result arrives with the whole
+    # Every sysdiag tool carries a rendered summary, but a forwarded result arrives with the whole
     # structured object serialised into one line of text; printing that line put a page of JSON where
     # one sentence was meant. Prefer the summary, from structured content or from that serialised text.
     $text = $call.result.content[0].text

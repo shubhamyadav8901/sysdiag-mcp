@@ -1,8 +1,9 @@
-# windiag — working notes for agents
+# sysdiag — working notes for agents
 
-A Windows diagnostics MCP server. One self-contained executable that serves MCP over stdio locally
-or authenticated HTTP on a target machine, plus a separate cross-platform relay, DiagRelay.Mcp, that
-forwards to a fleet of targets.
+A set of live-machine diagnostics MCP servers: WinDiag (Windows), LinuxDiag and MacDiag. Each is one
+self-contained executable that serves MCP over stdio locally or authenticated HTTP on a target machine.
+A separate cross-platform relay, DiagRelay.Mcp, forwards to a fleet of them. "windiag" below means the
+Windows server.
 
 ## Do not read source to answer a configuration question
 
@@ -16,7 +17,7 @@ Every operator-facing knob is documented, and the source is the slowest place to
 | How to reach a machine that has never run windiag | README **Bringing up a machine that has never run windiag**; for Linux and macOS, README **Linux targets** / **macOS targets** |
 | What `MacDiag.Mcp` installs, where, and what makes it refuse to start | README **macOS targets**, and `MacDiag.Mcp --help` |
 | What each `-Grants` preset actually passes | Same section. `None` is `--read-only` alone and **cannot read files** |
-| The `~/.windiag-targets.json` shape | README, under the relay |
+| The `~/.sysdiag-targets.json` shape | README, under the relay |
 | What a tool can and cannot do on a given machine | Call `capabilities` on it — it names the missing binary or the lost privilege |
 
 If any of those is wrong or missing, **fix the doc in the same change**. A fact that exists only in a

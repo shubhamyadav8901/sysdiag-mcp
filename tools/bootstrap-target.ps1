@@ -27,7 +27,7 @@
     An administrator ON THE TARGET. Prompted for if omitted. Never written to disk.
 
 .PARAMETER Token
-    Bearer token to pin. Must match what the relay's ~/.windiag-targets.json holds for this machine,
+    Bearer token to pin. Must match what the relay's ~/.sysdiag-targets.json holds for this machine,
     or the alias connects and then fails every call with a 401. Generated if omitted, and printed
     once -- at which point you must put it in that file yourself.
 
@@ -238,7 +238,7 @@ try {
         Step "calling capabilities"
 
         # -Raw and an emptiness check, not an exit code: mcp-call.ps1 reports a refusal to the host and
-        # exits 1, which does not throw here. A token that disagrees with ~/.windiag-targets.json is
+        # exits 1, which does not throw here. A token that disagrees with ~/.sysdiag-targets.json is
         # the single most likely mistake this step exists to catch, and without the check it printed
         # its 401 and fell straight through to the success banner below.
         $raw = & "$PSScriptRoot\mcp-call.ps1" -Address "http://${targetIp}:${Port}" -Token $Token `
@@ -246,13 +246,13 @@ try {
         if (-not $raw) {
             throw ("$targetIp is listening but refused the token (its reason is printed above). The " +
                    "service is installed; correct the token and re-register, or fix " +
-                   "~/.windiag-targets.json to match what was registered.")
+                   "~/.sysdiag-targets.json to match what was registered.")
         }
 
         Write-Host "    $(($raw | ConvertFrom-Json).summary)"
     } else {
         Warn "no -Token given, so the installer generated one and printed it above."
-        Warn "put it in ~/.windiag-targets.json for this machine, or the relay alias will 401."
+        Warn "put it in ~/.sysdiag-targets.json for this machine, or the relay alias will 401."
     }
 
     Write-Host ""

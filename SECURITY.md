@@ -20,10 +20,10 @@ alive.
 
 ## What this software is
 
-Read this before deciding whether something is a vulnerability, because windiag's normal behaviour
+Read this before deciding whether something is a vulnerability, because sysdiag's normal behaviour
 looks alarming out of context.
 
-windiag is a diagnostics server that **runs elevated by design** and exposes tools that read process
+sysdiag is a set of diagnostics servers that **run elevated by design** and expose tools that read process
 memory, handles, the registry, ACLs and file contents. Two tools are gated behind their own flags
 because they are far more than diagnostics:
 
@@ -40,7 +40,7 @@ intended, documented, and the reason both are off unless a deployment explicitly
 The server runs elevated, so a local unprivileged user is inside the threat model too. Things that
 follow from that, and which are deliberate rather than oversights:
 
-- **The token is read from the environment only, never a command-line argument.** windiag's own
+- **The token is read from the environment only, never a command-line argument.** each server's own
   `process_list` shows command lines to every local user on the machine; a token passed as an
   argument would be readable by the people it is meant to exclude.
 - **As a service, the token belongs in the service's own registry `Environment` value**, which is
@@ -48,7 +48,7 @@ follow from that, and which are deliberate rather than oversights:
   user and is *not* an acceptable substitute.
 - **There is no default bind address.** `--http` with nothing to bind to is refused rather than
   quietly listening on `0.0.0.0`.
-- **File access is confined** to directories windiag owns, on both the read and write sides, through
+- **File access is confined** to directories the server owns, on both the read and write sides, through
   one shared check rather than two copies. Widening it is opt-in
   (`WINDIAG_ALLOW_ARBITRARY_WRITE`, `WINDIAG_ALLOW_ARBITRARY_READ`) because reading anywhere the
   elevated account can reach is exfiltration.
@@ -61,7 +61,7 @@ follow from that, and which are deliberate rather than oversights:
 Stated plainly because everything else in this file is about protecting the token, and this is the
 one place that protection stops.
 
-windiag serves **plaintext HTTP. There is no TLS support.** Consequences, all of them intended in a
+sysdiag serves **plaintext HTTP. There is no TLS support.** Consequences, all of them intended in a
 trusted-segment deployment and all of them dangerous outside one:
 
 - The bearer token is sent in an `Authorization` header on every single call. A passive observer on
@@ -77,13 +77,13 @@ trusted-segment deployment and all of them dangerous outside one:
 
 **What that requires of a deployment.** Run it on a management network you already trust, scoped to
 one address, and do not route it across an untrusted one. Where confidentiality on the wire is
-needed, put windiag behind a tunnel — WireGuard, an SSH forward, an mTLS reverse proxy — rather than
+needed, put sysdiag behind a tunnel — WireGuard, an SSH forward, an mTLS reverse proxy — rather than
 treating the scoped port as sufficient.
 
 Two adjacent paths *are* encrypted, which is easy to confuse with the above: WinRM on 5985 looks like
 plaintext HTTP but Negotiate/Kerberos encrypts the payload at the message level, so
 `tools/bootstrap-winrm.ps1` transfers are protected; SMB staging is authenticated and signed, with
-encryption depending on the target's SMB configuration. Neither changes the windiag channel itself.
+encryption depending on the target's SMB configuration. Neither changes the sysdiag channel itself.
 
 ## What we would consider a vulnerability
 
@@ -102,7 +102,7 @@ encryption depending on the target's SMB configuration. Neither changes the wind
   is the feature.
 - That an elevated server can read privileged data. That is the point of it.
 - Anything requiring administrator rights on the host to set up — an attacker who is already
-  administrator does not need windiag.
+  administrator does not need sysdiag.
 - That the channel is unencrypted, on its own. It is documented above and it is a real limitation, not
   an oversight — so it needs no report, and a report of it will be closed as known. What we *do* want
   is anything that makes it worse than stated: a token reaching a log, a crash dump, an error

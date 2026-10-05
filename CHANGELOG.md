@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to windiag are recorded here.
+All notable changes to sysdiag are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions before `v1.0.0` were tagged
@@ -12,6 +12,21 @@ changed. Entries therefore say what a caller now sees, not only what moved in th
 release fixed something that had been silently wrong, it says what the wrong answer looked like.
 
 ## [Unreleased]
+
+### Breaking
+
+- The project is now **sysdiag**: WinDiag, LinuxDiag and MacDiag servers and the DiagRelay relay. The
+  Windows server keeps its WinDiag names, `WINDIAG_*` variables and paths.
+- The relay's targets file is `~/.sysdiag-targets.json` (was `~/.windiag-targets.json`). Rename the file;
+  the old name is not read.
+- The relay's file-root variable is `SYSDIAG_RELAY_FILE_ROOT` (was `WINDIAG_RELAY_FILE_ROOT`), and its
+  per-user folder is `sysdiag` (was `windiag`). The old variable is not read.
+- The relay reports itself as `sysdiag-relay`, and the suggested Claude Code registration name is
+  `sysdiag`, so forwarded tools appear as `mcp__sysdiag__<alias>__<tool>`. Re-key the `mcpServers`
+  entry in your client config.
+- MacDiag's default launchd label and install folder are `com.sysdiag.macdiag` (was `com.windiag.macdiag`).
+- `put_file` and `get_file` report `scope` `"Owned"` (was `"WinDiag"`) for a path inside the server's
+  own directories, on every server.
 
 ### Added
 

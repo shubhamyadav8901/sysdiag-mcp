@@ -20,7 +20,7 @@
     SSH private key to use instead of ssh's default identity.
 
 .PARAMETER Token
-    Bearer token to pin. Must match what the relay's ~/.windiag-targets.json holds for this host. Generated
+    Bearer token to pin. Must match what the relay's ~/.sysdiag-targets.json holds for this host. Generated
     if omitted, and printed once -- at which point you must put it in that file yourself.
 
 .PARAMETER Grants
@@ -101,4 +101,4 @@ Write-Host "==> installing on $Target ($Grants grants)"
 try { Invoke-Native { ssh @identity -t -p $SshPort $remote $command } }
 catch { Remove-Leftovers; throw }
 
-Write-Host "==> done. If a token was generated it was printed above, once: put it in ~/.windiag-targets.json."
+Write-Host "==> done. If a token was generated it was printed above, once: put it in ~/.sysdiag-targets.json."
