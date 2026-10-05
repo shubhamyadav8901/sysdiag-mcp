@@ -42,6 +42,7 @@ public sealed class NotRegularFileException : IOException, IDiagnosticException
 public sealed class ErrnoException : Exception, IDiagnosticException
 {
     public const int EPERM = 1;
+    public const int ENOENT = 2;
     public const int ESRCH = 3;
     public const int EINVAL = 22;
     public const int ENOSYS = 38;

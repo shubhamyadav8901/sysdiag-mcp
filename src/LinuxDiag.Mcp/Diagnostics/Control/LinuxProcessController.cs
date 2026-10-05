@@ -269,12 +269,15 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
         }
         catch (ErrnoException ex)
         {
+            // A thread's ID is refused with EINVAL by older kernels and ENOENT by newer ones (measured on 7.0), so the errno
+            // alone does not say which it was: /proc does.
             throw ex.Errno switch
             {
-                ErrnoException.ESRCH => new ProcessControlException($"No process with PID {processId} is running. Nothing has been done."),
-                ErrnoException.EINVAL => new ProcessControlException(
+                ErrnoException.EINVAL or ErrnoException.ENOENT when IsThreadOfAnotherProcess(processId) => new ProcessControlException(
                     $"PID {processId} is a thread of another process, not a process. Pass the process's PID - the Tgid " +
                     $"line of /proc/{processId}/status. Nothing has been done."),
+                ErrnoException.ESRCH or ErrnoException.ENOENT =>
+                    new ProcessControlException($"No process with PID {processId} is running. Nothing has been done."),
                 ErrnoException.EPERM => new ProcessControlException(
                     $"The kernel refused to open PID {processId} (EPERM): a seccomp filter or container profile blocks " +
                     "pidfd_open for this server, so it cannot signal safely here. Nothing has been done."),
@@ -283,6 +286,22 @@ public sealed partial class LinuxProcessController(ILogger<LinuxProcessControlle
                     "without the risk of hitting a reused PID. Nothing has been done."),
                 _ => new ProcessControlException($"Could not open PID {processId}: {ex.Message}. Nothing has been done.", ex),
             };
+        }
+    }
+
+    /// <summary>Whether <paramref name="id"/> names a thread whose thread group is led by another ID.</summary>
+    internal static bool IsThreadOfAnotherProcess(int id)
+    {
+        try
+        {
+            var tgid = File.ReadLines(ProcFiles.Of(id, "status"))
+                .FirstOrDefault(l => l.StartsWith("Tgid:", StringComparison.Ordinal))?["Tgid:".Length..].Trim();
+            return int.TryParse(tgid, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var leader)
+                && leader != id;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 
