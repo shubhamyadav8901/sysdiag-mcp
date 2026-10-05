@@ -73,6 +73,32 @@ public sealed class SignatureTests
     }
 
     [Fact]
+    public void A_platform_binary_on_macos_26_whose_leaf_is_macos_software_signing_is_signed_by_apple()
+    {
+        // codesign -dvvv /bin/ls on macOS 26.6.2 (25G83), trimmed to the lines the parser reads.
+        var details = CodesignDisplay.Details("""
+            Executable=/bin/ls
+            Identifier=com.apple.ls
+            Format=Mach-O universal (x86_64 arm64e)
+            CodeDirectory v=20400 size=325 flags=0x0(none) hashes=5+2 location=embedded
+            Platform identifier=26
+            Authority=macOS Software Signing
+            Authority=Apple Code Signing Certification Authority
+            Authority=Apple Root CA
+            TeamIdentifier=not set
+            """);
+
+        Assert.True(details.SignedByApple);
+        Assert.Equal(["macOS Software Signing", "Apple Code Signing Certification Authority", "Apple Root CA"], details.Authorities);
+    }
+
+    [Fact]
+    public void A_developer_id_leaf_is_not_signed_by_apple()
+    {
+        Assert.False(CodesignDisplay.Details(Fixture(Unverified, "codesign-dvvv-devid")).SignedByApple);
+    }
+
+    [Fact]
     public void An_ad_hoc_signature_has_no_authority_and_its_adhoc_flag_is_not_read_as_hardened_runtime()
     {
         var details = CodesignDisplay.Details(Fixture(Unverified, "codesign-dvvv-adhoc"));

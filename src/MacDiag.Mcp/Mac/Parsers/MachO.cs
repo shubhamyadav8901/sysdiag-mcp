@@ -192,7 +192,14 @@ public static class CodesignDisplay
 public sealed record CodesignDetails(string? Identifier, string? TeamId, IReadOnlyList<string> Authorities, bool AdHoc, bool HardenedRuntime)
 {
     /// <summary>The leaf certificate of Apple's own platform binaries; Developer ID and App Store chains also end in Apple Root CA.</summary>
-    public bool SignedByApple => Authorities.Count > 0 && Authorities[0] == "Software Signing";
+    /// <remarks>
+    /// macOS 26 renamed the leaf from "Software Signing" to "macOS Software Signing" (measured on 26.6.2, /bin/ls), so
+    /// matching the documented name alone reported every platform binary as signed by an unknown authority. Both are
+    /// exact names: a Developer ID leaf always begins "Developer ID", so neither can be claimed by a third party.
+    /// </remarks>
+    public bool SignedByApple => Authorities.Count > 0 && AppleLeaves.Contains(Authorities[0]);
+
+    private static readonly HashSet<string> AppleLeaves = new(StringComparer.Ordinal) { "Software Signing", "macOS Software Signing" };
 }
 
 /// <summary>pkgutil --file-info: the first receipt that names the file.</summary>

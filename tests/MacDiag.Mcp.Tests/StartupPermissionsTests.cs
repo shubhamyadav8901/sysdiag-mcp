@@ -99,7 +99,10 @@ public sealed class StartupPermissionsTests
     {
         // /etc is a link to private/etc on macOS: checking only the spelled chain would examine the link and never
         // the directory the file is really in.
-        var root = Directory.CreateTempSubdirectory("perm-").FullName;
+        // The temp directory is itself behind a link on a Mac (/var/folders is /private/var/folders), so the expected
+        // path starts from its resolved spelling; only the link this test makes is then left for RealPath to follow.
+        var created = Directory.CreateTempSubdirectory("perm-").FullName;
+        var root = RealPath(created);
         try
         {
             var real = Directory.CreateDirectory(Path.Combine(root, "private", "etc")).FullName;
