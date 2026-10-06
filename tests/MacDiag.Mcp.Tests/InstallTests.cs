@@ -167,28 +167,64 @@ public sealed class InstallTests
         Assert.Contains("<string>/etc/macdiag/com.sysdiag.macdiag-2.env</string>", b.Plist("/x/MacDiag.Mcp"), StringComparison.Ordinal);
     }
 
+    /// <summary>The chain above /var/db/macdiag on a Mac, every directory root's and not writable by anyone else.</summary>
+    private static readonly StartupPermissions.StatEntry[] RootOnlyAncestors =
+    [
+        new("/", 0, 0b111_101_101, StartupPermissions.EntryKind.Directory),
+        new("/some", 0, 0b111_101_101, StartupPermissions.EntryKind.Directory),
+    ];
+
     [Theory]
-    [InlineData(false, 0, 0, StartupPermissions.EntryKind.Directory, null)]          // created by the installer
-    [InlineData(true, 0, 0b111_000_000, StartupPermissions.EntryKind.Directory, null)]
-    [InlineData(true, 0, 0b111_101_101, StartupPermissions.EntryKind.Directory, null)]
-    [InlineData(true, 0, 0b1_111_111_111, StartupPermissions.EntryKind.Directory, "sticky")]  // /tmp
-    [InlineData(true, 0, 0b111_111_101, StartupPermissions.EntryKind.Directory, "group")]
-    [InlineData(true, 501, 0b111_000_000, StartupPermissions.EntryKind.Directory, "uid 501")]  // /Users/someone
-    [InlineData(true, 0, 0b110_100_100, StartupPermissions.EntryKind.File, "not a directory")]
+    [InlineData(0, 0b111_000_000, StartupPermissions.EntryKind.Directory, null)]
+    [InlineData(0, 0b111_101_101, StartupPermissions.EntryKind.Directory, null)]
+    [InlineData(0, 0b1_111_111_111, StartupPermissions.EntryKind.Directory, "sticky")]  // /tmp
+    [InlineData(0, 0b111_111_101, StartupPermissions.EntryKind.Directory, "group")]
+    [InlineData(501, 0b111_000_000, StartupPermissions.EntryKind.Directory, "uid 501")]  // /Users/someone
+    [InlineData(0, 0b110_100_100, StartupPermissions.EntryKind.File, "not a directory")]
     public void An_existing_artifact_directory_is_used_only_if_root_alone_controls_it_and_is_never_rechmodded(
-        bool existed, int uid, int mode, StartupPermissions.EntryKind kind, string? problem)
+        int uid, int mode, StartupPermissions.EntryKind kind, string? problem)
     {
         // --artifacts /tmp once chmodded /private/tmp to 0700, breaking every other account on the Mac.
-        var found = MacServiceInstaller.ArtifactDirectoryProblem(existed, new StartupPermissions.StatEntry("/some/dir", uid, mode, kind));
+        var found = StartupPermissions.RootOnlyDirectoryProblems([.. RootOnlyAncestors, new("/some/dir", uid, mode, kind)], "/some/dir");
 
         if (problem is null)
         {
-            Assert.Null(found);
+            Assert.Empty(found);
         }
         else
         {
-            Assert.Contains(problem, found, StringComparison.Ordinal);
+            Assert.Contains(found, f => f.Contains(problem, StringComparison.Ordinal));
         }
+    }
+
+    [Fact]
+    public void An_artifact_directory_root_owns_inside_a_directory_another_account_owns_is_refused()
+    {
+        // Before: /Users/alice/diag, root's and 0700, passed. alice can rename it away and put her own directory or a link
+        // in its place, and from then on root runs the self-update.sh and truncates the self-update.log she chooses.
+        var found = StartupPermissions.RootOnlyDirectoryProblems(
+        [
+            new("/", 0, 0b111_101_101, StartupPermissions.EntryKind.Directory),
+            new("/Users", 0, 0b111_101_101, StartupPermissions.EntryKind.Directory),
+            new("/Users/alice", 501, 0b111_000_000, StartupPermissions.EntryKind.Directory),
+            new("/Users/alice/diag", 0, 0b111_000_000, StartupPermissions.EntryKind.Directory),
+        ], "/Users/alice/diag");
+
+        Assert.Equal(["/Users/alice is owned by uid 501, not root."], found);
+    }
+
+    [Fact]
+    public void An_artifact_directory_under_a_directory_its_group_can_write_is_refused()
+    {
+        var found = StartupPermissions.RootOnlyDirectoryProblems(
+        [
+            new("/", 0, 0b111_101_101, StartupPermissions.EntryKind.Directory),
+            new("/usr", 0, 0b111_101_101, StartupPermissions.EntryKind.Directory),
+            new("/usr/local", 0, 0b111_111_101, StartupPermissions.EntryKind.Directory),
+            new("/usr/local/diag", 0, 0b111_000_000, StartupPermissions.EntryKind.Directory),
+        ], "/usr/local/diag");
+
+        Assert.Equal(["/usr/local is writable by its group or by everyone (mode 0775)."], found);
     }
 
     [Theory]

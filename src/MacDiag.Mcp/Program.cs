@@ -68,6 +68,13 @@ try
 
     options = MacDiagOptions.FromEnvironment(environment);
     bind = HttpBind.Resolve(args, options.HttpBind, "MACDIAG_HTTP_BIND");
+
+    // Root writes self-update.sh into the artifact directory and runs it, so one another account could swap is code
+    // execution as root. Checked here as well as at install: an env file edited by hand never went through the installer.
+    if (Environment.IsPrivilegedProcess)
+    {
+        RequireArtifactDirectory(options.ArtifactDirectory);
+    }
 }
 catch (ConfigurationException ex)
 {
@@ -93,6 +100,18 @@ static IReadOnlyDictionary<string, string> ReadEnvFile(string path)
     catch (Exception ex) when (ex is ExternalCommandException or IOException or UnauthorizedAccessException or FormatException)
     {
         throw new ConfigurationException($"Could not read the settings file '{path}': {ex.Message}");
+    }
+}
+
+static void RequireArtifactDirectory(string path)
+{
+    try
+    {
+        StartupPermissions.RequireRootOnlyDirectory(path, "MACDIAG_ARTIFACT_DIR");
+    }
+    catch (Exception ex) when (ex is ExternalCommandException or IOException or UnauthorizedAccessException)
+    {
+        throw new ConfigurationException($"Could not check the artifact directory '{path}': {ex.Message}");
     }
 }
 

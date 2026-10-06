@@ -476,7 +476,7 @@ That installs:
 |---|---|
 | `/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp` | the binary |
 | `/etc/macdiag/<label>.env` | root-owned `0600`: the token, bind address and grants, read with `--env-file`; one file per label |
-| `/var/db/macdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, so `/tmp` is refused |
+| `/var/db/macdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused, at install and when a root server starts, unless root alone controls it and every directory above it, so `/tmp` and anything under a home directory are refused |
 | `/var/log/macdiag` | `0700`: `macdiag.log` (rolled at 10 MiB) and `crash.log` (what the runtime writes before logging starts) |
 | `/Library/LaunchDaemons/<label>.plist` | `KeepAlive` on a failed exit only, `AbandonProcessGroup`, `ProcessType Standard`, `ExitTimeOut` 20 s |
 

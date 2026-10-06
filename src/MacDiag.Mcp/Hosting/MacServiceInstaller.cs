@@ -44,7 +44,7 @@ public static partial class MacServiceInstaller
 
         OwnedDirectory(SettingsDirectory, OwnerOnlyDirectory);
         WriteFresh(options.EnvironmentFilePath, options.EnvironmentFile(), OwnerOnlyFile);
-        ArtifactDirectory(options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory);
+        ArtifactDirectory(options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory, chosen: options.ArtifactDirectory is not null);
         OwnedDirectory(LogDirectory, OwnerOnlyDirectory);
 
         // The same check the server makes at startup, made now, so a bad tree is reported here and not as a
@@ -176,29 +176,6 @@ public static partial class MacServiceInstaller
             .OfType<int>()
             .ToList();
 
-    /// <summary>Why an artifact directory cannot be used, or null. One the installer just created is always fine.</summary>
-    /// <remarks>
-    /// An existing directory is used as it is, never chmodded: --artifacts /tmp once made /private/tmp 0700 and
-    /// broke every other account on the Mac. It must already be root's alone, because put_file writes there freely
-    /// and a root daemon then reads back what it finds.
-    /// </remarks>
-    internal static string? ArtifactDirectoryProblem(bool existed, StartupPermissions.StatEntry entry)
-    {
-        ArgumentNullException.ThrowIfNull(entry);
-        if (!existed)
-        {
-            return null;
-        }
-
-        const int Sticky = 0b1_000_000_000;
-        const int GroupOrOtherWrite = 0b000_010_010;
-        return entry.Kind != StartupPermissions.EntryKind.Directory ? $"{entry.Path} is not a directory."
-            : entry.Uid != 0 ? $"{entry.Path} is owned by uid {entry.Uid}, not root."
-            : (entry.Mode & Sticky) != 0 ? $"{entry.Path} is a shared sticky directory, such as /tmp."
-            : (entry.Mode & GroupOrOtherWrite) != 0 ? $"{entry.Path} is writable by its group or by everyone."
-            : null;
-    }
-
     /// <summary>Where to connect to see the daemon listening: loopback for a wildcard bind.</summary>
     internal static (string Host, int Port) ProbeAddress(string bind)
     {
@@ -301,21 +278,14 @@ public static partial class MacServiceInstaller
         }
     }
 
-    /// <summary>Creates the artifact directory root-only, or uses an existing one root alone controls -- never re-chmodded.</summary>
-    private static void ArtifactDirectory(string path)
+    /// <summary>Uses an existing artifact directory root alone controls, never re-chmodded, or creates one root-only.</summary>
+    /// <remarks>Checked before it is created, by the directories above it: see <see cref="StartupPermissions.RequireRootOnlyDirectory"/>.</remarks>
+    private static void ArtifactDirectory(string path, bool chosen)
     {
-        var existed = Directory.Exists(path) || File.Exists(path);
-        if (!existed)
+        StartupPermissions.RequireRootOnlyDirectory(path, chosen ? "--artifacts" : "The artifact directory");
+        if (!Directory.Exists(path))
         {
             OwnedDirectory(path, OwnerOnlyDirectory);
-            return;
-        }
-
-        var entry = StartupPermissions.Inspect([StartupPermissions.RealPath(path)]).Single();
-        if (ArtifactDirectoryProblem(existed, entry) is { } problem)
-        {
-            throw new ConfigurationException(
-                $"--artifacts {path} cannot be used: {problem} Choose a directory only root can write, or let the installer create one.");
         }
     }
 
