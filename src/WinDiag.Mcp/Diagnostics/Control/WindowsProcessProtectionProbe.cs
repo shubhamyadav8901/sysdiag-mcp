@@ -43,9 +43,11 @@ public sealed class WindowsProcessProtectionProbe : IProcessProtectionProbe
     /// <remarks>
     /// Opens its own handle with the one right IsProcessCritical needs. Process.Handle asks for
     /// PROCESS_ALL_ACCESS, which a protected process -- wininit, csrss, smss and services are all critical and
-    /// all protected -- refuses even to an elevated caller holding SeDebugPrivilege, so the probe failed on
-    /// exactly the processes it is about. The PID is safe to reopen while the caller holds the Process: an open
-    /// handle keeps the PID from being reused.
+    /// all protected -- refuses even to an elevated caller holding SeDebugPrivilege, so the probe could not
+    /// answer on its own for exactly the processes it is about. Through process_control that never showed:
+    /// the controller's Open already takes Process.Handle and refuses whatever it cannot fully open, before
+    /// this is asked. Reopening by PID is safe only because of that: the handle the caller's Open holds keeps
+    /// the PID from being reused. A Process from GetProcessById alone holds no handle and gives no such promise.
     /// </remarks>
     public bool IsCritical(Process process)
     {
