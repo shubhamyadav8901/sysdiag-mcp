@@ -433,7 +433,7 @@ public sealed class BootstrapAclScriptTests
         return (process.ExitCode, $"{stdout.Result} {stderr.Result}");
     }
 
-    private static string ScriptPath()
+    internal static string ScriptPath()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {

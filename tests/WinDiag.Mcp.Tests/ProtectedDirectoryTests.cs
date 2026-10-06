@@ -84,16 +84,57 @@ internal static class PlantedTree
     }
 
     /// <summary>Deletes what a test made, links included, without following them.</summary>
+    /// <remarks>
+    /// Walked here rather than left to <c>Directory.Delete(path, recursive: true)</c>, which on Windows unmounts
+    /// each junction it meets with DeleteVolumeMountPoint before removing it. Windows refuses that for a
+    /// junction that leads to a folder rather than a volume -- "The parameter is incorrect" -- so every test
+    /// that planted one failed in its clean-up on CI's runner, after its assertions had passed. Removing the
+    /// junction as a directory, or a symbolic link as a file, removes the link and never what it leads to.
+    /// </remarks>
     public static void Remove(string path)
     {
+        FileAttributes attributes;
         try
         {
-            Directory.Delete(path, recursive: true);
+            // Read from the item itself: a link's own attributes, not its target's.
+            attributes = File.GetAttributes(path);
         }
-        catch (DirectoryNotFoundException)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
             // Never made: the test failed before it got that far.
+            return;
         }
+
+        if (attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            // A junction or directory symbolic link is removed by RemoveDirectory on Windows; elsewhere every
+            // symbolic link, a directory's included, is unlinked as a file.
+            if (OperatingSystem.IsWindows() && attributes.HasFlag(FileAttributes.Directory))
+            {
+                Directory.Delete(path);
+            }
+            else
+            {
+                File.Delete(path);
+            }
+
+            return;
+        }
+
+        if (!attributes.HasFlag(FileAttributes.Directory))
+        {
+            File.Delete(path);
+            return;
+        }
+
+        // Hidden and system items included: the plain EnumerationOptions skips them, and the directory would
+        // then not be empty. One that cannot be listed says so, rather than reading as empty.
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false }).ToList())
+        {
+            Remove(entry);
+        }
+
+        Directory.Delete(path);
     }
 
     internal static void Cmd(string command)
