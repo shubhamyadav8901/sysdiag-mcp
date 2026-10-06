@@ -698,7 +698,9 @@ Sysinternals binaries it finds beside itself and `self-update.cmd` from the arti
 SYSTEM, and a folder made under `C:\` inherits *Authenticated Users: Modify*. A service repeats the
 check on every start — so a target installed by an older build is fixed by its next `update_self` —
 writes what it changed to the Application event log, and refuses to start from a directory it cannot
-restrict. Keep the executable out of a drive root: `C:\` itself is refused rather than locked down.
+restrict. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
+that also holds files that are not windiag's — a Downloads folder, a drive root — is refused rather
+than locked down under its owner.
 
 ```
 WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?

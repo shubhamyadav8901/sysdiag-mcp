@@ -309,6 +309,25 @@ public sealed record ServiceInstallOptions
             : token;
     }
 
+    // What a directory windiag was deployed into holds: the server and its staged successor, the
+    // Sysinternals tools found beside it, deploy-target's manifest, and bootstrap-target's two files
+    // that exist only while the installer runs.
+    private static readonly string[] ServerDirectoryFiles =
+    [
+        "WinDiag.Mcp*", "handle*.exe", "Procmon*.exe", "autorunsc*.exe", "windiag-staged.json",
+        "install-token.tmp", "install-windiag.cmd"
+    ];
+
+    /// <summary>The names in a server directory that are not windiag's, in the order given.</summary>
+    /// <remarks>
+    /// The installer restricts an exposed server directory to SYSTEM and Administrators -- which, for a
+    /// server run from a Downloads or Desktop folder, would take that folder away from its own user.
+    /// A directory holding anything else is therefore refused rather than restricted.
+    /// </remarks>
+    public static IReadOnlyList<string> ForeignToServerDirectory(IEnumerable<string> names) =>
+        names.Where(name => !ServerDirectoryFiles.Any(
+            pattern => System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true))).ToList();
+
     /// <summary>256 bits of randomness, so nobody is tempted to pick one by hand.</summary>
     public static string GenerateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 

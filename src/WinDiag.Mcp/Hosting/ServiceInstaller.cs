@@ -122,10 +122,12 @@ public static class ServiceInstaller
         // binaries from beside itself and self-update.cmd from the artifact directory, as SYSTEM; under
         // C:\ both directories would otherwise inherit "Authenticated Users: Modify".
         var account = ProtectedAcl.AccountSid(options.Account);
-        ProtectIfExposed("server directory", Path.GetDirectoryName(exe)!, account);
+        ProtectIfExposed("server directory", Path.GetDirectoryName(exe)!, account, ownedByWindiag: true);
         if (!string.IsNullOrWhiteSpace(options.ArtifactDirectory))
         {
-            ProtectIfExposed("artifact directory", options.ArtifactDirectory, account);
+            // Not checked for foreign files: the operator named it for windiag's artifacts, and put_file
+            // writes there under any name a caller chooses.
+            ProtectIfExposed("artifact directory", options.ArtifactDirectory, account, ownedByWindiag: false);
         }
 
         Run("sc.exe", options.CreateArguments(exe), "create the service");
@@ -257,11 +259,27 @@ public static class ServiceInstaller
     /// Conditional, so a server installed from Program Files keeps the ACL Windows gave it rather than
     /// being rewritten to an equivalent one. The drive-root refusal lives in ProtectDirectory.
     /// </remarks>
-    private static void ProtectIfExposed(string what, string path, System.Security.Principal.SecurityIdentifier? account)
+    private static void ProtectIfExposed(
+        string what, string path, System.Security.Principal.SecurityIdentifier? account, bool ownedByWindiag)
     {
-        if (Directory.Exists(path) && ProtectedAcl.DirectoryExposures(path, account).Count == 0)
+        var exposures = Directory.Exists(path) ? ProtectedAcl.DirectoryExposures(path, account) : [];
+        if (Directory.Exists(path) && exposures.Count == 0)
         {
             return;
+        }
+
+        var foreign = ownedByWindiag && Directory.Exists(path)
+            ? ServiceInstallOptions.ForeignToServerDirectory(Directory.EnumerateFileSystemEntries(path).Select(e => Path.GetFileName(e)))
+            : [];
+        if (foreign.Count > 0)
+        {
+            throw new ConfigurationException(
+                $"The {what} {path} can be changed by accounts other than SYSTEM and Administrators "
+                + $"({string.Join("; ", exposures)}), and the service would run what it finds there with its "
+                + "own rights. It also holds files that are not windiag's "
+                + $"({string.Join(", ", foreign.Take(3))}{(foreign.Count > 3 ? ", ..." : string.Empty)}), so it "
+                + @"is not restricted for you: copy WinDiag.Mcp.exe into a directory of its own, such as C:\WinDiag, "
+                + "and install from there. Nothing was installed.");
         }
 
         ProtectedAcl.ProtectDirectory(path, account);

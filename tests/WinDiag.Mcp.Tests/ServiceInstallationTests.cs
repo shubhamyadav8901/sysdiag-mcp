@@ -307,6 +307,23 @@ public sealed class ServiceInstallationTests
     }
 
     [Fact]
+    public void Treats_a_directory_holding_only_windiag_files_as_its_own_and_anything_else_as_somebody_elses()
+    {
+        // The installer restricts the server's directory to SYSTEM and Administrators. Run from the
+        // Downloads folder -- the README does say "run it from any shell" -- that would take the user's
+        // own Downloads away from them, so a directory holding anything else is refused instead.
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
+        [
+            "WinDiag.Mcp.exe", "WinDiag.Mcp.new.exe", "handle64.exe", "Procmon64.exe", "autorunsc64.exe",
+            "handle.exe", "windiag-staged.json", "install-token.tmp", "install-windiag.cmd"
+        ]));
+
+        Assert.Equal(
+            ["holiday.jpg", "setup.msi"],
+            ServiceInstallOptions.ForeignToServerDirectory(["WinDiag.Mcp.exe", "holiday.jpg", "setup.msi"]));
+    }
+
+    [Fact]
     public void Every_install_option_the_parser_accepts_is_documented_in_the_help_text()
     {
         // Now that an unknown option is refused, an accepted one missing from --help is an option nobody
