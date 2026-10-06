@@ -450,6 +450,9 @@ public sealed class WindowsSignatureRatchetTests
             HeldCalls++;
             return HeldFailure is { } failure ? throw failure : Held ?? answer;
         }
+
+        public FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("update_self holds the staged file itself, by path");
     }
 }
 

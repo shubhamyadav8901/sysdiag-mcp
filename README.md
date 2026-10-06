@@ -64,7 +64,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
-| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLLs loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision. Version and signature are read from the file now at the path; a module whose loaded PE header no longer matches that file is flagged as replaced on disk and not verified |
+| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLLs loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision. Version and signature are read from the file the kernel names as behind each mapping, held open while it is read - not from the listed path, which may since hold another file (flagged replaced on disk). A module whose file cannot be identified that way, such as one on a share, is flagged and not verified. The verdict is on that file, not on the code in memory |
 | `named_pipes` | `NtQueryDirectoryFile` + `WaitNamedPipe` | IPC pipes, and whether any has every instance taken and none listening for a client |
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |

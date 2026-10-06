@@ -43,6 +43,9 @@ public sealed class ToolLocatorSignatureTests : IDisposable
 
         public FileSignature InspectHeld(string path, CancellationToken cancellationToken) =>
             throw new NotSupportedException("the tool locator checks a binary by path, never a held file");
+
+        public FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("the tool locator checks a binary by path, never a held file");
     }
 
     [Fact]

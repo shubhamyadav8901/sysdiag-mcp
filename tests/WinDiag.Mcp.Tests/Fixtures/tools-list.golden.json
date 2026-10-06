@@ -1583,7 +1583,7 @@
   {
     "name": "process_modules",
     "title": "DLLs loaded in a process",
-    "description": "List the DLLs a process has actually loaded, with the full path, version and load address of each. Use it when the version on disk and the version in use might differ - a stale copy beside the executable, a shell extension loaded from somewhere unexpected, or an add-in that is not the build you shipped. Version and signature are read from the file now at each module\u0027s path, so each module\u0027s loaded PE header is compared with that file\u0027s: one that no longer matches - renamed away and replaced while loaded, or updated under the running process - is marked [REPLACED ON DISK] and its signature is not checked. Set verifySignatures to check each one\u0027s Authenticode signature, which finds unsigned modules loaded into a signed process; it is not tamper detection against a process that is already compromised, which can rewrite its own module list and headers. That is slower, so it applies only to the modules actually returned - filter by name first if you know what you are looking for. Each module also reports the base address it asked for against the one it got, and flags a module that was built for a fixed address and got moved anyway - a base collision, which costs it its shared pages.",
+    "description": "List the DLLs a process has actually loaded, with the full path, version and load address of each. Use it when the version on disk and the version in use might differ - a stale copy beside the executable, a shell extension loaded from somewhere unexpected, or an add-in that is not the build you shipped. Version and signature are read from the file the kernel says is behind each module\u0027s mapping, held open while it is read, never from the path the process lists for it: a module whose listed path now holds a different file - renamed away and replaced while loaded, or updated under the running process - is marked [REPLACED ON DISK] and still reported from the file it was loaded from. A module whose file cannot be identified that way, such as one loaded from a network share, is marked [FILE NOT IDENTIFIED] and gets no version or signature verdict rather than another file\u0027s. Set verifySignatures to check each one\u0027s Authenticode signature, which finds unsigned modules loaded into a signed process; it is not tamper detection against a process that is already compromised, which can rewrite its own module list and headers, and the verdict is on the file behind each mapping, not on the code in memory, which a process that maps its own images can make differ. That is slower, so it applies only to the modules actually returned - filter by name first if you know what you are looking for. Each module also reports the base address it asked for against the one it got, and flags a module that was built for a fixed address and got moved anyway - a base collision, which costs it its shared pages.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1689,6 +1689,20 @@
                       "null"
                     ],
                     "default": null
+                  },
+                  "imageFilePath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "default": null
+                  },
+                  "imageFileUnknownReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -1723,6 +1737,14 @@
               "default": 0
             },
             "replacedCount": {
+              "type": "integer",
+              "default": 0
+            },
+            "unidentifiedCount": {
+              "type": "integer",
+              "default": 0
+            },
+            "notVerifiedCount": {
               "type": "integer",
               "default": 0
             }

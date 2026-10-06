@@ -96,6 +96,19 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
         return Describe(full, held);
     }
 
+    /// <remarks>
+    /// For <c>process_modules</c>, which has to hold the file before it can prove it is the one a process
+    /// mapped, and so cannot let this open it again: a second open by path is exactly the gap a rename
+    /// and replace slips through.
+    /// </remarks>
+    public FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(held);
+
+        return Describe(Path.GetFullPath(path), held);
+    }
+
     private static FileSignature Describe(string path, FileStream? held = null)
     {
         var (verdict, detail, catalogSigned, signerSubject) = VerifyEmbeddedThenCatalog(path, held?.SafeFileHandle);

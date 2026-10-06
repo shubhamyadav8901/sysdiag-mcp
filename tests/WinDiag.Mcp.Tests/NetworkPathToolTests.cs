@@ -67,6 +67,9 @@ public sealed class NetworkPathToolTests
 
         public FileSignature InspectHeld(string path, CancellationToken cancellationToken) =>
             throw new NotSupportedException("path refusal never reaches a held-file signature check");
+
+        public FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("path refusal never reaches a held-file signature check");
     }
 
     private sealed class RecordingActivity : IActivityInspector
