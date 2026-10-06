@@ -34,6 +34,22 @@ public interface IProcessController
         CancellationToken cancellationToken);
 }
 
+/// <summary>What Windows knows about a process that its name does not say.</summary>
+/// <remarks>
+/// Behind an interface so a test can hand the controller a svchost that hosts RpcSs, or a process marked
+/// critical, without finding a real one to risk.
+/// </remarks>
+public interface IProcessProtectionProbe
+{
+    /// <summary>Short names of the running services this process hosts; empty for one that hosts none.</summary>
+    /// <exception cref="System.ComponentModel.Win32Exception">The service list could not be read.</exception>
+    IReadOnlyList<string> ServicesHostedBy(int processId);
+
+    /// <summary>True when Windows bugchecks the machine if this process exits.</summary>
+    /// <exception cref="System.ComponentModel.Win32Exception">The flag could not be read.</exception>
+    bool IsCritical(System.Diagnostics.Process process);
+}
+
 /// <summary>Raised when an action on a process is refused or fails.</summary>
 public sealed class ProcessControlException : Exception, IDiagnosticException
 {

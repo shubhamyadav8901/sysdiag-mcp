@@ -41,7 +41,9 @@ public sealed class ControlTools
         "anything the process had not written out. " +
         "You must pass the process name you expect alongside the PID, and it is verified first - PIDs " +
         "are reused, so one read from an earlier process_list may belong to something else entirely by " +
-        "now. Core Windows processes are refused outright.")]
+        "now. Core Windows processes are refused outright. Terminate and suspend are also refused for a " +
+        "process Windows marks critical, and for one hosting a service service_control refuses to stop " +
+        "(RpcSs, DcomLaunch, Winmgmt, EventLog and the like - usually a svchost). Resume is never refused.")]
     public ProcessControlToolResult ProcessControl(
         [Description("Process id to act on. Get a current one from process_list.")]
         int processId,

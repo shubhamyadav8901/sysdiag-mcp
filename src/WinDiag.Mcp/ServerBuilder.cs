@@ -238,6 +238,8 @@ public static class ServerBuilder
         // Fully qualified: Diagnostics.Control.IServiceController would otherwise collide with
         // System.ServiceProcess.ServiceController, which the services inspector already brings in.
         services.AddSingletonIfMissing<
+            Diagnostics.Control.IProcessProtectionProbe, Diagnostics.Control.WindowsProcessProtectionProbe>();
+        services.AddSingletonIfMissing<
             Diagnostics.Control.IProcessController, Diagnostics.Control.WindowsProcessController>();
         services.AddSingletonIfMissing<
             Diagnostics.Control.IServiceController, Diagnostics.Control.WindowsServiceControllerAdapter>();

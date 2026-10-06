@@ -75,8 +75,8 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg |
 | `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
-| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting |
-| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
+| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting. Terminate and suspend are refused for core processes (lsass, csrss, winlogon…), for any process Windows marks critical, and for the host of any service `service_control` refuses to stop; resume never is |
+| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses to stop or restart a small set of critical ones, by short or display name |
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off. It is also the one tool a draining server still accepts, so calling it again with `force` stops the wait |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
 | `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |

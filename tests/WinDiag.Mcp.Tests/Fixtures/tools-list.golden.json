@@ -1252,7 +1252,7 @@
   {
     "name": "process_control",
     "title": "Terminate, suspend or resume a process",
-    "description": "Terminate, suspend or resume a running process. Suspend is the interesting one for diagnosis: it freezes every thread without ending the process, so a hang can be caught in the act and dumped. Terminate is irreversible and loses anything the process had not written out. You must pass the process name you expect alongside the PID, and it is verified first - PIDs are reused, so one read from an earlier process_list may belong to something else entirely by now. Core Windows processes are refused outright.",
+    "description": "Terminate, suspend or resume a running process. Suspend is the interesting one for diagnosis: it freezes every thread without ending the process, so a hang can be caught in the act and dumped. Terminate is irreversible and loses anything the process had not written out. You must pass the process name you expect alongside the PID, and it is verified first - PIDs are reused, so one read from an earlier process_list may belong to something else entirely by now. Core Windows processes are refused outright. Terminate and suspend are also refused for a process Windows marks critical, and for one hosting a service service_control refuses to stop (RpcSs, DcomLaunch, Winmgmt, EventLog and the like - usually a svchost). Resume is never refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
