@@ -140,10 +140,18 @@ public static class LinuxServiceInstaller
 
         if (!Directory.Exists(requested) && !File.Exists(requested) && new FileInfo(requested).LinkTarget is null)
         {
+            // Judged before it is made: made first and checked after, a refusal left a new root directory, and
+            // every missing one between, under the parent it refused.
+            RefuseArtifacts(requested, TrustedDirectory.ProblemsBeforeCreating(requested, RootOnly));
             Directory.CreateDirectory(requested, OwnerOnlyDirectory);
         }
 
-        if (TrustedDirectory.Problems(requested, RootOnly) is { Count: > 0 } problems)
+        RefuseArtifacts(requested, TrustedDirectory.Problems(requested, RootOnly));
+    }
+
+    private static void RefuseArtifacts(string requested, IReadOnlyList<string> problems)
+    {
+        if (problems.Count > 0)
         {
             throw new ConfigurationException(
                 $"--artifacts {requested} cannot be used: {string.Join(" ", problems)} Choose a directory only root can " +

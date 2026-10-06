@@ -385,7 +385,7 @@ hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the
 |---|---|
 | `/opt/linuxdiag/LinuxDiag.Mcp` | the binary. `/opt/linuxdiag` and `/etc/linuxdiag` are made root's, with these modes, even when they already exist |
 | `/etc/linuxdiag/linuxdiag.env` | root-owned `0600`: the token, bind address and grants |
-| `/var/lib/linuxdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it and every directory above it, so `/tmp` is refused |
+| `/var/lib/linuxdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it and every directory above it, so `/tmp` is refused. A missing one is made `0700` only where root alone controls the directories above it, and nothing is made when it is refused |
 | `/etc/systemd/system/linuxdiag.service` | `Type=notify`, `Restart=on-failure` |
 
 The unit is deliberately **not** sandboxed (no `ProtectSystem` and similar): a diagnostics server has to

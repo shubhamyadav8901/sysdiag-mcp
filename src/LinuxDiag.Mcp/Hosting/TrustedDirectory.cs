@@ -23,6 +23,10 @@ public static class TrustedDirectory
     internal static IReadOnlyList<string> Problems(string path, IReadOnlyCollection<uint> trusted) =>
         Problems(path, trusted, LibC.Status, LibC.RealPath);
 
+    /// <summary>Everything wrong with where a directory not yet made would be made, through the real file system.</summary>
+    internal static IReadOnlyList<string> ProblemsBeforeCreating(string path, IReadOnlyCollection<uint> trusted) =>
+        ProblemsBeforeCreating(path, trusted, LibC.Status, LibC.RealPath);
+
     /// <summary>Everything that lets an account outside <paramref name="trusted"/> write or replace the directory.</summary>
     /// <param name="status">Owner and mode, links followed; null when nothing is there.</param>
     /// <param name="realPath">The path with every link resolved; null when it does not exist.</param>
@@ -32,27 +36,15 @@ public static class TrustedDirectory
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(trusted);
 
-        var spelled = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        FileStatus? Examine(string p)
-        {
-            try
-            {
-                return status(p);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return null;
-            }
-        }
-
+        var spelled = Spelled(path);
         if (realPath(spelled) is not { } real)
         {
             return [$"{spelled} does not exist."];
         }
 
-        var owner = trusted.Count == 1 && trusted.Contains(0u) ? "not root" : "neither root nor the account this server runs as";
+        var owner = Owner(trusted);
         var problems = new List<string>();
-        if (Examine(real) is not { IsDirectory: true } leaf)
+        if (Examine(status, real) is not { IsDirectory: true } leaf)
         {
             problems.Add($"{real} is not a directory.");
         }
@@ -73,25 +65,76 @@ public static class TrustedDirectory
             }
         }
 
-        // Above it, both as spelled and as resolved: a link on the way is replaced by whoever can write the
-        // directory the link sits in. A sticky directory such as /tmp lets nobody rename another account's entry.
-        foreach (var ancestor in Ancestors(spelled).Concat(Ancestors(real)).Distinct(StringComparer.Ordinal))
+        problems.AddRange(Above(Ancestors(spelled).Concat(Ancestors(real)), trusted, status));
+        return problems;
+    }
+
+    /// <summary>Everything that would let an account outside <paramref name="trusted"/> replace a directory made here.</summary>
+    /// <remarks>
+    /// Judged before anything is made, not by making it and checking after: a refusal then would leave a new
+    /// directory behind -- and every missing one between -- under the very parent it refused.
+    /// </remarks>
+    /// <param name="status">Owner and mode, links followed; null when nothing is there.</param>
+    /// <param name="realPath">The path with every link resolved; null when it does not exist.</param>
+    internal static IReadOnlyList<string> ProblemsBeforeCreating(
+        string path, IReadOnlyCollection<uint> trusted, Func<string, FileStatus?> status, Func<string, string?> realPath)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(trusted);
+
+        // The directories still missing are made by root, 0700; what can replace them is the nearest one that
+        // exists, and everything above it, as spelled and as resolved -- the same rule as for an existing one.
+        var spelled = Spelled(path);
+        var existing = Ancestors(spelled).Reverse().FirstOrDefault(a => realPath(a) is not null) ?? "/";
+        var real = realPath(existing) ?? existing;
+        var problems = Above(Ancestors(existing).Append(existing).Concat(Ancestors(real).Append(real)), trusted, status).ToList();
+        if (Examine(status, real) is { IsDirectory: false })
         {
-            if (Examine(ancestor) is not { } above)
-            {
-                problems.Add($"{ancestor} could not be examined.");
-            }
-            else if (!trusted.Contains(above.UserId))
-            {
-                problems.Add($"{ancestor} is owned by uid {above.UserId}, {owner}, so that account can replace what is in it.");
-            }
-            else if ((above.Mode & GroupOrOtherWrite) != 0 && (above.Mode & Sticky) == 0)
-            {
-                problems.Add($"{ancestor} is writable by its group or by everyone, so another account can replace what is in it.");
-            }
+            problems.Insert(0, $"{real} is not a directory, so nothing can be made inside it.");
         }
 
         return problems;
+    }
+
+    /// <summary>The problems of directories something sits in, each once.</summary>
+    /// <remarks>A sticky directory such as /tmp lets nobody rename another account's entry, so it may be shared.</remarks>
+    private static IEnumerable<string> Above(IEnumerable<string> directories, IReadOnlyCollection<uint> trusted, Func<string, FileStatus?> status)
+    {
+        // Both as spelled and as resolved: a link on the way is replaced by whoever can write the directory the
+        // link sits in.
+        var owner = Owner(trusted);
+        foreach (var ancestor in directories.Distinct(StringComparer.Ordinal))
+        {
+            if (Examine(status, ancestor) is not { } above)
+            {
+                yield return $"{ancestor} could not be examined.";
+            }
+            else if (!trusted.Contains(above.UserId))
+            {
+                yield return $"{ancestor} is owned by uid {above.UserId}, {owner}, so that account can replace what is in it.";
+            }
+            else if ((above.Mode & GroupOrOtherWrite) != 0 && (above.Mode & Sticky) == 0)
+            {
+                yield return $"{ancestor} is writable by its group or by everyone, so another account can replace what is in it.";
+            }
+        }
+    }
+
+    private static string Spelled(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private static string Owner(IReadOnlyCollection<uint> trusted) =>
+        trusted.Count == 1 && trusted.Contains(0u) ? "not root" : "neither root nor the account this server runs as";
+
+    private static FileStatus? Examine(Func<string, FileStatus?> status, string path)
+    {
+        try
+        {
+            return status(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Every directory above the path, root first.</summary>

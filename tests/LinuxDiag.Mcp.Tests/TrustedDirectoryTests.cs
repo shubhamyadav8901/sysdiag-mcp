@@ -51,6 +51,9 @@ public sealed class TrustedDirectoryTests
 
         public IReadOnlyList<string> Problems(string path, uint[]? trusted = null) =>
             TrustedDirectory.Problems(path, trusted ?? Root, Status, RealPath);
+
+        public IReadOnlyList<string> ProblemsBeforeCreating(string path) =>
+            TrustedDirectory.ProblemsBeforeCreating(path, Root, Status, RealPath);
     }
 
     [Fact]
@@ -123,6 +126,22 @@ public sealed class TrustedDirectoryTests
     }
 
     [Fact]
+    public void A_directory_not_yet_made_is_judged_by_the_directories_it_would_be_made_in()
+    {
+        // Review: --artifacts /srv/team/diag was created first and checked after, so a refusal left a new root
+        // directory behind under the very parent it refused. What the new directory would sit in is judged first.
+        var tree = new Tree().With("/srv", 0, 0b111_101_101).With("/srv/team", 0, 0b111_111_000)
+            .With("/var", 0, 0b111_101_101).With("/var/lib", 0, 0b111_101_101)
+            .With("/tmp", 0, 0b1_111_111_111).With("/data", 0, 0b111_101_101).With("/shared", 0, 0b111_111_111);
+        tree.Links["/var/data"] = "/shared";
+
+        Assert.Contains(tree.ProblemsBeforeCreating("/srv/team/diag/a"), p => p.StartsWith("/srv/team is writable", StringComparison.Ordinal));
+        Assert.Contains(tree.ProblemsBeforeCreating("/var/data/diag"), p => p.StartsWith("/shared is writable", StringComparison.Ordinal));
+        Assert.Empty(tree.ProblemsBeforeCreating("/var/lib/new/diag"));
+        Assert.Empty(tree.ProblemsBeforeCreating("/tmp/diag"));
+    }
+
+    [Fact]
     public void An_unprivileged_server_may_own_its_own_directory()
     {
         var tree = new Tree().With("/home", 0, 0b111_101_101).With("/home/me", 1000, 0b111_101_101).With("/home/me/diag", 1000, 0b111_000_000);
@@ -175,6 +194,26 @@ public sealed class TrustedDirectoryTests
             Assert.Contains("writable by its group or by everyone", openEx.Message, StringComparison.Ordinal);
             Assert.Contains($"owned by uid {LibC.EffectiveUserId()}", mineEx.Message, StringComparison.Ordinal);
             Assert.Contains("Choose a directory only root can write", mineEx.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    [UnprivilegedLinuxFact]
+    public void The_installer_refuses_an_artifact_directory_it_would_create_under_another_accounts_directory_without_creating_it()
+    {
+        var parent = System.IO.Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-new-{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var requested = Path.Combine(parent, "diag", "artifacts");
+
+            var ex = Assert.Throws<ConfigurationException>(() => LinuxServiceInstaller.ArtifactDirectory(requested));
+
+            Assert.Contains($"{parent} is owned by uid {LibC.EffectiveUserId()}", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("Nothing was installed", ex.Message, StringComparison.Ordinal);
+            Assert.False(System.IO.Directory.Exists(Path.Combine(parent, "diag")), "a refused --artifacts must leave nothing behind");
         }
         finally
         {
