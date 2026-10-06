@@ -48,7 +48,8 @@ public static class ServerBuilder
         (0600: token and grants), /var/db/macdiag and /var/log/macdiag (0700) and
         /Library/LaunchDaemons/<l>.plist (default label com.sysdiag.macdiag), then loads it and waits until
         the new job is the process listening, reporting the Application Firewall's state. An existing
-        --artifacts directory is used only if root alone can write it, and is never re-chmodded. --token-stdin reads the token from
+        --artifacts directory is used only if root alone can write it and every directory above it, and is never
+        re-chmodded; a root server refuses to start on one that fails this. --token-stdin reads the token from
         standard input, keeping it out of sudo's log and ps. --purge also deletes /var/db/macdiag.
         Under launchd the server logs to /var/log/macdiag/macdiag.log (rolled at 10 MiB); crash.log holds
         what the runtime writes before that, including a refused configuration, which launchd retries

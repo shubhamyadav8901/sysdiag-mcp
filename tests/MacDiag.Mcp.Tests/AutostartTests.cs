@@ -57,6 +57,15 @@ public sealed class AutostartTests
         /// <summary>Programs for which the anchor check itself errs, rather than answering yes (0) or no (3).</summary>
         public HashSet<string> AnchorCheckErrs { get; } = [];
 
+        /// <summary>Programs whose certificate Apple did not issue (anchor apple generic fails). Named-like-Apple ones are among them.</summary>
+        public HashSet<string> NotAppleIssued { get; } = [];
+
+        /// <summary>Programs for which the anchor apple generic check itself errs.</summary>
+        public HashSet<string> IssuerCheckErrs { get; } = [];
+
+        /// <summary>codesign -dvvv's answer for a program, in place of the default by set membership.</summary>
+        public Dictionary<string, string> Displays { get; } = [];
+
         public HashSet<string> Unreadable { get; } = [];
 
         /// <summary>Paths plutil or codesign never finishes on, and programs that hang outright.</summary>
@@ -101,11 +110,16 @@ public sealed class AutostartTests
             ("stat", _) => StatLinesTests.Answer(Stats, args, Denied),
             ("launchctl", "print-disabled") => FakeCommands.Ok(Disabled.GetValueOrDefault(args[1], "disabled services = {\n}\n")),
             ("id", "-u") => Uids.TryGetValue(args[^1], out var uid) ? FakeCommands.Ok($"{uid}\n") : new ExternalResult(1, "", "id: no such user"),
+            ("codesign", _) when args.Contains("-R=anchor apple generic") && IssuerCheckErrs.Contains(args[^1]) => new ExternalResult(1, "", "internal error"),
+            ("codesign", _) when args.Contains("-R=anchor apple generic") => NotAppleIssued.Contains(args[^1]) || NamedLikeApple.Contains(args[^1])
+                ? new ExternalResult(3, "", $"{args[^1]}: test-requirement: code failed to satisfy specified code requirement(s)")
+                : new ExternalResult(0, "", ""),
             ("codesign", _) when args.Contains("-R=anchor apple") && AnchorCheckErrs.Contains(args[^1]) => new ExternalResult(1, "", "internal error"),
             ("codesign", _) when args.Contains("-R=anchor apple") => AppleSigned.Contains(args[^1])
                 ? new ExternalResult(0, "", "")
                 : new ExternalResult(3, "", $"{args[^1]}: test-requirement: code failed to satisfy specified code requirement(s)"),
             ("codesign", "--verify") => Unsigned.Contains(args[^1]) ? new ExternalResult(1, "", $"{args[^1]}: code object is not signed at all") : new ExternalResult(0, "", ""),
+            ("codesign", "-dvvv") when Displays.TryGetValue(args[^1], out var display) => new ExternalResult(0, "", display),
             ("codesign", "-dvvv") => new ExternalResult(0, "", AppleSigned.Contains(args[^1]) || NamedLikeApple.Contains(args[^1]) ? "Authority=Software Signing\n" : "Authority=Developer ID Application: Example (ABCDE12345)\n"),
             ("systemextensionsctl", "list") => SystemExtensions,
             ("kmutil", "showloaded") => Kexts,
@@ -169,7 +183,7 @@ public sealed class AutostartTests
         mac.Plists[Job] = Plist("com.example.job", ["/usr/local/libexec/job"]);
         mac.Stats[Job] = Line(Job, 0, 0, "0644", "Regular File");
         mac.Stats["/usr/local/libexec/job"] = Line("/usr/local/libexec/job", 0, 0, "0755", "Regular File");
-        mac.NamedLikeApple.Add("/usr/local/libexec/job");
+        mac.Displays["/usr/local/libexec/job"] = "Authority=Software Signing\n";
         mac.AnchorCheckErrs.Add("/usr/local/libexec/job");
 
         var result = await Audit(mac, new AutostartQuery(VerifySignatures: true));
@@ -193,7 +207,47 @@ public sealed class AutostartTests
         var result = await Audit(mac, new AutostartQuery(VerifySignatures: true));
 
         var entry = result.Entries.Single(e => e.Entry == "com.apple.updater");
-        Assert.Equal((true, "Signed by certificate \"Software Signing\""), (entry.Signed, entry.SignatureDetail));
+        Assert.False(entry.Signed);
+        Assert.StartsWith("Signed by certificate \"Software Signing\", which Apple did not issue", entry.SignatureDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_self_signed_program_copying_a_developer_id_name_and_team_is_kept_by_unsigned_only()
+    {
+        // Before: Signed=true, "Signed by certificate "Developer ID Application: Google LLC (EQHXZ8M8AV)"", and unsignedOnly --
+        // the persistence-hunting mode -- dropped it. The team is the leaf's OU, which whoever made the certificate chose.
+        var mac = new FakeMac();
+        mac.Displays[AgentDProgram] = "Authority=Developer ID Application: Google LLC (EQHXZ8M8AV)\nTeamIdentifier=EQHXZ8M8AV\n";
+        mac.NotAppleIssued.Add(AgentDProgram);
+
+        var entry = (await Audit(mac, new AutostartQuery(UnsignedOnly: true))).Entries.Single();
+
+        Assert.False(entry.Signed);
+        Assert.StartsWith("Signed by certificate \"Developer ID Application: Google LLC (EQHXZ8M8AV)\", which Apple did not issue", entry.SignatureDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_developer_id_program_is_signed_and_left_out_by_unsigned_only()
+    {
+        var mac = new FakeMac();
+        mac.Displays[AgentDProgram] = "Authority=Developer ID Application: Example (ABCDE12345)\nTeamIdentifier=ABCDE12345\n";
+
+        Assert.Empty((await Audit(mac, new AutostartQuery(UnsignedOnly: true))).Entries);
+        Assert.DoesNotContain(mac.Commands.Calls, c => c.Arguments.Contains("-R=anchor apple"));
+        Assert.Contains(mac.Commands.Calls, c => c.Arguments.Contains("-R=anchor apple generic"));
+    }
+
+    [Fact]
+    public async Task An_issuer_check_that_errs_is_not_judged_and_kept_by_unsigned_only()
+    {
+        var mac = new FakeMac();
+        mac.Displays[AgentDProgram] = "Authority=Developer ID Application: Example (ABCDE12345)\nTeamIdentifier=ABCDE12345\n";
+        mac.IssuerCheckErrs.Add(AgentDProgram);
+
+        var entry = (await Audit(mac, new AutostartQuery(UnsignedOnly: true))).Entries.Single();
+
+        Assert.Null(entry.Signed);
+        Assert.Contains("whether Apple issued its certificate was not determined", entry.SignatureDetail, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -664,7 +718,22 @@ public sealed class AutostartTests
         var summary = AutostartTools.Render(result, "all", null);
 
         Assert.Contains("[FILE NOT FOUND]", summary, StringComparison.Ordinal);
-        Assert.Contains("[UNSIGNED]", summary, StringComparison.Ordinal);
+        Assert.Contains("[UNSIGNED] (Not signed)", summary, StringComparison.Ordinal);
         Assert.Contains("! /Library/LaunchDaemons/com.example.agentd.plist is owned by uid 501", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_summary_says_why_a_program_counts_as_unsigned_and_which_were_not_judged()
+    {
+        // A self-signed program has a signature that verifies: without the reason, [UNSIGNED] reads as a mistake.
+        var forged = new AutostartEntry("daemons", AgentD, "com.example.agentd", true, null, null, AgentDProgram, AgentDProgram, null,
+            false, "Signed by certificate \"X\", which Apple did not issue", false, false, []);
+        var open = forged with { Entry = "com.example.other", Signed = null, SignatureDetail = "codesign did not finish" };
+        var result = new AutostartAuditResult([forged, open], 2, false, true, true, 1, 0, 0, []);
+
+        var summary = AutostartTools.Render(result, "all", null);
+
+        Assert.Contains("[UNSIGNED] (Signed by certificate \"X\", which Apple did not issue)", summary, StringComparison.Ordinal);
+        Assert.Contains("[SIGNATURE NOT JUDGED] (codesign did not finish)", summary, StringComparison.Ordinal);
     }
 }

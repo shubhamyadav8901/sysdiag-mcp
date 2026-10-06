@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace Diag.Mcp.Server;
 
@@ -42,7 +44,16 @@ public static class DiagServerHost
         builder.Services.Configure<KestrelServerOptions>(
             kestrel => kestrel.Limits.MaxRequestBodySize = 220L * 1024 * 1024);
 
+        // The gate's clock; a test registers its own in configure, which wins.
+        builder.Services.TryAddSingleton(TimeProvider.System);
+
         configure(builder);
+
+        // After configure, so every server gets it whatever providers it chose. ASP.NET Core writes "Request starting"
+        // and "Request finished" at Information for every request, the ones the gate turns away included: anyone who
+        // can reach the port could roll MacDiag's log or exhaust journald's rate limit without a token. Its warnings and
+        // errors still come through, and who was turned away is the gate's to say (RejectedRequestLog).
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
         var app = builder.Build();
         app.UseMiddleware<BearerTokenGate>(settings.ResolvedToken);

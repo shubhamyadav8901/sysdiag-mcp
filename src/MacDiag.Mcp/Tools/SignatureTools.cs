@@ -23,7 +23,8 @@ public sealed class SignatureTools(ISignatureInspector signatures)
     [Description(
         "Report, for one or more files, the SHA-256, size and modification time, the code signature (whether it " +
         "verifies, who signed it - Apple, a Developer ID team, ad hoc or nobody - and whether it uses the hardened " +
-        "runtime), Gatekeeper's assessment for a file inside an app bundle, and the installer package whose receipt " +
+        "runtime; a chain Apple did not issue, self-signed or a private CA, is Untrusted, its name and team being the " +
+        "signer's own claim), Gatekeeper's assessment for a file inside an app bundle, and the installer package whose receipt " +
         "names it. Symlinks are followed. A valid signature says who signed the file and that it has not changed " +
         "since; it is not a verdict on whether the signer is trustworthy. Use it to confirm a deployed binary, to " +
         "spot a file modified after signing, or to find a program nobody signed. At most 200 paths per call.")]
