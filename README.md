@@ -386,7 +386,7 @@ hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the
 
 | Path | What |
 |---|---|
-| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary. `/opt/linuxdiag` and `/etc/linuxdiag` are made root's, with these modes, even when they already exist |
+| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary. `/opt/linuxdiag`, `/etc/linuxdiag` and the default `/var/lib/linuxdiag` are made root's, with these modes, even when they already exist, and so is everything already in them, with group and other write removed. A symbolic link, a hard-linked file, a FIFO or a device inside one is refused instead: remove it and install again |
 | `/etc/linuxdiag/linuxdiag.env` | root-owned `0600`: the token, bind address and grants |
 | `/var/lib/linuxdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, every directory above it and every link on the way to it — a link another account owns in `/tmp` is refused wherever it leads — so `/tmp` is refused. A missing one is made `0700` only where root alone controls the directories above it, and nothing is made when it is refused |
 | `/etc/systemd/system/linuxdiag.service` | `Type=notify`, `Restart=on-failure` |
