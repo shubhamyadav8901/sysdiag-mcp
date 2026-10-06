@@ -37,7 +37,9 @@ internal static class FileScope
     /// </summary>
     /// <remarks>
     /// <para>The server directory is resolved the same way as the path, so a link cannot get around the
-    /// comparison from either side.</para>
+    /// comparison from either side. On Windows the walk also spells every existing component by its long
+    /// name and a drive root by its letter, so an 8.3 short name or a <c>\\?\</c> prefix cannot either:
+    /// see <see cref="PathScope.Walk(string, Func{string, string?}, bool, Func{string, bool}?, Func{string, string}?)"/>.</para>
     /// <para>Every real path under the server directory counts as in it, wherever the artifact directory
     /// is. One above it (<c>/opt</c>, <c>/</c>) or equal to it made the server's own binary writable with
     /// no grant when "under the artifacts" was an exemption; one nested inside it did the same for

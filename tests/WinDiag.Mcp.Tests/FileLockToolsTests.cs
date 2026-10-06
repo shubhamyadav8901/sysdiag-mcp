@@ -160,6 +160,68 @@ public sealed class FileLockToolsTests
         Assert.DoesNotContain("holds no open file references", summary);
     }
 
+    [Fact]
+    public void Counts_the_unproven_rows_names_the_first_and_says_only_the_pid_is_certain()
+    {
+        // The structured list carries the mark per row; the text says it once, at the row it starts from.
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "PID 1234",
+            [
+                new HandleEntry("svc.exe", 1234, "Key", null, "0x0000000C", @"HKCU\Software\Contoso"),
+                new HandleEntry("svc.exe", 1234, "File", null, "0x00000010", @"C:\shared\x.docx", Unproven: true)
+            ],
+            true, false, 2, IncludedAllObjectTypes: true, ProcessScoped: true));
+
+        Assert.Contains("1 of these rows is marked unproven, the first at handle 0x00000010 of svc.exe (PID 1234)", summary);
+        Assert.Contains("line break", summary);
+        Assert.Contains("PID is certain", summary);
+        Assert.Contains("not proven", summary);
+    }
+
+    [Fact]
+    public void Never_says_every_row_after_the_first_unproven_one_is_unproven_when_a_later_one_is_proven()
+    {
+        // Rows ahead of a line whose image name the process table could not confirm are unproven, and the
+        // rows after it need not be: "from this handle on" would mark a proven row as doubtful and, worse,
+        // teach the reader that the mark runs to the end when it does not.
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "PID 1234",
+            [
+                new HandleEntry("svc.exe", 1234, "File", null, "0x00000004", @"C:\shared\x.docx", Unproven: true),
+                new HandleEntry("z", 1234, "File", null, "0x00000008", @"C:\Windows\System32", Unproven: true),
+                new HandleEntry("svc.exe", 1234, "File", null, "0x0000000C", @"C:\Windows\Fonts\arial.ttf")
+            ],
+            true, false, 3, IncludedAllObjectTypes: false, ProcessScoped: true, UnconfirmedImage: true));
+
+        Assert.DoesNotContain(") on,", summary);
+        Assert.Contains("2 of these rows are marked unproven, the first at handle 0x00000004", summary);
+        Assert.Contains("image name", summary);
+    }
+
+    [Fact]
+    public void Says_an_unconfirmed_image_name_may_be_a_process_that_came_or_went_not_only_a_forgery()
+    {
+        // The usual cause is benign -- a holder started or exited while handle.exe ran -- and a warning
+        // that names only the attack would send the reader hunting for one that is not there.
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "x.docx", [], true, false, 0, IncludedAllObjectTypes: false, UnparsedRows: 2, UnconfirmedImage: true));
+
+        Assert.StartsWith("WARNING", summary);
+        Assert.Contains("started or exited while handle.exe ran", summary);
+        Assert.Contains("line break inside an image name", summary);
+    }
+
+    [Fact]
+    public void A_fully_proven_list_carries_no_note()
+    {
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "x.docx", [new HandleEntry("word.exe", 5150, "File", null, "0x00000460", @"C:\shared\x.docx")],
+            true, false, 1, IncludedAllObjectTypes: false));
+
+        Assert.DoesNotContain("NOTE", summary);
+        Assert.DoesNotContain("WARNING", summary);
+    }
+
     private const string SampleCsv =
         "Process,PID,User,Handle,Type,Share Flags,Name,Access\r\napp.exe,7,File,CONTOSO\\u,0x9,C:\\t\r\n";
 
@@ -175,7 +237,7 @@ public sealed class FileLockToolsTests
     {
         var runner = new StubExternalToolRunner(SampleCsv);
         var inspector = new HandleExeInspector(
-            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await inspector.SearchAsync("Fonts", includeAllObjectTypes: false, CancellationToken.None);
 
@@ -195,7 +257,7 @@ public sealed class FileLockToolsTests
         var runner = new StubExternalToolRunner(SampleCsv);
         var locator = Locator();
         var inspector = new HandleExeInspector(
-            runner, locator, new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, locator, new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await inspector.SearchAsync("Fonts", includeAllObjectTypes: false, CancellationToken.None);
 
@@ -225,7 +287,7 @@ public sealed class FileLockToolsTests
         var runner = new StubExternalToolRunner(SampleCsv);
         var thirtyTwoBit = new FixedArchitectureLocator(PeImageHeader.MachineI386);
         var inspector = new HandleExeInspector(
-            runner, thirtyTwoBit, new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, thirtyTwoBit, new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         var ex = await Assert.ThrowsAsync<ToolArchitectureException>(
             () => inspector.SearchAsync("Fonts", includeAllObjectTypes: false, CancellationToken.None));
@@ -236,6 +298,64 @@ public sealed class FileLockToolsTests
     }
 
     [Fact]
+    public async Task A_row_is_confirmed_against_the_process_table_on_both_sides_of_the_run()
+    {
+        // PID 7 was app.exe when handle.exe started and is app.exe again when it ends -- but not the same
+        // app.exe: its creation time moved, so the row may have been printed by a process in between,
+        // whose image name nothing here has read.
+        var reused = new FakeProcessTable(
+        [
+            new Dictionary<int, ProcessImage> { [7] = new(1, "app.exe") },
+            new Dictionary<int, ProcessImage> { [7] = new(2, "app.exe") }
+        ]);
+        var inspector = new HandleExeInspector(
+            new StubExternalToolRunner(SampleCsv), Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), reused);
+
+        var result = await inspector.SearchAsync("t", includeAllObjectTypes: false, CancellationToken.None);
+
+        Assert.Equal(2, reused.Taken);
+        Assert.Empty(result.Entries);
+        Assert.Equal(1, result.UnparsedRows);
+        Assert.True(result.UnconfirmedImage);
+    }
+
+    [Fact]
+    public async Task The_search_tools_own_row_is_confirmed_by_the_pid_the_runner_started_it_as()
+    {
+        // handle64.exe can list its own handles, and under the SCM its working directory is C:\Windows\System32,
+        // so a search for that folder printed a row for a process in neither reading of the table. Left
+        // unconfirmed, it made every row before it unattributable, on every run of that search. (The row
+        // before it has no name, so that this machine's lack of an NTFS C: does not doubt the line after it.)
+        var csv = "Process,PID,User,Handle,Type,Share Flags,Name,Access\r\n" +
+                  "app.exe,7,File,CONTOSO\\u,0x9,\r\n" +
+                  $"{ExpectedHandleBuild},9,File,NT AUTHORITY\\SYSTEM,0x4,C:\\Windows\\System32\r\n";
+        var inspector = new HandleExeInspector(
+            new StubExternalToolRunner(csv, processId: 9), Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(),
+            new FakeProcessTable((7, "app.exe")));
+
+        var result = await inspector.SearchAsync("System32", includeAllObjectTypes: false, CancellationToken.None);
+
+        Assert.Equal(2, result.Entries.Count);
+        Assert.All(result.Entries, entry => Assert.False(entry.Unproven));
+        Assert.Equal(0, result.UnparsedRows);
+        Assert.False(result.UnconfirmedImage);
+    }
+
+    [Fact]
+    public async Task A_row_of_a_process_that_ran_throughout_under_its_printed_name_is_listed()
+    {
+        var inspector = new HandleExeInspector(
+            new StubExternalToolRunner(SampleCsv), Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(),
+            new FakeProcessTable((7, "app.exe")));
+
+        var result = await inspector.SearchAsync("t", includeAllObjectTypes: false, CancellationToken.None);
+
+        var entry = Assert.Single(result.Entries);
+        Assert.False(entry.Unproven);
+        Assert.False(result.UnconfirmedImage);
+    }
+
+    [Fact]
     public async Task All_types_search_adds_the_flag_that_reaches_registry_keys()
     {
         // Without -a, handle.exe dumps file references only -- no registry keys, whatever the tool
@@ -243,7 +363,7 @@ public sealed class FileLockToolsTests
         // all still Files, after 6m40s.
         var runner = new StubExternalToolRunner(SampleCsv);
         var inspector = new HandleExeInspector(
-            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await inspector.SearchAsync("CurrentVersion", includeAllObjectTypes: true, CancellationToken.None);
 
@@ -292,7 +412,7 @@ public sealed class FileLockToolsTests
         // registry keys, are most of the reason to ask about a single process at all.
         var runner = new StubExternalToolRunner(SampleCsv);
         var inspector = new HandleExeInspector(
-            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await inspector.ListForProcessAsync(4321, includeAllObjectTypes: true, CancellationToken.None);
 
@@ -310,7 +430,7 @@ public sealed class FileLockToolsTests
         // that being reachable at all.
         var runner = new StubExternalToolRunner(SampleCsv);
         var inspector = new HandleExeInspector(
-            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await inspector.ListForProcessAsync(7, includeAllObjectTypes: false, CancellationToken.None);
 
@@ -326,7 +446,7 @@ public sealed class FileLockToolsTests
     {
         var runner = new StubExternalToolRunner(SampleCsv);
         var inspector = new HandleExeInspector(
-            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => inspector.ListForProcessAsync(processId, true, CancellationToken.None));
@@ -341,7 +461,7 @@ public sealed class FileLockToolsTests
         // from a caller-supplied value.
         var runner = new StubExternalToolRunner();
         var inspector = new HandleExeInspector(
-            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions());
+            runner, Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(), new FakeProcessTable((7, "app.exe")));
 
         await Assert.ThrowsAsync<UnsafeArgumentException>(
             () => inspector.SearchAsync("-c", includeAllObjectTypes: false, CancellationToken.None));

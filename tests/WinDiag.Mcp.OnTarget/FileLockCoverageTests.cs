@@ -33,7 +33,8 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
             new ExternalToolRunner(new ToolLocator(), new WinDiagOptions(), NullLogger<ExternalToolRunner>.Instance),
             new ToolLocator(),
             new WindowsPrivilegeProbe(),
-            new WinDiagOptions());
+            new WinDiagOptions(),
+            new NativeProcessTable());
 
     [Fact]
     public void Finds_a_file_that_this_very_process_is_holding_open()
@@ -108,11 +109,65 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
             // "run path_handle_search" advice worth giving.
             Assert.Contains(viaHandle.Entries, e => e.ProcessId == holder.Id);
             Assert.True(viaHandle.Elevated);
+
+            // The holder ran throughout, so the process table must confirm the image name handle.exe
+            // printed for it. If handle.exe names processes differently from NtQuerySystemInformation,
+            // every search would degrade to unattributable rows, and only this machine can show it.
+            Assert.False(viaHandle.UnconfirmedImage);
+            Assert.All(viaHandle.Entries, e => Assert.False(e.Unproven));
         }
         finally
         {
             KillQuietly(holder);
         }
+    }
+
+    [RequiresElevatedHandleExeFact]
+    public async Task A_search_for_the_tools_own_working_directory_is_fully_attributed()
+    {
+        // handle64.exe runs in the directory it inherits -- C:\Windows\System32 under the SCM -- and may list
+        // its own handle on it, and its console host's. Neither is in either reading of the process table: the
+        // tool is confirmed by the PID it was started as, but the console host is not. If this goes red,
+        // UnparsedRows says which rows a search for System32 loses on a real service, on every run.
+        var directory = Environment.CurrentDirectory;
+
+        var result = await Handles().SearchAsync(directory, includeAllObjectTypes: false, CancellationToken.None);
+
+        foreach (var entry in result.Entries)
+        {
+            output.WriteLine($"{entry.ProcessName}/{entry.ProcessId} {entry.Type} unproven={entry.Unproven} {entry.Name}");
+        }
+
+        output.WriteLine($"unattributable rows: {result.UnparsedRows}; unconfirmed image: {result.UnconfirmedImage}");
+        Assert.Contains(result.Entries, e => e.ProcessId == Environment.ProcessId);
+        Assert.Equal(0, result.UnparsedRows);
+        Assert.False(result.UnconfirmedImage);
+    }
+
+    [RequiresElevatedHandleExeFact]
+    public async Task A_line_break_in_an_object_name_never_puts_a_row_on_another_pid()
+    {
+        // The parser cannot see whether handle.exe escapes a line break in a name; this asks the real
+        // tool. The event's name carries, after an LF, a whole row naming PID 4 (System). A backslash after
+        // the break would be read as a namespace separator, so the forged row avoids one.
+        var marker = $"sysdiag-break-{Guid.NewGuid():N}";
+        var forged = $"forged.exe,4,File,SYSTEM,0x00000004,{marker}-victim";
+        using var named = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\{marker}\n{forged}");
+
+        var search = await Handles().SearchAsync(marker, includeAllObjectTypes: true, CancellationToken.None);
+        var scoped = await Handles().ListForProcessAsync(Environment.ProcessId, includeAllObjectTypes: true, CancellationToken.None);
+
+        foreach (var entry in search.Entries)
+        {
+            output.WriteLine($"search: {entry.ProcessName}/{entry.ProcessId} {entry.Type} {entry.HandleValue} unproven={entry.Unproven} {entry.Name}");
+        }
+
+        // Recorded rather than asserted: whether handle.exe escapes the break decides these, and either is safe.
+        output.WriteLine($"search unattributable rows: {search.UnparsedRows}; scoped unproven rows: {scoped.Entries.Count(e => e.Unproven)}");
+
+        Assert.DoesNotContain(search.Entries, e => e.ProcessId == 4);
+        Assert.Contains(search.Entries, e => e.ProcessId == Environment.ProcessId && e.Type == "Event");
+        Assert.DoesNotContain(scoped.Entries, e => e.ProcessId != Environment.ProcessId);
     }
 
     /// <summary>Spawns a process that opens the file exclusively and holds it.</summary>

@@ -242,6 +242,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IToolLocator, ToolLocator>();
         services.AddSingletonIfMissing<IExternalToolRunner, ExternalToolRunner>();
         services.AddSingletonIfMissing<ILockInspector, RestartManagerLockInspector>();
+        services.AddSingletonIfMissing<IProcessTable, NativeProcessTable>();
         services.AddSingletonIfMissing<IHandleInspector, HandleExeInspector>();
         services.AddSingletonIfMissing<IAutostartInspector, AutorunscInspector>();
         services.AddSingletonIfMissing<ISystemInspector, WindowsSystemInspector>();

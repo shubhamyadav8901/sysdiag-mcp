@@ -36,6 +36,6 @@ public sealed class WindowsStagedBuildInspector : IStagedBuildInspector
         }
 
         return new StagedBuild(
-            path, file.Sha256, file.SizeBytes, file.Verdict.ToString(), file.Detail, file.SignerSubject);
+            path, file.Sha256, file.SizeBytes, file.Verdict.ToString(), file.Detail, VerifiedSigner.Publisher(file));
     }
 }

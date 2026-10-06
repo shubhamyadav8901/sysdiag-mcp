@@ -22,6 +22,14 @@ namespace WinDiag.Mcp.Diagnostics.SelfUpdate;
 /// without a timestamp, or that had stopped matching its file, disabled the check entirely. A running
 /// build whose signer cannot be read is refused outright: there is no publisher to hold a replacement
 /// to, and only someone at the console should decide that.</para>
+/// <para>Publishers are read with <see cref="VerifiedSigner"/>, the rule the Sysinternals check beside the
+/// server uses as well, so the two can never again disagree about who signed a file.</para>
+/// <para>What it guards is the binary update_self installs, and nothing else beside it. The self-update
+/// grant also lets put_file write the server's folder, and the .NET runtime loads some of its own imports
+/// from there: a DLL planted that way loads at the next start, whatever this ratchet accepted -- a
+/// re-staged copy of the current signed build included. That grant is code execution as the service's
+/// account on its own, which is how SECURITY.md lists it; this ratchet narrows only what update_self
+/// itself will run.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsSignatureRatchet : IUpdateGuard
@@ -49,7 +57,7 @@ public sealed class WindowsSignatureRatchet : IUpdateGuard
             return;
         }
 
-        if (current.SignerSubject is not { } publisher)
+        if (VerifiedSigner.Publisher(current) is not { } publisher)
         {
             throw new SelfUpdateRejectedException(
                 $"This server's own executable carries a signature ({current.Verdict}: {current.Detail}) " +

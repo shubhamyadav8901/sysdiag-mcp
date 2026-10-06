@@ -38,15 +38,80 @@ public static class PathScope
             throw new FileTransferException($"No {what} was given.");
         }
 
+        string full;
         try
         {
-            return Path.GetFullPath(path.Trim());
+            full = Path.GetFullPath(path.Trim());
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             throw new FileTransferException($"'{path}' is not a usable file path: {ex.Message}");
         }
+
+        return OperatingSystem.IsWindows() ? WindowsSpelling(full, path, Path.GetFullPath) : full;
     }
+
+    /// <summary>
+    /// A Windows drive path in the one spelling that is both judged and written: drive-letter form, and one
+    /// that normalising again leaves as it is.
+    /// </summary>
+    /// <remarks>
+    /// <para>The caller writes or reads the spelling this returns, and the walk judges it, so the two must
+    /// name the same entry. <see cref="Path.GetFullPath(string)"/> leaves a <c>\\?\</c> or <c>\??\</c> path
+    /// untouched, as Windows does, and such a path reaches entries no ordinary spelling can:
+    /// <c>\\?\C:\Diag\art\j.\x</c> goes through the entry literally named <c>j.</c>, which every ordinary
+    /// lookup reads as <c>j</c>. Judging the drive-letter form of that path while writing the prefixed one
+    /// let a junction named <c>j.</c> carry a write past the self-update gate. So the prefix is dropped, and
+    /// a path that then normalises to something else is refused: there is no drive-letter spelling of it to
+    /// judge, and no file a caller needs is named that way.</para>
+    /// <para>Every drive path must also be a fixed point of normalising. The write normalises it once more,
+    /// and a spelling that is not where normalising stops would name one entry to the walk and another to
+    /// the write.</para>
+    /// <para>A share or a volume GUID is returned as it is, for <see cref="NetworkPath"/> to refuse.</para>
+    /// </remarks>
+    /// <param name="fullPath">The path after <see cref="Path.GetFullPath(string)"/>.</param>
+    /// <param name="requested">The path the caller gave, for the refusal.</param>
+    /// <param name="getFullPath">Win32's normalisation, supplied so the rule can be pinned on any OS.</param>
+    public static string WindowsSpelling(string fullPath, string requested, Func<string, string> getFullPath)
+    {
+        var drivePath = fullPath.Length >= 7 && DriveLetterRoot(fullPath[..7]).Length == 3 ? fullPath[4..] : fullPath;
+        if (!IsDriveRooted(drivePath))
+        {
+            return fullPath;
+        }
+
+        string again;
+        try
+        {
+            again = getFullPath(drivePath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new FileTransferException($"'{requested}' is not a usable file path: {ex.Message}");
+        }
+
+        return string.Equals(again, drivePath, StringComparison.Ordinal)
+            ? drivePath
+            : throw new FileTransferException(
+                $"'{requested}' cannot be judged by its ordinary spelling: Windows reads '{drivePath}' as " +
+                $"'{again}'. A name ending in '.' or ' ', or a '.' or '..' folder, behind a \\\\?\\ prefix names " +
+                "an entry that spelling does not reach, so it is not accepted. Name the file as Windows spells it.");
+    }
+
+    /// <summary>The <c>\\?\</c> form of a drive path, which every Win32 call reads exactly as written.</summary>
+    /// <remarks>
+    /// The walk asks about each component in this form. An ordinary lookup normalises first:
+    /// <c>Directory.Exists(@"C:\Diag\art\j ")</c> trims the trailing space and looks at <c>j</c>, while a
+    /// write to <c>C:\Diag\art\j \x</c> goes through <c>j </c>, since Windows trims a space only at the end of
+    /// a path. A link target, which the kernel follows without normalising, is read literally too. '/' is
+    /// turned into '\' first, as an ordinary lookup would, since the prefix stops that as well. Anything not
+    /// on a drive letter is returned as it is.
+    /// </remarks>
+    public static string LiteralWindowsPath(string path) =>
+        IsDriveRooted(path) ? @"\\?\" + path.Replace('/', '\\') : path;
+
+    private static bool IsDriveRooted(string path) =>
+        path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';
 
     /// <summary>True when <paramref name="candidate"/> is the directory itself or something inside it.</summary>
     public static bool IsUnder(string candidate, string directory) =>
@@ -119,7 +184,8 @@ public static class PathScope
     /// <summary>The real walk on this machine, and whether it crossed a link it could not judge.</summary>
     public static (string Path, bool CrossesMagicLink) Walk(string fullPath) =>
         Walk(fullPath, path => LinkTargetOf(path, fullPath), OperatingSystem.IsWindows(),
-            OperatingSystem.IsLinux() ? link => IsOnProcfs(Path.GetDirectoryName(link) ?? link) : null);
+            OperatingSystem.IsLinux() ? link => IsOnProcfs(Path.GetDirectoryName(link) ?? link) : null,
+            OperatingSystem.IsWindows() ? path => WindowsLongName.Of(path, fullPath) : null);
 
     /// <summary>Whether <paramref name="path"/> is on procfs, where every link is judged a magic link.</summary>
     /// <remarks>
@@ -150,7 +216,31 @@ public static class PathScope
     /// path is not judged: see the server's <c>FileScope.Classify</c>.
     /// </returns>
     public static (string Path, bool CrossesMagicLink) Walk(
-        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink)
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink) =>
+        Walk(fullPath, linkTargetOf, windowsTargets, isMagicLink, longNameOf: null);
+
+    /// <summary>The walk, with the lookup of an existing component's one true spelling supplied as well.</summary>
+    /// <param name="longNameOf">
+    /// The path with its last component spelled as the filesystem stores it, or unchanged when it does not
+    /// exist; null where a name has only one spelling. On Windows an NTFS 8.3 short name is a second
+    /// spelling: see <see cref="WindowsLongName"/>.
+    /// </param>
+    /// <remarks>
+    /// <para>On Windows the walk also settles the two other second spellings of a local directory. A
+    /// device-prefixed drive root (<c>\\?\C:\</c>) is the drive letter's own root, and is put back into
+    /// that form; the components after it are still looked up literally (<see cref="LiteralWindowsPath"/>),
+    /// so the walk does not normalise what the prefix did not. A stream suffix on a directory component (<c>WinDiag::$INDEX_ALLOCATION</c>) names the
+    /// directory itself, so it is refused: no real path needs one, and canonicalising it would mean
+    /// trusting a long-name lookup with syntax it was not written for.</para>
+    /// <para>Each of these let a path really inside the server's folder be spelled so that it did not
+    /// start with the folder's name. The self-update gate compares spellings, and "not in the server
+    /// directory" is its permissive answer: with an artifact directory above the server's,
+    /// <c>C:\Diag\WINDIA~1\crypt32.dll</c> was owned through the artifact directory and never gated,
+    /// and the runtime loads its imports from that folder at the next start.</para>
+    /// </remarks>
+    public static (string Path, bool CrossesMagicLink) Walk(
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink,
+        Func<string, string>? longNameOf)
     {
         var root = Path.GetPathRoot(fullPath);
         if (string.IsNullOrEmpty(root))
@@ -158,7 +248,7 @@ public static class PathScope
             return (fullPath, false);
         }
 
-        var current = root;
+        var current = windowsTargets ? DriveLetterRoot(root) : root;
         var pending = new Stack<string>();
         PushComponents(pending, fullPath[root.Length..]);
         var hops = 0;
@@ -178,11 +268,21 @@ public static class PathScope
                 continue;
             }
 
+            // NTFS forbids ':' in a name, so on a component that is not the last it can only be stream
+            // syntax, and on a directory that names the directory itself under a second spelling.
+            if (windowsTargets && pending.Count > 0 && part.Contains(':', StringComparison.Ordinal))
+            {
+                throw new FileTransferException(
+                    $"'{fullPath}' names a stream of the directory '{part}' as a folder on the way to the file. " +
+                    "That is the directory itself under another spelling, which is not accepted: name the " +
+                    "directory without the ':' suffix.");
+            }
+
             var next = Path.Combine(current, part);
             var target = linkTargetOf(next);
             if (target is null)
             {
-                current = next;
+                current = longNameOf is null ? next : LongName(current, part, next, longNameOf);
                 continue;
             }
 
@@ -224,6 +324,7 @@ public static class PathScope
             if (!string.IsNullOrEmpty(targetRoot))
             {
                 current = Path.GetPathRoot(Path.GetFullPath(targetRoot, current))!;
+                current = windowsTargets ? DriveLetterRoot(current) : current;
             }
 
             PushComponents(pending, target[(targetRoot?.Length ?? 0)..]);
@@ -236,9 +337,48 @@ public static class PathScope
             (rest.Count == 0 ? link : Path.Combine([link, .. rest.ToArray()]), true);
     }
 
+    /// <summary>The long spelling of <paramref name="next"/>, with a stream suffix on the last component kept as given.</summary>
+    /// <remarks>
+    /// A stream can only be on the last component by now -- one further up is refused -- and
+    /// <c>a.exe:Zone.Identifier</c> is a real thing to read. The lookup cannot take the ':', so the file's
+    /// own name is looked up and the stream put back after it. A bare <c>:stream</c> is a stream of the
+    /// directory already resolved, kept as spelled.
+    /// </remarks>
+    private static string LongName(string current, string part, string next, Func<string, string> longNameOf)
+    {
+        var stream = part.IndexOf(':', StringComparison.Ordinal);
+        return stream switch
+        {
+            < 0 => longNameOf(next),
+            0 => next,
+            _ => longNameOf(Path.Combine(current, part[..stream])) + part[stream..]
+        };
+    }
+
+    /// <summary>A drive's root in its drive-letter form: <c>\\?\C:\</c> and <c>\\.\C:\</c> become <c>C:\</c>.</summary>
+    /// <remarks>
+    /// The long-path prefix reaches the same directory as the drive letter, and <see cref="NetworkPath"/>
+    /// admits it for that reason. The owned directories are configured, and compared, in drive-letter
+    /// form, so a path judged in the prefixed form started with neither of them. Any other root -- a
+    /// share, a volume GUID -- is returned as it is: those are refused before the walk.
+    /// </remarks>
+    public static string DriveLetterRoot(string root)
+    {
+        static bool Separator(char c) => c is '\\' or '/';
+
+        var prefixed = root.Length == 7
+                       && ((Separator(root[0]) && Separator(root[1]) && root[2] is '?' or '.') ||
+                           (root[0] == '\\' && root[1] == '?' && root[2] == '?'))
+                       && Separator(root[3]) && char.IsAsciiLetter(root[4]) && root[5] == ':' && Separator(root[6]);
+
+        return prefixed ? root[4..] : root;
+    }
+
     /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>
     private static string? LinkTargetOf(string path, string fullPath)
     {
+        // Asked literally on Windows, so a name ending in '.' or ' ' is the entry the write goes through.
+        path = OperatingSystem.IsWindows() ? LiteralWindowsPath(path) : path;
         try
         {
             FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
