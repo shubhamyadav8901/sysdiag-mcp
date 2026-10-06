@@ -235,6 +235,69 @@ public sealed class InstallTests
         Assert.Equal(["/usr/local is writable by its group or by everyone (mode 0775)."], found);
     }
 
+    /// <summary>Records what the install would change, and refuses the directories it is told to.</summary>
+    private sealed class RecordingInstallFiles : MacServiceInstaller.IInstallFiles
+    {
+        public HashSet<string> Refused { get; } = new(StringComparer.Ordinal);
+
+        public HashSet<string> Existing { get; } = new(StringComparer.Ordinal);
+
+        public List<string> Changes { get; } = [];
+
+        public List<string> Checked { get; } = [];
+
+        public void RequireRootOnlyDirectory(string path, string setting)
+        {
+            Checked.Add(path);
+            if (Refused.Contains(path))
+            {
+                throw new ConfigurationException($"{setting} {path} cannot be used.");
+            }
+        }
+
+        public bool DirectoryExists(string path) => Existing.Contains(path);
+
+        public void OwnedDirectory(string path, UnixFileMode mode) => Changes.Add($"directory {path}");
+
+        public void ReplaceExecutable(string source) => Changes.Add($"binary from {source}");
+
+        public void WriteFresh(string path, string text, UnixFileMode mode) => Changes.Add($"file {path}");
+
+        public void RequireStartupPermissions(string envFile, string executable) => Checked.Add(envFile);
+    }
+
+    [Fact]
+    public void A_refused_artifact_directory_leaves_the_running_daemons_binary_and_settings_as_they_were()
+    {
+        // Before: the binary was replaced and the env file rewritten -- with the new token, grants and this
+        // MACDIAG_ARTIFACT_DIR -- before the directory was checked. The old daemon ran on, and at its next restart
+        // read that env file, refused to start on the directory, and launchd retried it every 10 s for good.
+        var options = Parse("--install-service", "--http", "http://0.0.0.0:4025", "--artifacts", "/Users/alice/diag");
+        var files = new RecordingInstallFiles { Refused = { "/Users/alice/diag" } };
+
+        Assert.Throws<ConfigurationException>(() => MacServiceInstaller.PutFilesInPlace(options, "/Users/admin/MacDiag.Mcp", files));
+
+        Assert.Equal(["/Users/alice/diag"], files.Checked);
+        Assert.Empty(files.Changes);
+    }
+
+    [Fact]
+    public void A_missing_artifact_directory_is_created_once_checked_and_an_existing_one_is_left_as_it_is()
+    {
+        var options = Parse("--install-service", "--http", "http://0.0.0.0:4025", "--artifacts", "/var/db/diag");
+        var missing = new RecordingInstallFiles();
+        var existing = new RecordingInstallFiles { Existing = { "/var/db/diag" } };
+
+        MacServiceInstaller.PutFilesInPlace(options, "/Users/admin/MacDiag.Mcp", missing);
+        MacServiceInstaller.PutFilesInPlace(options, "/Users/admin/MacDiag.Mcp", existing);
+
+        Assert.Equal("/var/db/diag", missing.Checked[0]);
+        Assert.Contains("directory /var/db/diag", missing.Changes);
+        Assert.DoesNotContain("directory /var/db/diag", existing.Changes);
+        Assert.Contains("binary from /Users/admin/MacDiag.Mcp", existing.Changes);
+        Assert.Equal(options.PlistPath, existing.Changes[^1]["file ".Length..]);
+    }
+
     [Theory]
     [InlineData("http://0.0.0.0:4025", "127.0.0.1", 4025)]
     [InlineData("http://+:4025", "127.0.0.1", 4025)]
