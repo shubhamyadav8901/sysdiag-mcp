@@ -20,11 +20,14 @@ public readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, u
 /// <param name="Mode">st_mode: file type, permission bits, and setuid/setgid/sticky.</param>
 /// <param name="Immutable">chattr +i: nobody, root included, may write, rename or delete it.</param>
 /// <param name="AppendOnly">chattr +a: writes may only append.</param>
-public readonly record struct FileStatus(uint UserId, uint GroupId, ushort Mode, bool Immutable, bool AppendOnly)
+/// <param name="LinkCount">How many names the file has: above one, it is also reachable by another path.</param>
+public readonly record struct FileStatus(uint UserId, uint GroupId, ushort Mode, bool Immutable, bool AppendOnly, uint LinkCount = 1)
 {
     public bool IsDirectory => (Mode & 0xF000) == 0x4000;
 
     public bool IsRegular => (Mode & 0xF000) == 0x8000;
+
+    public bool IsSymbolicLink => (Mode & 0xF000) == 0xA000;
 }
 
 public sealed record AccountEntry(string Name, uint UserId, uint GroupId, string Home);
@@ -84,6 +87,7 @@ internal static class LibC
     private const int OCloExec = 0x80000;
     private const int OPath = 0x200000;
     private const int AtEmptyPath = 0x1000;
+    private const int AtSymlinkNoFollow = 0x100;
     private const int GroupSize = 32;
 
     public const int ROk = 4;
@@ -124,9 +128,9 @@ internal static class LibC
     }
 
     /// <summary>statx into the buffer: false when nothing is at the path, a throw for anything else.</summary>
-    private static bool Statx(string path, Span<byte> buffer)
+    private static bool Statx(string path, Span<byte> buffer, int flags = 0)
     {
-        if (statx(AtFdCwd, path, AtStatxDontSync, StatxBasicStats, ref MemoryMarshal.GetReference(buffer)) == 0)
+        if (statx(AtFdCwd, path, AtStatxDontSync | flags, StatxBasicStats, ref MemoryMarshal.GetReference(buffer)) == 0)
         {
             return true;
         }
@@ -163,10 +167,15 @@ internal static class LibC
     }
 
     /// <summary>Owner, group, mode and the immutable and append-only attributes, links followed; null when nothing is there.</summary>
-    public static FileStatus? Status(string path)
+    public static FileStatus? Status(string path) => Status(path, 0);
+
+    /// <summary>As <see cref="Status"/>, but of a link itself -- its own owner -- rather than of what it leads to.</summary>
+    public static FileStatus? LinkStatus(string path) => Status(path, AtSymlinkNoFollow);
+
+    private static FileStatus? Status(string path, int flags)
     {
         Span<byte> buffer = stackalloc byte[256];
-        if (!Statx(path, buffer))
+        if (!Statx(path, buffer, flags))
         {
             return null;
         }
@@ -178,7 +187,8 @@ internal static class LibC
             BinaryPrimitives.ReadUInt32LittleEndian(buffer[24..]),
             BinaryPrimitives.ReadUInt16LittleEndian(buffer[28..]),
             (attributes & StatxAttrImmutable) != 0,
-            (attributes & StatxAttrAppend) != 0);
+            (attributes & StatxAttrAppend) != 0,
+            BinaryPrimitives.ReadUInt32LittleEndian(buffer[16..]));
     }
 
     /// <summary>A read handle on a regular file; a FIFO, device or socket throws <see cref="NotRegularFileException"/>.</summary>
