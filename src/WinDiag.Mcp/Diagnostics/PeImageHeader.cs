@@ -17,8 +17,8 @@ namespace WinDiag.Mcp.Diagnostics;
 /// Nothing here says which file an image is. Every field is the builder's to choose, and the loader
 /// rewrites some of them in the copy it maps (ImageBase always; Machine for an ARM64X image in an x64
 /// process, or an IL-only PE32 in a 64-bit one), so two headers agreeing proves nothing about two files
-/// being the same -- which is why <c>process_modules</c> settles that from the kernel's own record of the
-/// mapped file instead.
+/// being the same -- which is why <c>process_modules</c> settles that from the kernel's name for the
+/// mapped file, and from who could have changed the directories on that name, instead.
 /// </remarks>
 public readonly record struct PeImageHeader(ulong ImageBase, bool DynamicBase, ushort Machine)
 {

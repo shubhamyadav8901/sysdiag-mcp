@@ -40,9 +40,14 @@ public sealed class ModuleTools
         "held open while it is read, never from the path the process lists for it: a module whose listed " +
         "path now holds a different file - renamed away and replaced while loaded, or updated under the " +
         "running process - is marked [REPLACED ON DISK] and still reported from the file it was loaded " +
-        "from. A module whose file cannot be identified that way, such as one loaded from a network share, " +
-        "is marked [FILE NOT IDENTIFIED] and gets no version or signature verdict rather than another " +
-        "file's. " +
+        "from. The kernel's name for a mapping is the name the file was opened under, which does not " +
+        "follow a rename of a directory above it, so it is trusted only on a path that SYSTEM, " +
+        "Administrators and TrustedInstaller alone can change - a policy judgement, not a proof: a " +
+        "directory moved into place earlier, while permissions were looser, is not caught, and holders of " +
+        "the restore or take-ownership privilege can change any directory. A module whose " +
+        "file cannot be identified that way - under a user's profile or a temp directory, or on a network " +
+        "share - is marked [FILE NOT IDENTIFIED], with the first directory anyone else can change, and " +
+        "gets no version or signature verdict rather than another file's. " +
         "Set verifySignatures to check each one's Authenticode signature, which finds unsigned modules " +
         "loaded into a signed process; it is not tamper detection against a process that is already " +
         "compromised, which can rewrite its own module list and headers, and the verdict is on the file " +

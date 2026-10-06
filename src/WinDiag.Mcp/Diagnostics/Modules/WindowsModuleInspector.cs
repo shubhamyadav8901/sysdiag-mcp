@@ -18,8 +18,10 @@ namespace WinDiag.Mcp.Diagnostics.Modules;
 /// <para>Version, preferred base and signature can only be read from a file, and the file at a module's
 /// listed path need not be the one that was loaded: NTFS lets a loaded DLL be renamed, and something else
 /// put in its place. So none of them is read from that path. Each comes from the file the kernel says is
-/// behind the module's mapping, held open while it is read (<see cref="WindowsModuleImageSource"/>); a
-/// module whose file cannot be identified that way gets none of them, and says why.</para>
+/// behind the module's mapping, held open while it is read, and only where no one but SYSTEM,
+/// Administrators and TrustedInstaller could have moved the directories that name runs through
+/// (<see cref="WindowsModuleImageSource"/>); a module whose file cannot be identified that way gets none
+/// of them, and says why.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsModuleInspector : IModuleInspector

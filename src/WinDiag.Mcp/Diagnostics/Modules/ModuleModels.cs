@@ -4,9 +4,11 @@ namespace WinDiag.Mcp.Diagnostics.Modules;
 /// <remarks>
 /// <see cref="Path"/> is the loader's record of where the module came from, which the process itself keeps
 /// and which NTFS lets go stale: a loaded DLL can be renamed, and another file put at its old path. So
-/// nothing below is read from that path. The kernel names the file actually behind each module's mapping,
-/// that file is held open against writes, renames and deletes, and version, preferred base and signature
-/// are all read from it -- or from nothing, when it could not be identified.
+/// nothing below is read from that path. The kernel names the file behind each module's mapping -- by the
+/// name it was opened under, trusted only on a path that SYSTEM, Administrators and TrustedInstaller alone
+/// can change, because that name does not follow a directory rename -- that file is held open against
+/// writes, renames and deletes, and version, preferred base and signature are all read from it -- or from
+/// nothing, when it could not be identified.
 /// </remarks>
 /// <param name="FileVersion">
 /// Read from the loaded image's own file. Null when that file could not be identified
@@ -42,8 +44,10 @@ namespace WinDiag.Mcp.Diagnostics.Modules;
 /// Where the loaded image's file is now, when that is not <see cref="Path"/>.
 /// </param>
 /// <param name="ImageFileUnknownReason">
-/// Why the file behind this module's mapping could not be identified and held. When set, nothing about
-/// the module is read from any file: no version, no preferred base, and no signature verdict.
+/// Why the file behind this module's mapping could not be identified and held -- including that someone
+/// other than SYSTEM, Administrators or TrustedInstaller can change a directory on its path, which is
+/// named. When set, nothing about the module is read from any file: no version, no preferred base, and
+/// no signature verdict.
 /// </param>
 public sealed record LoadedModule(
     string Name,

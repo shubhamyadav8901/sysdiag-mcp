@@ -18,11 +18,15 @@ namespace WinDiag.Mcp.Diagnostics.Modules;
 /// that -- every field compared is the DLL author's to choose, so an unsigned DLL built with a Microsoft
 /// DLL's stamp, size and checksum matched its signed stand-in exactly.</para>
 /// <para><c>GetMappedFileName</c> asks the kernel for the name of the file object behind the image
-/// section, which is the file that was mapped, wherever it has since been renamed to. That file is opened
-/// by that name, held against writers and renames, and confirmed to be the mapped one
-/// (<see cref="ModuleImageIdentity.WhyNotTheMappedFile"/>). Everything about the module is then read
-/// through that one handle, so no later rename or replacement can split what was checked from what was
-/// reported.</para>
+/// section. That is the name the file was opened under, which follows a rename of the file itself but not
+/// of a directory above it -- so a directory renamed away with the loaded DLL inside, and a signed copy
+/// put at the old path, leaves the kernel naming the copy. No user-mode API names the mapped file any
+/// other way, so the name is trusted only on a path that SYSTEM, Administrators and TrustedInstaller
+/// alone could have changed (<see cref="ModuleImageIdentity.WhyItsPathMayHaveMoved"/>): a policy
+/// judgement, not a proof. The file is opened by that name, held against writers and renames, and
+/// confirmed to be the one the kernel still names (<see cref="ModuleImageIdentity.WhyNotTheMappedFile"/>).
+/// Everything about the module is then read through that one handle, so no later rename or replacement
+/// can split what was checked from what was reported.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsModuleImageSource : IModuleImageSource
@@ -30,10 +34,19 @@ internal sealed class WindowsModuleImageSource : IModuleImageSource
     private const uint ProcessQueryInformation = 0x0400;
 
     private const uint GenericRead = 0x8000_0000;
+    private const uint ReadControl = 0x0002_0000;
     private const uint FileReadAttributes = 0x0080;
     private const uint FileShareRead = 0x1;
     private const uint FileShareAll = 0x7;
     private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x0200_0000;
+    private const uint FileFlagOpenReparsePoint = 0x0020_0000;
+    private const uint FileAttributeDirectory = 0x10;
+    private const uint FileAttributeReparsePoint = 0x400;
+    private const int FileAttributeTagInfoClass = 9;
+    private const int SeFileObject = 1;
+    private const uint OwnerSecurityInformation = 0x1;
+    private const uint DaclSecurityInformation = 0x4;
     private const uint FileNameOpened = 0x8;
     private const uint VolumeNameNt = 0x2;
     private const int FileIdInfoClass = 18;
@@ -117,6 +130,16 @@ internal sealed class WindowsModuleImageSource : IModuleImageSource
                 return ModuleImageFile.Unknown(reason);
             }
 
+            // Judged while the file is held: held without delete sharing, it pins every directory above
+            // it against renames (A_file_held_as_a_module_file_is_held_cannot_be_renamed_and_neither_can_its_directory),
+            // so the directories examined are the ones the file was just opened through.
+            var chain = ModuleImageIdentity.DirectoriesAbove(local).Select(Guard).ToList();
+            if (ModuleImageIdentity.WhyItsPathMayHaveMoved(chain) is { } moved)
+            {
+                handle.Dispose();
+                return ModuleImageFile.Unknown(moved);
+            }
+
             var listed = ListedPathIsOtherFile(listedPath, Identity(handle));
 
             // Unbuffered: the signature check reads through the same handle natively, behind its back.
@@ -158,6 +181,108 @@ internal sealed class WindowsModuleImageSource : IModuleImageSource
         return ModuleImageIdentity.ListedPathIsOtherFile(null, Identity(listed), image);
     }
 
+    /// <summary>Who owns one directory, who may do what to it, and whether it is a link.</summary>
+    /// <remarks>
+    /// Through one handle, opened with <c>FILE_FLAG_OPEN_REPARSE_POINT</c> so a junction or link at that
+    /// name is examined itself rather than followed, and never reopened by path. Every failure is an
+    /// unreadable directory, which fails the policy closed: a descriptor this server cannot read is not
+    /// evidence that only administrators can change it.
+    /// </remarks>
+    private static DirectoryGuard Guard(string directory)
+    {
+        using var handle = CreateFileW(@"\\?\" + directory, ReadControl | FileReadAttributes, FileShareAll,
+            IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            return DirectoryGuard.Unreadable(directory, Describe(Marshal.GetLastPInvokeError()));
+        }
+
+        if (!GetFileInformationByHandleEx(handle, FileAttributeTagInfoClass, out FileAttributeTagInfo tag, (uint)Marshal.SizeOf<FileAttributeTagInfo>()))
+        {
+            return DirectoryGuard.Unreadable(directory, Describe(Marshal.GetLastPInvokeError()));
+        }
+
+        if ((tag.FileAttributes & FileAttributeDirectory) == 0)
+        {
+            return DirectoryGuard.Unreadable(directory, "it is not a directory");
+        }
+
+        var error = GetSecurityInfo(handle, SeFileObject, OwnerSecurityInformation | DaclSecurityInformation,
+            out var owner, out _, out var dacl, out _, out var descriptor);
+        if (error != 0)
+        {
+            return DirectoryGuard.Unreadable(directory, Describe((int)error));
+        }
+
+        try
+        {
+            if (owner == IntPtr.Zero || SidString(owner) is not { } ownerSid)
+            {
+                return DirectoryGuard.Unreadable(directory, "its owner could not be read");
+            }
+
+            // No DACL pointer is a descriptor with no DACL or a null one, and Windows grants everyone full
+            // access to both ("Null DACLs and Empty DACLs"); the policy refuses null for exactly that.
+            List<DirectoryAce>? entries = null;
+            if (dacl != IntPtr.Zero)
+            {
+                entries = [];
+                var count = (ushort)Marshal.ReadInt16(dacl, 4); // ACL.AceCount
+                for (var i = 0; i < count; i++)
+                {
+                    if (!GetAce(dacl, (uint)i, out var ace))
+                    {
+                        return DirectoryGuard.Unreadable(directory, Describe(Marshal.GetLastPInvokeError()));
+                    }
+
+                    var type = Marshal.ReadByte(ace, 0);
+                    var flags = Marshal.ReadByte(ace, 1);
+
+                    // ACCESS_ALLOWED, ACCESS_DENIED and their callback forms share one layout: the
+                    // ACE_HEADER, the mask, then the SID. Any other type is passed on unread, and an
+                    // unread allow fails the policy.
+                    if (type is 0x0 or 0x1 or 0x9 or 0xA)
+                    {
+                        if (SidString(ace + 8) is not { } sid)
+                        {
+                            return DirectoryGuard.Unreadable(directory, "an access entry's trustee could not be read");
+                        }
+
+                        entries.Add(new DirectoryAce(type, flags, (uint)Marshal.ReadInt32(ace, 4), sid));
+                    }
+                    else
+                    {
+                        entries.Add(new DirectoryAce(type, flags, 0, null));
+                    }
+                }
+            }
+
+            return new DirectoryGuard(directory, null, (tag.FileAttributes & FileAttributeReparsePoint) != 0,
+                ownerSid, entries);
+        }
+        finally
+        {
+            LocalFree(descriptor);
+        }
+    }
+
+    private static string? SidString(IntPtr sid)
+    {
+        if (!ConvertSidToStringSidW(sid, out var text))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Marshal.PtrToStringUni(text);
+        }
+        finally
+        {
+            LocalFree(text);
+        }
+    }
+
     private string? MappedFileName(ulong baseAddress, out int error)
     {
         var length = K32GetMappedFileNameW(_process!, (IntPtr)(long)baseAddress, _name, (uint)_name.Length);
@@ -174,7 +299,7 @@ internal sealed class WindowsModuleImageSource : IModuleImageSource
     }
 
     private static FileIdentity? Identity(SafeFileHandle handle) =>
-        GetFileInformationByHandleEx(handle, FileIdInfoClass, out var info, (uint)Marshal.SizeOf<FileIdInfo>())
+        GetFileInformationByHandleEx(handle, FileIdInfoClass, out FileIdInfo info, (uint)Marshal.SizeOf<FileIdInfo>())
             ? new FileIdentity(info.VolumeSerialNumber, new UInt128(info.FileIdHigh, info.FileIdLow))
             : null;
 
@@ -226,6 +351,13 @@ internal sealed class WindowsModuleImageSource : IModuleImageSource
         public ulong FileIdHigh;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAttributeTagInfo
+    {
+        public uint FileAttributes;
+        public uint ReparseTag;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern SafeProcessHandle OpenProcess(uint access, bool inheritHandle, int processId);
 
@@ -243,6 +375,27 @@ internal sealed class WindowsModuleImageSource : IModuleImageSource
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(
         SafeFileHandle file, int informationClass, out FileIdInfo information, uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle file, int informationClass, out FileAttributeTagInfo information, uint size);
+
+    [DllImport("advapi32.dll")]
+    private static extern uint GetSecurityInfo(
+        SafeFileHandle handle, int objectType, uint securityInfo, out IntPtr owner, out IntPtr group,
+        out IntPtr dacl, out IntPtr sacl, out IntPtr securityDescriptor);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetAce(IntPtr acl, uint index, out IntPtr ace);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ConvertSidToStringSidW(IntPtr sid, out IntPtr text);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern uint QueryDosDeviceW(string deviceName, char[] targetPath, uint max);
