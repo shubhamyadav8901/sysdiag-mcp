@@ -156,7 +156,11 @@ public sealed class WindowsRestartHelper : IRestartHelper
             .AppendLine($">>\"{log}\" echo [%time%] done")
             .ToString();
 
-        File.WriteAllText(helper, script, Encoding.ASCII);
+        WriteScript(helper, script);
+
+        // Removed rather than left for cmd's ">" to truncate, for the reason WriteScript gives: a log a user
+        // left here would keep their ownership, and a link at that name would aim SYSTEM's writes elsewhere.
+        File.Delete(log);
 
         using var process = Process.Start(new ProcessStartInfo
         {
@@ -168,6 +172,25 @@ public sealed class WindowsRestartHelper : IRestartHelper
         });
 
         _logger.LogInformation("self-update helper started, logging to {Log}", log);
+    }
+
+    /// <summary>Writes <paramref name="script"/> to <paramref name="path"/> as a file this call creates.</summary>
+    /// <remarks>
+    /// <para>Deleted and created anew, never opened and truncated. Truncating keeps the file that is
+    /// there -- its owner, its DACL and every handle already open on it -- and an artifact directory an
+    /// older build left writable by every user may hold a self-update.cmd a user made. Its owner can grant
+    /// itself write access whatever the directory says, and cmd re-reads a batch file line by line while
+    /// the helper waits for the server to exit, so a rewrite there runs as SYSTEM.</para>
+    /// <para><see cref="FileMode.CreateNew"/>, so if anything is at that name again by the time the
+    /// file is created -- which needs write access to the directory -- the update fails instead of
+    /// writing into it.</para>
+    /// </remarks>
+    internal static void WriteScript(string path, string script)
+    {
+        File.Delete(path);
+        using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        var bytes = Encoding.ASCII.GetBytes(script);
+        file.Write(bytes);
     }
 
     private static string Quote(string argument) =>

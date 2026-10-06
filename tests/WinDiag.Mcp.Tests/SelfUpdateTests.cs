@@ -151,6 +151,24 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     }
 
     [Fact]
+    public void The_helper_script_is_a_new_file_never_one_already_at_that_name_rewritten_in_place()
+    {
+        // A self-update.cmd left by a user while the artifact directory was writable stays theirs if it is
+        // truncated and rewritten: same owner, same DACL, and any handle they hold still writes to it -- and
+        // cmd re-reads a batch file as it runs, for minutes while the helper waits for the server to exit.
+        // A handle held on the old file stands in for that user here: it must not see the helper's text.
+        var helper = Path.Combine(_directory, "self-update.cmd");
+        File.WriteAllText(helper, "planted");
+        using var held = new FileStream(helper, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        WindowsRestartHelper.WriteScript(helper, "@echo off\r\n");
+
+        Assert.Equal("@echo off\r\n", File.ReadAllText(helper));
+        using var reader = new StreamReader(held);
+        Assert.Equal("planted", reader.ReadToEnd());
+    }
+
+    [Fact]
     public void A_refused_update_never_stops_the_server_accepting_calls()
     {
         // The server now turns callers away while an update is pending, so it can reach idle before it
