@@ -119,7 +119,8 @@ public static class PathScope
     /// <summary>The real walk on this machine, and whether it crossed a link it could not judge.</summary>
     public static (string Path, bool CrossesMagicLink) Walk(string fullPath) =>
         Walk(fullPath, path => LinkTargetOf(path, fullPath), OperatingSystem.IsWindows(),
-            OperatingSystem.IsLinux() ? link => IsOnProcfs(Path.GetDirectoryName(link) ?? link) : null);
+            OperatingSystem.IsLinux() ? link => IsOnProcfs(Path.GetDirectoryName(link) ?? link) : null,
+            OperatingSystem.IsWindows() ? path => WindowsLongName.Of(path, fullPath) : null);
 
     /// <summary>Whether <paramref name="path"/> is on procfs, where every link is judged a magic link.</summary>
     /// <remarks>
@@ -150,7 +151,30 @@ public static class PathScope
     /// path is not judged: see the server's <c>FileScope.Classify</c>.
     /// </returns>
     public static (string Path, bool CrossesMagicLink) Walk(
-        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink)
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink) =>
+        Walk(fullPath, linkTargetOf, windowsTargets, isMagicLink, longNameOf: null);
+
+    /// <summary>The walk, with the lookup of an existing component's one true spelling supplied as well.</summary>
+    /// <param name="longNameOf">
+    /// The path with its last component spelled as the filesystem stores it, or unchanged when it does not
+    /// exist; null where a name has only one spelling. On Windows an NTFS 8.3 short name is a second
+    /// spelling: see <see cref="WindowsLongName"/>.
+    /// </param>
+    /// <remarks>
+    /// <para>On Windows the walk also settles the two other second spellings of a local directory. A
+    /// device-prefixed drive root (<c>\\?\C:\</c>) is the drive letter's own root, and is put back into
+    /// that form. A stream suffix on a directory component (<c>WinDiag::$INDEX_ALLOCATION</c>) names the
+    /// directory itself, so it is refused: no real path needs one, and canonicalising it would mean
+    /// trusting a long-name lookup with syntax it was not written for.</para>
+    /// <para>Each of these let a path really inside the server's folder be spelled so that it did not
+    /// start with the folder's name. The self-update gate compares spellings, and "not in the server
+    /// directory" is its permissive answer: with an artifact directory above the server's,
+    /// <c>C:\Diag\WINDIA~1\crypt32.dll</c> was owned through the artifact directory and never gated,
+    /// and the runtime loads its imports from that folder at the next start.</para>
+    /// </remarks>
+    public static (string Path, bool CrossesMagicLink) Walk(
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink,
+        Func<string, string>? longNameOf)
     {
         var root = Path.GetPathRoot(fullPath);
         if (string.IsNullOrEmpty(root))
@@ -158,7 +182,7 @@ public static class PathScope
             return (fullPath, false);
         }
 
-        var current = root;
+        var current = windowsTargets ? DriveLetterRoot(root) : root;
         var pending = new Stack<string>();
         PushComponents(pending, fullPath[root.Length..]);
         var hops = 0;
@@ -178,11 +202,21 @@ public static class PathScope
                 continue;
             }
 
+            // NTFS forbids ':' in a name, so on a component that is not the last it can only be stream
+            // syntax, and on a directory that names the directory itself under a second spelling.
+            if (windowsTargets && pending.Count > 0 && part.Contains(':', StringComparison.Ordinal))
+            {
+                throw new FileTransferException(
+                    $"'{fullPath}' names a stream of the directory '{part}' as a folder on the way to the file. " +
+                    "That is the directory itself under another spelling, which is not accepted: name the " +
+                    "directory without the ':' suffix.");
+            }
+
             var next = Path.Combine(current, part);
             var target = linkTargetOf(next);
             if (target is null)
             {
-                current = next;
+                current = longNameOf is null ? next : longNameOf(next);
                 continue;
             }
 
@@ -224,6 +258,7 @@ public static class PathScope
             if (!string.IsNullOrEmpty(targetRoot))
             {
                 current = Path.GetPathRoot(Path.GetFullPath(targetRoot, current))!;
+                current = windowsTargets ? DriveLetterRoot(current) : current;
             }
 
             PushComponents(pending, target[(targetRoot?.Length ?? 0)..]);
@@ -234,6 +269,25 @@ public static class PathScope
         // Past a link the walk cannot follow, the rest is kept as spelled and marked unjudged.
         static (string, bool) Unjudged(string link, Stack<string> rest) =>
             (rest.Count == 0 ? link : Path.Combine([link, .. rest.ToArray()]), true);
+    }
+
+    /// <summary>A drive's root in its drive-letter form: <c>\\?\C:\</c> and <c>\\.\C:\</c> become <c>C:\</c>.</summary>
+    /// <remarks>
+    /// The long-path prefix reaches the same directory as the drive letter, and <see cref="NetworkPath"/>
+    /// admits it for that reason. The owned directories are configured, and compared, in drive-letter
+    /// form, so a path judged in the prefixed form started with neither of them. Any other root -- a
+    /// share, a volume GUID -- is returned as it is: those are refused before the walk.
+    /// </remarks>
+    public static string DriveLetterRoot(string root)
+    {
+        static bool Separator(char c) => c is '\\' or '/';
+
+        var prefixed = root.Length == 7
+                       && ((Separator(root[0]) && Separator(root[1]) && root[2] is '?' or '.') ||
+                           (root[0] == '\\' && root[1] == '?' && root[2] == '?'))
+                       && Separator(root[3]) && char.IsAsciiLetter(root[4]) && root[5] == ':' && Separator(root[6]);
+
+        return prefixed ? root[4..] : root;
     }
 
     /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>
