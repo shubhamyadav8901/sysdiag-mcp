@@ -29,6 +29,9 @@ public sealed class SignatureTests
         public Func<string, ExternalResult> AppleAnchored { get; set; } = path =>
             new ExternalResult(3, "", $"{path}: test-requirement: code failed to satisfy specified code requirement(s)");
 
+        /// <summary>codesign -R="anchor apple generic": by default every chain here is one Apple issued, as a Developer ID is.</summary>
+        public Func<string, ExternalResult> AppleIssued { get; set; } = _ => new ExternalResult(0, "", "");
+
         public Func<string, ExternalResult> Display { get; set; } = path =>
             new ExternalResult(0, "", Fixture(Unverified, path == AppBinary ? "codesign-dvvv-devid" : "codesign-dvvv-adhoc"));
 
@@ -47,6 +50,7 @@ public sealed class SignatureTests
             _ when Hangs.Contains(program) || Hangs.Contains($"{program} {args[0]}") => FakeCommands.Hang(program),
             "stat" => Answer(Stats, args),
             "shasum" => Shasum(args[^1]),
+            "codesign" when args.Contains("-R=anchor apple generic") => AppleIssued(args[^1]),
             "codesign" when args.Contains("-R=anchor apple") => AppleAnchored(args[^1]),
             "codesign" when args[0] == "--verify" => Verify(args[^1]),
             "codesign" when args[0] == "-dvvv" => Display(args[^1]),
@@ -200,6 +204,66 @@ public sealed class SignatureTests
     }
 
     [Fact]
+    public async Task A_signature_with_a_team_is_still_asked_whether_apple_issued_its_certificate()
+    {
+        // The team is the leaf's OU, which whoever made the certificate chose: it can skip the Apple question, never this one.
+        var commands = new Mac().Commands();
+
+        await Inspector(commands).InspectAsync([AppBinary], CancellationToken.None);
+
+        Assert.Contains(commands.Calls, c => c.Program == "codesign" && c.Arguments.SequenceEqual(["--verify", "--strict", "-R=anchor apple generic", "--", AppBinary]));
+    }
+
+    [Fact]
+    public async Task A_self_signed_chain_copying_a_developer_id_name_and_team_is_untrusted_not_valid()
+    {
+        // Before: Valid, "Signed by certificate "Developer ID Application: Google LLC (EQHXZ8M8AV)" (team EQHXZ8M8AV), verified" --
+        // word for word what Google's real signature reads as, from a certificate anybody can make.
+        var mac = new Mac
+        {
+            Display = _ => new ExternalResult(0, "",
+                "Identifier=com.google.keystone\nAuthority=Developer ID Application: Google LLC (EQHXZ8M8AV)\nTeamIdentifier=EQHXZ8M8AV\n"),
+            AppleIssued = path => new ExternalResult(3, "", $"{path}: test-requirement: code failed to satisfy specified code requirement(s)"),
+        };
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([AppBinary], CancellationToken.None)).Files.Single();
+
+        Assert.Equal(SignatureVerdict.Untrusted, file.Verdict);
+        Assert.StartsWith("Signed by certificate \"Developer ID Application: Google LLC (EQHXZ8M8AV)\", which Apple did not issue", file.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("(team ", file.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("verified", file.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_issuer_check_that_does_not_finish_is_unknown_rather_than_valid()
+    {
+        // Whether anybody but the signer vouches for the name is the question left open: Valid would answer it.
+        var mac = new Mac { AppleIssued = _ => FakeCommands.Hang("codesign") };
+
+        var file = (await Inspector(mac.Commands()).InspectAsync([AppBinary], CancellationToken.None)).Files.Single();
+
+        Assert.Equal(SignatureVerdict.Unknown, file.Verdict);
+        Assert.Contains("whether Apple issued its certificate was not determined", file.Detail, StringComparison.Ordinal);
+        Assert.Contains("did not finish", file.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Apples_own_signature_is_not_asked_the_issuer_question_as_well()
+    {
+        // anchor apple already settles it, and each requirement check repeats the whole verification.
+        var mac = new Mac
+        {
+            Display = _ => new ExternalResult(0, "", Fixture(Unverified, "codesign-dvvv-apple")),
+            AppleAnchored = _ => new ExternalResult(0, "", ""),
+        };
+        var commands = mac.Commands();
+
+        await Inspector(commands).InspectAsync([Tool], CancellationToken.None);
+
+        Assert.DoesNotContain(commands.Calls, c => c.Arguments.Contains("-R=anchor apple generic"));
+    }
+
+    [Fact]
     public async Task A_platform_binary_is_signed_by_apple()
     {
         var mac = new Mac
@@ -216,15 +280,17 @@ public sealed class SignatureTests
     [Fact]
     public async Task A_valid_signature_whose_leaf_is_only_named_like_apples_is_not_reported_as_signed_by_apple()
     {
-        // A self-signed chain verifies, and its certificates can be called anything: only the anchor check tells.
+        // A self-signed chain verifies, and its certificates can be called anything: only the anchor checks tell.
         var mac = new Mac
         {
             Display = _ => new ExternalResult(0, "", "Identifier=com.apple.ls\nAuthority=macOS Software Signing\nAuthority=Apple Root CA\n"),
+            AppleIssued = path => new ExternalResult(3, "", $"{path}: test-requirement: code failed to satisfy specified code requirement(s)"),
         };
 
         var file = (await Inspector(mac.Commands()).InspectAsync([Tool], CancellationToken.None)).Files.Single();
 
-        Assert.Equal((SignatureVerdict.Valid, "Signed by certificate \"macOS Software Signing\", verified"), (file.Verdict, file.Detail));
+        Assert.Equal(SignatureVerdict.Untrusted, file.Verdict);
+        Assert.StartsWith("Signed by certificate \"macOS Software Signing\", which Apple did not issue", file.Detail, StringComparison.Ordinal);
     }
 
     [Fact]

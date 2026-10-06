@@ -134,6 +134,13 @@ public static class CodesignDisplay
     /// </remarks>
     public static IReadOnlyList<string> AppleAnchoredArguments(string path) => ["--verify", "--strict", "-R=anchor apple", "--", path];
 
+    /// <summary>
+    /// codesign arguments that succeed only when Apple issued the chain <paramref name="path"/> is signed with: Apple's own,
+    /// Developer ID, App Store and Apple development certificates all satisfy it; a self-signed or private-CA chain does
+    /// not, whatever its certificates are called. codesign exits 3 when it fails.
+    /// </summary>
+    public static IReadOnlyList<string> AppleIssuedArguments(string path) => ["--verify", "--strict", "-R=anchor apple generic", "--", path];
+
     /// <summary>A leaf that is not Apple's, quoted as the signer named it.</summary>
     /// <remarks>
     /// Always quoted and labelled, never bare: the name is the signer's choice, so a certificate called "Apple" printed

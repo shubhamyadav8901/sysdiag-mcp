@@ -2,7 +2,7 @@
   {
     "name": "autostart_audit",
     "title": "What starts on its own",
-    "description": "List what starts on its own on this Mac - launchd daemons and agents (system and every user\u0027s), cron, periodic scripts, login and logout hooks, authorization plugins, system extensions, loaded kernel extensions and Background Task Management items - with the program each runs, when it runs, whether it is enabled, and whether another account could change it (the file, the program, the script an interpreter runs, or a directory above any of them). categories takes one or more of: all, daemons, agents, useragents, cron, periodic, loginhooks, authplugins, sysext, kext, btm (btm needs root). hideApple (default true) leaves out what comes from the sealed system volume, and Apple\u0027s kernel and system extensions; neither a label nor the program\u0027s signer is trusted, since a planted plist chooses its label and can run curl or sh -c. verifySignatures checks each program with codesign, and an interpreter running code from its arguments counts as unsigned; unsignedOnly returns only unsigned programs, scripts, missing programs and files another account could change - usually the fastest route to an answer.",
+    "description": "List what starts on its own on this Mac - launchd daemons and agents (system and every user\u0027s), cron, periodic scripts, login and logout hooks, authorization plugins, system extensions, loaded kernel extensions and Background Task Management items - with the program each runs, when it runs, whether it is enabled, and whether another account could change it (the file, the program, the script an interpreter runs, or a directory above any of them). categories takes one or more of: all, daemons, agents, useragents, cron, periodic, loginhooks, authplugins, sysext, kext, btm (btm needs root). hideApple (default true) leaves out what comes from the sealed system volume, and Apple\u0027s kernel and system extensions; neither a label nor the program\u0027s signer is trusted, since a planted plist chooses its label and can run curl or sh -c. verifySignatures checks each program with codesign, and an interpreter running code from its arguments counts as unsigned, as does a certificate Apple did not issue (self-signed or a private CA), whatever it is called; unsignedOnly returns only unsigned programs, scripts, missing programs and files another account could change - usually the fastest route to an answer.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -794,7 +794,7 @@
   {
     "name": "file_signatures",
     "title": "File signature and package",
-    "description": "Report, for one or more files, the SHA-256, size and modification time, the code signature (whether it verifies, who signed it - Apple, a Developer ID team, ad hoc or nobody - and whether it uses the hardened runtime), Gatekeeper\u0027s assessment for a file inside an app bundle, and the installer package whose receipt names it. Symlinks are followed. A valid signature says who signed the file and that it has not changed since; it is not a verdict on whether the signer is trustworthy. Use it to confirm a deployed binary, to spot a file modified after signing, or to find a program nobody signed. At most 200 paths per call.",
+    "description": "Report, for one or more files, the SHA-256, size and modification time, the code signature (whether it verifies, who signed it - Apple, a Developer ID team, ad hoc or nobody - and whether it uses the hardened runtime; a chain Apple did not issue, self-signed or a private CA, is Untrusted, its name and team being the signer\u0027s own claim), Gatekeeper\u0027s assessment for a file inside an app bundle, and the installer package whose receipt names it. Symlinks are followed. A valid signature says who signed the file and that it has not changed since; it is not a verdict on whether the signer is trustworthy. Use it to confirm a deployed binary, to spot a file modified after signing, or to find a program nobody signed. At most 200 paths per call.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -831,7 +831,8 @@
                   "AdHoc",
                   "Unsigned",
                   "Invalid",
-                  "Unknown"
+                  "Unknown",
+                  "Untrusted"
                 ]
               },
               "detail": {
