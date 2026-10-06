@@ -37,3 +37,17 @@ public sealed class RequiresElevatedHandleExeFactAttribute : FactAttribute
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 }
+
+/// <summary>A fact that reports itself as skipped unless the session is elevated.</summary>
+/// <remarks>For a test that must change the machine to set up its case, such as mounting a volume.</remarks>
+public sealed class RequiresElevationFactAttribute : FactAttribute
+{
+    public RequiresElevationFactAttribute()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+        {
+            Skip = "Requires an elevated session.";
+        }
+    }
+}

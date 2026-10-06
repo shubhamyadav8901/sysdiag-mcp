@@ -125,8 +125,9 @@ internal static class FileScope
         var (real, crossesMagicLink) = Walk(directory);
         return crossesMagicLink
             ? throw new FileTransferException(
-                $"The owned directory '{directory}' cannot be judged: it passes through a link on procfs, " +
-                "whose target the kernel does not follow by name. Configure it by its real path.")
+                $"The owned directory '{directory}' cannot be judged: it passes through a link whose target " +
+                "is not a path -- a link on procfs, or a Windows mount point named by its volume. " +
+                "Configure it by its real path.")
             : real;
     }
 
@@ -275,6 +276,16 @@ internal static class FileScope
             // 'hop\..\..' by where hop points, while Windows opened the directory two levels up.
             if (relativeTargetsBySpelling && !Path.IsPathRooted(target))
             {
+                // Not every unrooted target is relative: .NET strips the NT "\??\" prefix, so a mounted
+                // folder's \??\Volume{guid}\ comes back as Volume{guid}\. Spliced under the link, a mount
+                // of another volume, or of a shadow copy, inside the artifact directory read as owned.
+                // The tag that would say "absolute" is not exposed, so it is stopped like a magic link.
+                if (NamesAnNtObject(target))
+                {
+                    var rest = pending.ToArray();
+                    return (rest.Length == 0 ? next : Path.Combine([next, .. rest]), true);
+                }
+
                 target = Path.GetFullPath(Path.Combine(current, target));
             }
 
@@ -290,6 +301,38 @@ internal static class FileScope
         }
 
         return (current, false);
+    }
+
+    /// <summary>
+    /// Whether an unrooted Windows link target is really an absolute NT path with its <c>\??\</c> stripped:
+    /// a volume, a device or another namespace, not a name in the link's folder.
+    /// </summary>
+    /// <remarks>
+    /// <para>The names are the ones under <c>\GLOBAL??</c> that reach storage or another namespace:
+    /// <c>Volume{guid}</c> (every mounted folder), <c>GLOBALROOT</c> (the whole object namespace, shadow
+    /// copies included), <c>Global</c> (an alias of <c>\GLOBAL??</c> itself), <c>HarddiskVolumeN</c>,
+    /// <c>HarddiskNPartitionM</c>, <c>PhysicalDriveN</c>, <c>CdRomN</c>, and <c>UNC</c> and <c>Mup</c>
+    /// for the network. A colon anywhere means a drive spelled after one of them
+    /// (<c>Global\C:\</c>): it is never part of a relative file name.</para>
+    /// <para>A real relative symlink to a folder that happens to carry one of these names is caught too.
+    /// That costs a grant, not access: the path becomes Arbitrary, never refused outright.</para>
+    /// </remarks>
+    internal static bool NamesAnNtObject(string target)
+    {
+        if (target.Contains(':', StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var first = target.Split(['\\', '/'], 2)[0];
+        return first.Equals("GLOBALROOT", StringComparison.OrdinalIgnoreCase) ||
+               first.Equals("Global", StringComparison.OrdinalIgnoreCase) ||
+               first.Equals("UNC", StringComparison.OrdinalIgnoreCase) ||
+               first.Equals("Mup", StringComparison.OrdinalIgnoreCase) ||
+               (first.StartsWith("Volume{", StringComparison.OrdinalIgnoreCase) && first.EndsWith('}')) ||
+               first.StartsWith("Harddisk", StringComparison.OrdinalIgnoreCase) ||
+               first.StartsWith("PhysicalDrive", StringComparison.OrdinalIgnoreCase) ||
+               first.StartsWith("CdRom", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>
