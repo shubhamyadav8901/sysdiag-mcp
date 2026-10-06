@@ -24,7 +24,10 @@ public static class LinuxServiceInstaller
         // First, so a refused --artifacts leaves everything as it was.
         ArtifactDirectory(options.ArtifactDirectory);
 
+        // Every directory is taken over, and what is in it examined, before anything is written: a refusal in
+        // /etc/linuxdiag, met after the binary was replaced, left the new binary under the old unit and env file.
         OwnedDirectory(InstallDirectory, Executable);
+        OwnedDirectory("/etc/linuxdiag", OwnerOnlyDirectory);
         if (NeedsCopy(source, InstalledExecutable))
         {
             // Copied beside the target and renamed over it, so a running service's binary is replaced
@@ -44,7 +47,6 @@ public static class LinuxServiceInstaller
             File.SetUnixFileMode(InstalledExecutable, Executable);
         }
 
-        OwnedDirectory("/etc/linuxdiag", OwnerOnlyDirectory);
         WriteOwnerOnly(options.EnvironmentFilePath, options.EnvironmentFile());
 
         WriteFresh(options.UnitFilePath, options.UnitFile(InstalledExecutable), UnitFileMode);
@@ -187,7 +189,7 @@ public static class LinuxServiceInstaller
         {
             throw new ConfigurationException(
                 $"{path} is root's now, but the installer will not take over what is in it: {string.Join(" ", refused)} " +
-                "Remove them and install again; nothing else was installed.");
+                "Remove them and install again; no binary, environment file or unit was written.");
         }
     }
 
