@@ -1,3 +1,4 @@
+using DiagRelay.Mcp.Tests;
 using Diag.Mcp.Server.SelfUpdate;
 using LinuxDiag.Mcp.Configuration;
 using LinuxDiag.Mcp.Diagnostics.SelfUpdate;
@@ -11,6 +12,11 @@ namespace LinuxDiag.Mcp.Tests;
 /// The artifact directory holds the script root runs for update_self and the log root writes, so no other
 /// account may be able to write it, or replace it by writing a directory above it.
 /// </summary>
+/// <remarks>
+/// Unix only: the cases are POSIX paths (/var/lib/linuxdiag) and Unix modes, which Windows turns into
+/// D:\var\lib\... and refuses. The code is LinuxDiag's, which never runs on Windows; macOS and CI's Linux
+/// jobs run them.
+/// </remarks>
 public sealed class TrustedDirectoryTests
 {
     private const ushort Directory = 0x4000;
@@ -56,7 +62,7 @@ public sealed class TrustedDirectoryTests
             TrustedDirectory.ProblemsBeforeCreating(path, Root, Status, RealPath);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_root_owned_0700_directory_under_root_owned_parents_passes()
     {
         var tree = new Tree().With("/var", 0, 0b111_101_101).With("/var/lib", 0, 0b111_101_101).With("/var/lib/linuxdiag", 0, 0b111_000_000);
@@ -64,7 +70,7 @@ public sealed class TrustedDirectoryTests
         Assert.Empty(tree.Problems("/var/lib/linuxdiag"));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_shared_group_or_world_writable_artifact_directory_is_refused()
     {
         // Review: with --artifacts /srv/diag already 0777, a local user could rename root's self-update.sh away
@@ -75,7 +81,7 @@ public sealed class TrustedDirectoryTests
         Assert.Contains(tree.Problems("/srv/team"), p => p.Contains("/srv/team is writable", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_directory_another_account_owns_is_refused_even_at_0700()
     {
         // Review: /opt/linuxdiag pre-created by the operator's own account kept that owner, who could then
@@ -85,7 +91,7 @@ public sealed class TrustedDirectoryTests
         Assert.Contains(tree.Problems("/opt/linuxdiag"), p => p.Contains("owned by uid 1000", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_parent_another_account_can_write_is_refused_because_it_can_replace_the_directory()
     {
         var tree = new Tree().With("/srv", 0, 0b111_111_111).With("/srv/diag", 0, 0b111_000_000)
@@ -95,7 +101,7 @@ public sealed class TrustedDirectoryTests
         Assert.Contains(tree.Problems("/home/op/diag"), p => p.StartsWith("/home/op is owned by uid 1000", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_root_only_directory_inside_sticky_tmp_passes_but_tmp_itself_does_not()
     {
         // The sticky bit stops another account renaming root's entry, so /tmp above is safe; /tmp as the
@@ -106,7 +112,7 @@ public sealed class TrustedDirectoryTests
         Assert.Contains(tree.Problems("/tmp"), p => p.Contains("shared sticky directory", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_link_is_judged_both_where_it_is_spelled_and_where_it_leads()
     {
         // /data/diag is root's alone, but the link to it sits in a directory anyone can write, so the link
@@ -117,7 +123,7 @@ public sealed class TrustedDirectoryTests
         Assert.Contains(tree.Problems("/shared/diag"), p => p.StartsWith("/shared is writable", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_directory_that_does_not_exist_or_is_not_a_directory_is_a_problem()
     {
         var tree = new Tree();
@@ -125,7 +131,7 @@ public sealed class TrustedDirectoryTests
         Assert.Contains(tree.Problems("/nowhere"), p => p.Contains("does not exist", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [UnixFact]
     public void A_directory_not_yet_made_is_judged_by_the_directories_it_would_be_made_in()
     {
         // Review: --artifacts /srv/team/diag was created first and checked after, so a refusal left a new root
@@ -141,7 +147,7 @@ public sealed class TrustedDirectoryTests
         Assert.Empty(tree.ProblemsBeforeCreating("/tmp/diag"));
     }
 
-    [Fact]
+    [UnixFact]
     public void An_unprivileged_server_may_own_its_own_directory()
     {
         var tree = new Tree().With("/home", 0, 0b111_101_101).With("/home/me", 1000, 0b111_101_101).With("/home/me/diag", 1000, 0b111_000_000);
@@ -150,7 +156,7 @@ public sealed class TrustedDirectoryTests
         Assert.NotEmpty(tree.Problems("/home/me/diag", [0, 1001]));
     }
 
-    [Fact]
+    [UnixFact]
     public void Update_self_refuses_to_write_its_root_script_into_a_directory_another_account_controls()
     {
         // The installer's check is not enough on its own: a later chmod, or an env file pointed elsewhere,

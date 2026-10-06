@@ -1,3 +1,4 @@
+using DiagRelay.Mcp.Tests;
 using LinuxDiag.Mcp.Diagnostics.Autostart;
 using LinuxDiag.Mcp.Linux.Packages;
 using LinuxDiag.Mcp.Linux.Parsers;
@@ -9,6 +10,11 @@ namespace LinuxDiag.Mcp.Tests;
 /// root prefix, the user's home as given. Files are read with managed calls so this runs on any OS; the
 /// [LinuxFact] repeats the central case through the server's own readers.
 /// </summary>
+/// <remarks>
+/// Unix only: these build a real systemd user tree on disk and the audit spells what it finds the Linux
+/// way ("x.service.d/o.conf"), which on Windows mixes separators with the temp root. The code is
+/// LinuxDiag's, which never runs on Windows; macOS and CI's Linux jobs run them.
+/// </remarks>
 public sealed class UserUnitTests : IDisposable
 {
     private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-uu-{Guid.NewGuid():N}")).FullName;
@@ -62,7 +68,7 @@ public sealed class UserUnitTests : IDisposable
         return (vendor, dropIn);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_users_drop_in_that_replaces_a_packaged_units_ExecStart_is_what_is_reported_and_is_never_hidden_as_packaged()
     {
         // Review: an enabled packaged user unit plus ~/.config/systemd/user/x.service.d/o.conf resetting ExecStart ran
@@ -113,7 +119,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Null(entry.ImagePath);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_unit_that_lists_a_benign_ExecStart_and_then_resets_it_reports_the_command_after_the_reset()
     {
         var unit = Write(Path.Combine(Home, ".config/systemd/user/y.service"),
@@ -127,7 +133,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal("/home/u/bin/payload    --quiet", entry.LaunchString);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_users_own_unit_file_shadows_the_packaged_one_the_enable_link_points_at()
     {
         // systemd loads a unit by name from its search path; ~/.config comes before /usr/lib, wherever the link points.
@@ -141,7 +147,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal("/home/u/x", entry.ImagePath);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_unit_enabled_for_every_user_is_reported_again_for_a_user_whose_own_drop_in_changes_it()
     {
         // No enable needed: a type-level drop-in in the user's home rewrites every unit their manager runs,
@@ -171,7 +177,7 @@ public sealed class UserUnitTests : IDisposable
         return (socket, service);
     }
 
-    [Theory]
+    [UnixTheory]
     [InlineData(".config/systemd/user/pipewire.service.d/o.conf", "[Service]\nExecStart=\nExecStart=/home/u/.p\n", false)]
     [InlineData(".config/systemd/user/service.d/x.conf", "[Service]\nExecStart=\nExecStart=/home/u/.p\n", false)]
     [InlineData(".config/systemd/user/pipewire.service", "[Service]\nExecStart=/home/u/.p\n", true)]
@@ -196,7 +202,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Contains("this user's own", mine.Description, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_socket_enabled_for_everyone_is_not_repeated_for_a_user_whose_files_leave_it_alone()
     {
         PackagedSocketEnabledForEveryone();
@@ -207,7 +213,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal("(every user)", entry.Profile);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_same_named_drop_in_in_the_users_directory_replaces_the_systems_and_drop_ins_apply_in_name_order()
     {
         var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/a-b.service"), "[Service]\nExecStart=/usr/bin/ab\n");
@@ -222,7 +228,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal("/home/u/first", entry.ImagePath);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_users_timer_reports_the_program_of_the_service_it_runs_with_that_services_files_checked()
     {
         // Enabled user timers were listed with no program at all: the service they trigger was never followed.
@@ -240,7 +246,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal([job, jobDropIn], entry.DropIns);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_socket_with_Accept_runs_the_template_of_its_own_name()
     {
         var socket = Write(Path.Combine(Home, ".config/systemd/user/s.socket"), "[Socket]\nListenStream=%t/s\nAccept=yes\n");
@@ -253,7 +259,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Contains("runs s@.service", entry.Description, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixFact]
     public void An_instance_resolves_to_its_template_and_its_template_drop_ins()
     {
         var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
@@ -267,7 +273,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal("/home/u/w", entry.ImagePath);
     }
 
-    [Theory]
+    [UnixTheory]
     [InlineData("x.service", new[] { "x.service", "service" })]
     [InlineData("a-b-c.service", new[] { "a-b-c.service", "a-b-.service", "a-.service", "service" })]
     [InlineData("w-x@i.service", new[] { "w-x@i.service", "w-x@.service", "w-.service", "service" })]
@@ -277,7 +283,7 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal(expected, UserUnits.DropInNames([name]));
     }
 
-    [Fact]
+    [UnixFact]
     public void Unit_file_settings_honour_sections_continuations_comments_and_the_empty_reset()
     {
         string[] texts =

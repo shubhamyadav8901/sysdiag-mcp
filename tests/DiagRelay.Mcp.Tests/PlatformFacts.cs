@@ -28,6 +28,18 @@ public sealed class UnixFactAttribute : FactAttribute
     }
 }
 
+/// <summary>A theory that runs only on Linux and macOS, as <see cref="UnixFactAttribute"/> does for a fact.</summary>
+public sealed class UnixTheoryAttribute : TheoryAttribute
+{
+    public UnixTheoryAttribute()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip = "Unix only. Run tools/test-linux.sh.";
+        }
+    }
+}
+
 /// <summary>A fact that runs only on macOS -- CI's macos-latest job runs it.</summary>
 public sealed class MacFactAttribute : FactAttribute
 {
