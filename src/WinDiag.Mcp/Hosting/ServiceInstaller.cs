@@ -289,11 +289,13 @@ public static class ServiceInstaller
         {
             // Already restricted -- by the bootstrap scripts, or an earlier LocalSystem install -- but a service
             // running as another account still needs its own ACE, or the SCM cannot start the image and the
-            // service cannot write its artifacts. Added to the ACL as it is: nothing else needs rewriting.
+            // service cannot write its artifacts. Given by protecting it again, not by adding the ACE by path:
+            // that carries it down the tree as Windows does, into the file behind any hard link an
+            // administrator left there, while ProtectDirectory refuses one and writes each item itself.
             if (account is not null && account != ProtectedAcl.LocalSystem
                 && !ProtectedAcl.GrantsServiceAccount(new DirectoryInfo(path).GetAccessControl(System.Security.AccessControl.AccessControlSections.Access), account))
             {
-                ProtectedAcl.GrantServiceAccount(path, account);
+                ProtectedAcl.ProtectDirectory(path, account, ownedByAdministrators: true);
                 Console.Error.WriteLine($"[windiag] gave {account.Translate(typeof(System.Security.Principal.NTAccount))} access to the {what} {path}.");
             }
 

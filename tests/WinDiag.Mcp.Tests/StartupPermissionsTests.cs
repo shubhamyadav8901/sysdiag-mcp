@@ -67,8 +67,10 @@ public sealed class StartupPermissionsTests
         Assert.Contains(@"C:\WinDiag", warning, StringComparison.Ordinal);
 
         // Restricting it closes the hole from now on; it does not undo what was planted while it was
-        // open, and the operator has to be told that rather than reassured.
+        // open, and the operator has to be told that rather than reassured. Nor does it take back a handle a
+        // user opened while they could write there; only closing it does, and a restart closes them all.
         Assert.Contains("still there", warning, StringComparison.Ordinal);
+        Assert.Contains("restart the machine", warning, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -345,7 +345,10 @@ public sealed class ServiceInstallationTests
         Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
         [
             "WinDiag.Mcp.exe", "WinDiag.Mcp.new.exe", "handle64.exe", "Procmon64.exe", "autorunsc64.exe",
-            "handle.exe", "windiag-staged.json", "install-token.tmp", "install-windiag.cmd",
+            "handle.exe", "windiag-staged.json",
+
+            // bootstrap-target's two files, present while the installer runs, named afresh for each run.
+            "install-token-0f3c9a2b7d4e4f61a8b5c6d7e8f90123.tmp", "install-windiag-0f3c9a2b7d4e4f61a8b5c6d7e8f90123.cmd",
 
             // The documented Procmon filter override, read from beside the server.
             "windiag.pmc"
@@ -354,6 +357,53 @@ public sealed class ServiceInstallationTests
         Assert.Equal(
             ["holiday.jpg", "setup.msi"],
             ServiceInstallOptions.ForeignToServerDirectory(["WinDiag.Mcp.exe", "holiday.jpg", "setup.msi"]));
+    }
+
+    [Fact]
+    public void Treats_everything_the_windows_release_zip_holds_as_windiag_files_so_the_documented_install_from_it_is_not_refused()
+    {
+        // The windiag-win-x64 zip, extracted into a new C:\WinDiag as the README says: that folder inherits
+        // "Authenticated Users: Modify" from C:\, so the installer looks for foreign files before restricting
+        // it -- and refused this exact set, telling the operator to use C:\WinDiag, which they already were.
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
+            ["WinDiag.Mcp.exe", "SHA256.txt", "LICENSE", "THIRD-PARTY-NOTICES.md"]));
+    }
+
+    [Fact]
+    public void Treats_every_file_the_release_workflow_packs_into_the_windows_zip_as_windiag_files()
+    {
+        // Read from the workflow rather than listed again here, because a list here is what fell out of
+        // step: LICENSE and THIRD-PARTY-NOTICES.md were added to the zips without anyone touching the
+        // installer. The workflow uploads the windiag build from artifacts/<rid>/, and the package step
+        // copies the notices into every zip.
+        var workflow = File.ReadAllText(RepositoryFile(".github", "workflows", "release.yml"));
+
+        var uploaded = System.Text.RegularExpressions.Regex.Matches(
+                workflow, @"^\s*artifacts/\$\{\{ matrix\.rid \}\}/(?<name>[^\s/$]+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(m => m.Groups["name"].Value);
+        var copiedIn = System.Text.RegularExpressions.Regex.Matches(workflow, @"install -m \d+ (?<files>(?:\.\./\S+ )+)")
+            .SelectMany(m => m.Groups["files"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Select(path => path["../".Length..]);
+        var packed = uploaded.Concat(copiedIn).ToList();
+
+        // Both halves found, so a reworded workflow fails here instead of passing on an empty list.
+        Assert.Contains("WinDiag.Mcp.exe", packed);
+        Assert.Contains("LICENSE", packed);
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(packed));
+    }
+
+    private static string RepositoryFile(params string[] parts)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine([dir.FullName, .. parts]);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"{Path.Combine(parts)} not found above the test output directory.");
     }
 
     [Fact]

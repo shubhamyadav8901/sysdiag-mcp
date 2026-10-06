@@ -133,9 +133,13 @@ try {
 
     # Restricted to SYSTEM and Administrators before anything lands in them: under C:\ both would
     # inherit "Authenticated Users: Modify", and the SYSTEM service runs what it finds there. The
-    # function is sent whole, because nothing from this repo exists on the target yet.
+    # whole of windiag-acl.ps1 is sent, not Protect-WinDiagDirectory alone, because nothing from this
+    # repo exists on the target yet and the function calls Test-WinDiagOwnDisk beside it. Run there,
+    # on the target's own disk, it judges the directories above by the target's Administrators group.
+    $protect = [scriptblock]::Create(
+        (Get-Content -Raw "$PSScriptRoot\windiag-acl.ps1") + "`nProtect-WinDiagDirectory -Path `$args[0]`n")
     foreach ($directory in $RemotePath, $ArtifactPath) {
-        Invoke-Command -Session $session -ScriptBlock ${function:Protect-WinDiagDirectory} -ArgumentList $directory
+        Invoke-Command -Session $session -ScriptBlock $protect -ArgumentList $directory
     }
 
     # --- send, and verify every byte ---------------------------------------------------------------

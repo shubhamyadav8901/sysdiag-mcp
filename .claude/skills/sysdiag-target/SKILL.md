@@ -109,7 +109,8 @@ output as failure, or you will report success for work that never happened.
 | `runner1__*` tools not callable after editing the targets file | The relay only enumerates at startup. Start a fresh session; until then `mcp-call.ps1` reaches the target directly |
 | Tools Unavailable on a working server | Missing Sysinternals binary, or the server is not elevated. `capabilities` says which |
 | `update_self` succeeds but the build is unchanged | The helper aborted and restored the old build — a server answers either way. Compare `file_signatures` against the staged hash |
-| Host reachable, 4024 closed, nothing can update it | Nothing is running. This is a bootstrap, not an update |
+| Host reachable, 4024 closed, nothing can update it | Nothing is running. If it served before an `update_self`, first read the target's Application event log (source `windiag`): a service that refuses to start says why there. `… can be renamed or removed …` means a directory above windiag's lets others replace it — remove the rights it names, or hand it to Administrators (`icacls <dir> /setowner *S-1-5-32-544`) when it says an account `owns it`, or move windiag — then start the service again. Otherwise this is a bootstrap, not an update |
+| Bootstrap refuses an existing `C:\WinDiag` with `… cannot be used as it is` | The scripts never take over a directory that already exists and is not restricted. Rename it aside and bootstrap again; if windiag still serves from it, `update_self` instead — the new server restricts it on its next start |
 | A capture appears then vanishes | As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`. Pin `--artifacts` |
 
 ## Never
