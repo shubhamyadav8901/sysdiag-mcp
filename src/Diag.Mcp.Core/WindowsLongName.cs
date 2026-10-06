@@ -26,6 +26,7 @@ public static class WindowsLongName
 {
     private const int ErrorFileNotFound = 2;
     private const int ErrorPathNotFound = 3;
+    private const int ErrorAccessDenied = 5;
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode, SetLastError = true)]
     private delegate uint GetLongPathNameW(string shortPath, IntPtr longPath, uint bufferLength);
@@ -67,6 +68,15 @@ public static class WindowsLongName
                     {
                         // Not there yet -- the file about to be written. A name that does not exist has
                         // no short form, so the spelling given is the only one.
+                        return path;
+                    }
+
+                    // The lookup lists the parent, and an account may traverse a directory it cannot
+                    // list. A name without '~' is not one Windows generated as a short name -- choosing
+                    // one takes the restore privilege -- so it is the long name already, and the open the
+                    // caller asked for would succeed: refusing it would be a regression, not caution.
+                    if (error == ErrorAccessDenied && !Path.GetFileName(path).Contains('~', StringComparison.Ordinal))
+                    {
                         return path;
                     }
 

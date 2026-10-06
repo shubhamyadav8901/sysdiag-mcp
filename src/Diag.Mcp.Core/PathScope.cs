@@ -216,7 +216,7 @@ public static class PathScope
             var target = linkTargetOf(next);
             if (target is null)
             {
-                current = longNameOf is null ? next : longNameOf(next);
+                current = longNameOf is null ? next : LongName(current, part, next, longNameOf);
                 continue;
             }
 
@@ -269,6 +269,24 @@ public static class PathScope
         // Past a link the walk cannot follow, the rest is kept as spelled and marked unjudged.
         static (string, bool) Unjudged(string link, Stack<string> rest) =>
             (rest.Count == 0 ? link : Path.Combine([link, .. rest.ToArray()]), true);
+    }
+
+    /// <summary>The long spelling of <paramref name="next"/>, with a stream suffix on the last component kept as given.</summary>
+    /// <remarks>
+    /// A stream can only be on the last component by now -- one further up is refused -- and
+    /// <c>a.exe:Zone.Identifier</c> is a real thing to read. The lookup cannot take the ':', so the file's
+    /// own name is looked up and the stream put back after it. A bare <c>:stream</c> is a stream of the
+    /// directory already resolved, kept as spelled.
+    /// </remarks>
+    private static string LongName(string current, string part, string next, Func<string, string> longNameOf)
+    {
+        var stream = part.IndexOf(':', StringComparison.Ordinal);
+        return stream switch
+        {
+            < 0 => longNameOf(next),
+            0 => next,
+            _ => longNameOf(Path.Combine(current, part[..stream])) + part[stream..]
+        };
     }
 
     /// <summary>A drive's root in its drive-letter form: <c>\\?\C:\</c> and <c>\\.\C:\</c> become <c>C:\</c>.</summary>

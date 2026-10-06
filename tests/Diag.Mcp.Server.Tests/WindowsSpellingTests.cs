@@ -113,6 +113,25 @@ public sealed class WindowsSpellingTests
         Assert.Equal(path, real);
     }
 
+    [Fact]
+    public void A_stream_on_the_last_component_is_kept_and_its_file_is_still_spelled_out()
+    {
+        // a.exe:Zone.Identifier is how Mark-of-the-Web is read. The lookup must be asked about the file's
+        // name alone -- GetLongPathNameW cannot take the ':' -- and the stream put back.
+        var asked = new List<string>();
+        string LongName(string path)
+        {
+            asked.Add(path);
+            return FakeLongName(path);
+        }
+
+        var (real, _) = PathScope.Walk(
+            Path.Combine(Artifacts, "WINDIA~1:Zone.Identifier"), NoLinks, windowsTargets: true, isMagicLink: null, LongName);
+
+        Assert.Equal(Server + ":Zone.Identifier", real);
+        Assert.DoesNotContain(asked, path => path.Contains("Zone.Identifier", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(@"\\?\C:\", @"C:\")]
     [InlineData(@"\\.\D:\", @"D:\")]
