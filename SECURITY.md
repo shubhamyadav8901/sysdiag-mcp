@@ -50,13 +50,13 @@ follow from that, and which are deliberate rather than oversights:
   `--install-service` restricts to SYSTEM and Administrators before writing it — `sc create` alone
   leaves the key readable by every local user, and a service restricts its own key on start if it
   finds it that way. A machine-wide environment variable is readable by every local user and is *not*
-  an acceptable substitute.
+  an acceptable substitute. LinuxDiag and MacDiag keep it in a root-owned `0600` env file instead
+  (`/etc/linuxdiag/linuxdiag.env`, `/etc/macdiag/<label>.env`).
 - **The directories a Windows service runs code from are writable only by SYSTEM and Administrators.**
   The server runs Sysinternals binaries from beside itself and `self-update.cmd` from its artifact
   directory, and a folder made under `C:\` inherits *Authenticated Users: Modify*. The installer and the
   bootstrap scripts give both directories a protected ACL, and a service checks again on every start and
-  refuses to run from one it cannot restrict. LinuxDiag and MacDiag keep it in a root-owned `0600` env
-  file instead (`/etc/linuxdiag/linuxdiag.env`, `/etc/macdiag/<label>.env`).
+  refuses to run from one it cannot restrict.
 - **There is no default bind address.** `--http` with nothing to bind to is refused rather than
   quietly listening on `0.0.0.0`.
 - **File access is confined** to directories the server owns, on both the read and write sides, through
