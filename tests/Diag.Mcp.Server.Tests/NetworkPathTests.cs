@@ -76,6 +76,51 @@ public sealed class NetworkPathTests
     }
 
     [Fact]
+    public void The_scope_check_judges_a_share_arbitrary_without_walking_any_part_of_it()
+    {
+        // Deterministic where the timing test below is not: a runner that fails SMB fast would pass that
+        // one with the check deleted. Here the walk records every path it is asked to resolve.
+        var walked = new List<string>();
+        (string, bool) Walk(string path)
+        {
+            walked.Add(path);
+            return (path, false);
+        }
+
+        var options = new FileTransferOptions(Path.Combine(Path.GetTempPath(), "art"), false, false, "W=1", "R=1");
+
+        var (scope, inServer) = FileScope.Classify(
+            @"\\attacker\share\x", options, Path.Combine(Path.GetTempPath(), "srv"), replacesFinalLink: false,
+            looseServerMatch: false, path => NetworkPath.IsNetworkOrDevice(path, windows: true, LocalDrives), Walk);
+
+        Assert.Equal(WriteScope.Arbitrary, scope);
+        Assert.False(inServer);
+        Assert.Empty(walked);
+    }
+
+    [Fact]
+    public void The_scope_check_still_walks_a_local_path()
+    {
+        // The other half of the test above: without it, a Classify that never walked would pass too.
+        var walked = new List<string>();
+        (string, bool) Walk(string path)
+        {
+            walked.Add(path);
+            return (path, false);
+        }
+
+        var artifacts = Path.Combine(Path.GetTempPath(), "art");
+        var options = new FileTransferOptions(artifacts, false, false, "W=1", "R=1");
+
+        var (scope, _) = FileScope.Classify(
+            Path.Combine(artifacts, "x"), options, Path.Combine(Path.GetTempPath(), "srv"), replacesFinalLink: false,
+            looseServerMatch: false, path => NetworkPath.IsNetworkOrDevice(path, windows: true, LocalDrives), Walk);
+
+        Assert.Equal(WriteScope.Owned, scope);
+        Assert.Contains(Path.Combine(artifacts, "x"), walked);
+    }
+
+    [Fact]
     public void A_double_slash_off_windows_is_only_a_root_and_is_left_alone()
     {
         // POSIX lets "//" mean something implementation-defined; Linux and macOS read it as "/". Nothing

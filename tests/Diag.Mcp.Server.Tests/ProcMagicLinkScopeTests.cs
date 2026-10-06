@@ -163,7 +163,7 @@ public sealed class ProcMagicLinkScopeTests : IDisposable
         var (real, crossesMagicLink) = FileScope.Walk(
             requested,
             path => path == magic ? Path.GetPathRoot(a) : null,
-            relativeTargetsBySpelling: false,
+            windowsTargets: false,
             isMagicLink: path => path == magic);
 
         Assert.True(crossesMagicLink);

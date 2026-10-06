@@ -60,16 +60,23 @@ internal static class FileScope
     /// never skip one.
     /// </param>
     internal static (WriteScope Scope, bool InServerDirectory) Classify(
-        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch)
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch) =>
+        Classify(fullPath, options, serverDirectory, replacesFinalLink, looseServerMatch, NetworkPath.IsNetworkOrDevice, Walk);
+
+    /// <param name="isNetworkOrDevice">The network-path rule, supplied so a test can run Windows' on any OS.</param>
+    /// <param name="walk">The real-path walk, supplied so a test can see what was looked up.</param>
+    internal static (WriteScope Scope, bool InServerDirectory) Classify(
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch,
+        Func<string, bool> isNetworkOrDevice, Func<string, (string Path, bool CrossesMagicLink)> walk)
     {
         // A share or a device is never owned, and walking it to find out is itself the SMB connection
         // that hands the machine account's credentials to whoever named the host.
-        if (NetworkPath.IsNetworkOrDevice(fullPath))
+        if (isNetworkOrDevice(fullPath))
         {
             return (WriteScope.Arbitrary, false);
         }
 
-        var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink);
+        var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink, walk);
         if (crossesMagicLink)
         {
             // Unjudgeable, so not owned: it needs the arbitrary grant, as any path outside would.
@@ -77,8 +84,8 @@ internal static class FileScope
             return (WriteScope.Arbitrary, false);
         }
 
-        var server = OwnedDirectory(serverDirectory);
-        var artifacts = OwnedDirectory(options.ArtifactDirectory);
+        var server = OwnedDirectory(serverDirectory, walk);
+        var artifacts = OwnedDirectory(options.ArtifactDirectory, walk);
         var inServer = IsUnder(real, server);
         var gated = inServer || (looseServerMatch && LooseIsUnder(real, server));
         return (inServer || IsUnder(real, artifacts) ? WriteScope.Owned : WriteScope.Arbitrary, gated);
@@ -126,15 +133,19 @@ internal static class FileScope
     /// Where a request path crossing a magic link is merely unowned, an owned directory crossing one fails
     /// closed. Kept as spelled, it would quietly own nothing -- and for the server directory "not in it"
     /// is the permissive answer, which let an artifact directory inside it skip the self-update gate.
+    /// "Configure it by its real path" was the old advice, and for a disk mounted only at a folder there
+    /// is none: its \\?\Volume{guid}\ spelling is a device path, refused like a share.
     /// </remarks>
-    private static string OwnedDirectory(string directory)
+    private static string OwnedDirectory(string directory, Func<string, (string Path, bool CrossesMagicLink)> walk)
     {
-        var (real, crossesMagicLink) = Walk(directory);
+        var (real, crossesMagicLink) = walk(directory);
         return crossesMagicLink
             ? throw new FileTransferException(
                 $"The owned directory '{directory}' cannot be judged: it passes through a link whose target " +
-                "is not a path -- a link on procfs, or a Windows mount point named by its volume. " +
-                "Configure it by its real path.")
+                "cannot be followed by name -- a link on procfs, or on Windows a folder a volume is mounted " +
+                "at, a junction to a device, or a relative symbolic link. Move it to a directory reached " +
+                "without one: for a disk mounted only at a folder, give the disk a drive letter and use a " +
+                "directory on that drive letter.")
             : real;
     }
 
@@ -146,17 +157,18 @@ internal static class FileScope
     /// as spelled. Judging that write at the link's target let <c>/tmp/x -&gt; /var/lib/linuxdiag/x</c>
     /// pass as owned while root created <c>/tmp/x</c>.
     /// </remarks>
-    internal static (string Path, bool CrossesMagicLink) LandingPath(string fullPath, bool replacesFinalLink)
+    internal static (string Path, bool CrossesMagicLink) LandingPath(
+        string fullPath, bool replacesFinalLink, Func<string, (string Path, bool CrossesMagicLink)> walk)
     {
         var name = Path.GetFileName(fullPath);
         var parent = Path.GetDirectoryName(fullPath);
         if (replacesFinalLink && !string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(parent))
         {
-            var (real, crossesMagicLink) = Walk(parent);
+            var (real, crossesMagicLink) = walk(parent);
             return (Path.Combine(real, name), crossesMagicLink);
         }
 
-        return Walk(fullPath);
+        return walk(fullPath);
     }
 
     /// <summary>How many links one resolution may follow before it is called a loop: the kernel's own limit.</summary>
@@ -184,11 +196,13 @@ internal static class FileScope
     /// </remarks>
     internal static string RealPath(string fullPath) => Walk(fullPath).Path;
 
-    /// <summary>The walk with the link lookup and the OS's rule for relative targets supplied, and no magic links.</summary>
+    /// <summary>The walk with the link lookup and the OS's rule for link targets supplied, and no magic links.</summary>
     /// <param name="linkTargetOf">The raw target of the link at a path, or null when it is not a link.</param>
-    /// <param name="relativeTargetsBySpelling">Windows' rule for a relative link target, rather than POSIX's.</param>
-    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling) =>
-        Walk(fullPath, linkTargetOf, relativeTargetsBySpelling, isMagicLink: null).Path;
+    /// <param name="windowsTargets">
+    /// Windows' rule for a link target, as .NET reports it: one without a root, or one on a share, stops the walk.
+    /// </param>
+    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets) =>
+        Walk(fullPath, linkTargetOf, windowsTargets, isMagicLink: null).Path;
 
     /// <summary>The real walk on this machine, and whether it crossed a link it could not judge.</summary>
     private static (string Path, bool CrossesMagicLink) Walk(string fullPath) =>
@@ -215,7 +229,7 @@ internal static class FileScope
         }
     }
 
-    /// <summary>The walk, with the link lookup, the OS's rule for relative targets and its magic links supplied.</summary>
+    /// <summary>The walk, with the link lookup, the OS's rule for link targets and its magic links supplied.</summary>
     /// <param name="isMagicLink">
     /// Whether the link at a path is one the kernel does not follow by name, or null where there are none.
     /// </param>
@@ -224,7 +238,7 @@ internal static class FileScope
     /// path is not judged: see <see cref="Classify"/>.
     /// </returns>
     internal static (string Path, bool CrossesMagicLink) Walk(
-        string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling, Func<string, bool>? isMagicLink)
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink)
     {
         var root = Path.GetPathRoot(fullPath);
         if (string.IsNullOrEmpty(root))
@@ -266,8 +280,7 @@ internal static class FileScope
             // says where the bytes land, so the walk stops judging here.
             if (isMagicLink?.Invoke(next) == true)
             {
-                var rest = pending.ToArray();
-                return (rest.Length == 0 ? next : Path.Combine([next, .. rest]), true);
+                return Unjudged(next, pending);
             }
 
             if (++hops > MaxLinkHops)
@@ -277,23 +290,20 @@ internal static class FileScope
                     "which is a link loop.");
             }
 
-            // Windows and POSIX disagree on a relative target. The NT I/O manager joins it onto the
-            // link's directory and collapses its '..' by spelling, never going through the links the
-            // target names; POSIX walks those components like any others. Walking on Windows judged
-            // 'hop\..\..' by where hop points, while Windows opened the directory two levels up.
-            if (relativeTargetsBySpelling && !Path.IsPathRooted(target))
+            // On Windows the target's text cannot be trusted to say whether it is relative. .NET 9 cuts the
+            // first four characters off every junction and absolute symlink target, assuming them to be
+            // "\??\", and nothing checks: \??\Volume{guid}\ (a mounted folder) comes back as Volume{guid}\,
+            // and a junction any user can point at \Device\HarddiskVolume3\ comes back as
+            // "ice\HarddiskVolume3\". Spliced under the link's folder, either read as owned while the bytes
+            // came from another volume or a shadow copy. Recognising the names was tried, and missed the
+            // \Device\ spelling. Only the reparse tag tells relative from absolute, and .NET does not expose
+            // it, so an unrooted target is never followed: the path is unjudged, as past a procfs magic
+            // link. A real relative symlink -- which needs a privilege to create -- costs the arbitrary grant.
+            // A share is stopped too: walking on would be the SMB connection NetworkPath exists to prevent.
+            if (windowsTargets &&
+                (!Path.IsPathRooted(target) || NetworkPath.IsNetworkOrDevice(target, windows: true, NetworkPath.DriveTypeOf)))
             {
-                // Not every unrooted target is relative: .NET strips the NT "\??\" prefix, so a mounted
-                // folder's \??\Volume{guid}\ comes back as Volume{guid}\. Spliced under the link, a mount
-                // of another volume, or of a shadow copy, inside the artifact directory read as owned.
-                // The tag that would say "absolute" is not exposed, so it is stopped like a magic link.
-                if (NamesAnNtObject(target))
-                {
-                    var rest = pending.ToArray();
-                    return (rest.Length == 0 ? next : Path.Combine([next, .. rest]), true);
-                }
-
-                target = Path.GetFullPath(Path.Combine(current, target));
+                return Unjudged(next, pending);
             }
 
             // An absolute target starts again from its own root; a relative one carries on from the
@@ -308,38 +318,10 @@ internal static class FileScope
         }
 
         return (current, false);
-    }
 
-    /// <summary>
-    /// Whether an unrooted Windows link target is really an absolute NT path with its <c>\??\</c> stripped:
-    /// a volume, a device or another namespace, not a name in the link's folder.
-    /// </summary>
-    /// <remarks>
-    /// <para>The names are the ones under <c>\GLOBAL??</c> that reach storage or another namespace:
-    /// <c>Volume{guid}</c> (every mounted folder), <c>GLOBALROOT</c> (the whole object namespace, shadow
-    /// copies included), <c>Global</c> (an alias of <c>\GLOBAL??</c> itself), <c>HarddiskVolumeN</c>,
-    /// <c>HarddiskNPartitionM</c>, <c>PhysicalDriveN</c>, <c>CdRomN</c>, and <c>UNC</c> and <c>Mup</c>
-    /// for the network. A colon anywhere means a drive spelled after one of them
-    /// (<c>Global\C:\</c>): it is never part of a relative file name.</para>
-    /// <para>A real relative symlink to a folder that happens to carry one of these names is caught too.
-    /// That costs a grant, not access: the path becomes Arbitrary, never refused outright.</para>
-    /// </remarks>
-    internal static bool NamesAnNtObject(string target)
-    {
-        if (target.Contains(':', StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var first = target.Split(['\\', '/'], 2)[0];
-        return first.Equals("GLOBALROOT", StringComparison.OrdinalIgnoreCase) ||
-               first.Equals("Global", StringComparison.OrdinalIgnoreCase) ||
-               first.Equals("UNC", StringComparison.OrdinalIgnoreCase) ||
-               first.Equals("Mup", StringComparison.OrdinalIgnoreCase) ||
-               (first.StartsWith("Volume{", StringComparison.OrdinalIgnoreCase) && first.EndsWith('}')) ||
-               first.StartsWith("Harddisk", StringComparison.OrdinalIgnoreCase) ||
-               first.StartsWith("PhysicalDrive", StringComparison.OrdinalIgnoreCase) ||
-               first.StartsWith("CdRom", StringComparison.OrdinalIgnoreCase);
+        // Past a link the walk cannot follow, the rest is kept as spelled and marked unjudged.
+        static (string, bool) Unjudged(string link, Stack<string> rest) =>
+            (rest.Count == 0 ? link : Path.Combine([link, .. rest.ToArray()]), true);
     }
 
     /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>

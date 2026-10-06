@@ -722,7 +722,7 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--account <spec>` | `LocalSystem` (default), `NetworkService`, `LocalService`, or `DOMAIN\user` with `--password` |
 | `--password <value>` | Required for an account that is not built in |
 | `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
-| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. The directory must not be reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
 | `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
 | `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
@@ -924,7 +924,7 @@ same meanings, except:
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
-| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
+| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written. Neither it nor the server's own folder may be reached through a mounted folder, a junction to a device, or a relative symbolic link: `get_file` and `put_file` cannot tell where such a link lands, so they refuse every transfer |
 | `SYSDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/diagrelay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
@@ -1095,6 +1095,7 @@ split is what lets the tool layer be tested with fakes and no live machine.
 |---|---|
 | `'handle.exe' was not found on this machine` | Sysinternals Suite is not installed. Native-backed tools still work. |
 | `'…\handle64.exe' is beside the server but is not signed by Microsoft` | The copy in the server's folder is damaged or was not Microsoft's. Replace it from `download.sysinternals.com` (or re-run `deploy-target.ps1`), or delete it to use an installed copy. |
+| `The owned directory '…' cannot be judged` on every `get_file` / `put_file` | The artifact directory or the server's folder sits under a folder a volume is mounted at (a data disk mounted at `C:\Data`), a junction to a device, or a relative symbolic link. .NET does not report where such a link really lands, so nothing under it can be judged owned. Move the directory: give the disk a drive letter and set `--artifacts` to a directory on that letter. |
 | `path_handle_search` warns about partial results | Not elevated. Restart the server from an elevated terminal. |
 | `who_locks_path` finds nothing on a file you know is locked | Expected: Restart Manager is not exhaustive. Run `path_handle_search`. |
 | `handle.exe did not finish within 120s` | Search term too broad. Narrow it, or raise `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS`. |
