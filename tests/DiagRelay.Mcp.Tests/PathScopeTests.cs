@@ -60,7 +60,7 @@ public sealed class PathScopeTests
         var roots = RelayFileScope.Roots(new Hashtable { ["sysdiag_relay_file_root"] = "/" });
 
         Assert.DoesNotContain("/", roots);
-        Assert.Contains(RelayFileScope.DefaultBuildRoot, roots);
+        Assert.Equal(RelayFileScope.DefaultRoots, roots);
     }
 
     [WindowsFact]
@@ -111,7 +111,7 @@ public sealed class RelayFileScopePortableTests
         // A hard rename: an operator who still sets the old name gets the defaults, never the old value.
         var roots = RelayFileScope.Roots(new Hashtable { ["WINDIAG_RELAY_FILE_ROOT"] = Path.GetPathRoot(_root)! });
 
-        Assert.Equal([RelayFileScope.DefaultBuildRoot, RelayFileScope.DefaultArtifactRoot], roots);
+        Assert.Equal(RelayFileScope.DefaultRoots, roots);
     }
 
     [Fact]
@@ -131,7 +131,6 @@ public sealed class RelayFileScopePortableTests
         var roots = RelayFileScope.Roots(new Hashtable { [RelayFileScope.RootsVariable] = $"{builds};{dumps}" });
 
         Assert.Equal([builds, dumps], roots);
-        Assert.DoesNotContain(RelayFileScope.DefaultBuildRoot, roots);
         Assert.DoesNotContain(RelayFileScope.DefaultArtifactRoot, roots);
     }
 
