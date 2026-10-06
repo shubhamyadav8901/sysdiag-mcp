@@ -18,7 +18,7 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Parses_captured_output_positionally_not_by_header_name()
     {
-        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), driveRefusesControlCharacters: Ntfs.Everywhere).Entries;
+        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), Images.AllWhole, driveRefusesControlCharacters: Ntfs.Everywhere).Entries;
 
         Assert.Equal(7, entries.Count);
 
@@ -37,7 +37,7 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Skips_the_header_row_without_treating_it_as_data()
     {
-        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), driveRefusesControlCharacters: Ntfs.Everywhere).Entries;
+        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), Images.AllWhole, driveRefusesControlCharacters: Ntfs.Everywhere).Entries;
 
         Assert.DoesNotContain(entries, e => e.ProcessName == "Process");
     }
@@ -53,7 +53,7 @@ public sealed class HandleCsvParserTests
             explorer.exe,3628,File,CONTOSO\user,0x0000068C,C:\Windows\Fonts\StaticCache.dat
             """;
 
-        var entries = HandleCsvParser.Parse(csv).Entries;
+        var entries = HandleCsvParser.Parse(csv, Images.AllWhole).Entries;
 
         var entry = Assert.Single(entries);
         Assert.Equal("explorer.exe", entry.ProcessName);
@@ -69,7 +69,7 @@ public sealed class HandleCsvParserTests
             app.exe,42,File,CONTOSO\user,0x000000F0,C:\Data\Reports, Q3\summary.docx
             """;
 
-        var entry = Assert.Single(HandleCsvParser.Parse(csv).Entries);
+        var entry = Assert.Single(HandleCsvParser.Parse(csv, Images.AllWhole).Entries);
 
         Assert.Equal(@"C:\Data\Reports, Q3\summary.docx", entry.Name);
     }
@@ -90,7 +90,7 @@ public sealed class HandleCsvParserTests
             explorer.exe,3628,CONTOSO\user,0x00000054,File,,C:\Windows\System32
             """;
 
-        var entry = Assert.Single(HandleCsvParser.Parse(csv).Entries);
+        var entry = Assert.Single(HandleCsvParser.Parse(csv, Images.AllWhole).Entries);
 
         Assert.Equal("explorer.exe", entry.ProcessName);
         Assert.Equal(3628, entry.ProcessId);
@@ -103,8 +103,8 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Returns_nothing_for_empty_output()
     {
-        Assert.Empty(HandleCsvParser.Parse(string.Empty).Entries);
-        Assert.Empty(HandleCsvParser.Parse("   \r\n  ").Entries);
+        Assert.Empty(HandleCsvParser.Parse(string.Empty, Images.AllWhole).Entries);
+        Assert.Empty(HandleCsvParser.Parse("   \r\n  ", Images.AllWhole).Entries);
     }
 
     [Fact]
@@ -115,15 +115,15 @@ public sealed class HandleCsvParserTests
             app.exe,42,File,CONTOSO\user,0x000000F0,C:\Windows\Fonts\arial.ttf
             """;
 
-        Assert.Equal(@"C:\Windows\Fonts\arial.ttf", Assert.Single(HandleCsvParser.Parse(csv).Entries).Name);
+        Assert.Equal(@"C:\Windows\Fonts\arial.ttf", Assert.Single(HandleCsvParser.Parse(csv, Images.AllWhole).Entries).Name);
     }
 
     [Fact]
     public void Finds_no_unattributable_rows_in_either_real_capture()
     {
         // The count below must mean something when it is not zero, so it must be zero on real output.
-        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), driveRefusesControlCharacters: Ntfs.Everywhere).UnparsedRows);
-        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-p-explorer.csv"), processId: 14032, Ntfs.Everywhere).UnparsedRows);
+        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), Images.AllWhole, driveRefusesControlCharacters: Ntfs.Everywhere).UnparsedRows);
+        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-p-explorer.csv"), Images.AllWhole, processId: 14032, Ntfs.Everywhere).UnparsedRows);
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public sealed class HandleCsvParserTests
             a,b.exe,1234,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx
             """;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         var entry = Assert.Single(parsed.Entries);
         Assert.Equal("a,b.exe", entry.ProcessName);
@@ -164,7 +164,7 @@ public sealed class HandleCsvParserTests
             x,668,File,SYSTEM,0x4,svc.exe,1234,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx
             """;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
         Assert.Empty(parsed.Entries);
@@ -181,7 +181,7 @@ public sealed class HandleCsvParserTests
             x,668,SYSTEM,0x4,Key,,y.exe,1234,CONTOSO\jdoe,0x0000000C,Key,,HKLM\SOFTWARE\Contoso
             """;
 
-        var parsed = HandleCsvParser.Parse(csv, processId: 1234);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole, processId: 1234);
 
         var entry = Assert.Single(parsed.Entries);
         Assert.Equal(1234, entry.ProcessId);
@@ -200,7 +200,7 @@ public sealed class HandleCsvParserTests
             Error obtaining handle information: Access denied
             """;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.Empty(parsed.Entries);
 
@@ -232,7 +232,7 @@ public sealed class ProcessScopedHandleLayoutTests
     private static string Fixture() =>
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv"));
 
-    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture(), processId: 14032, Ntfs.Everywhere).Entries;
+    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture(), Images.AllWhole, processId: 14032, Ntfs.Everywhere).Entries;
 
     [Fact]
     public void Reads_the_process_scoped_layout()
@@ -282,7 +282,7 @@ public sealed class ProcessScopedHandleLayoutTests
     {
         var unknown = "Process,PID,Something,Else" + Environment.NewLine + "explorer.exe,1,a,b";
 
-        var ex = Assert.Throws<FormatException>(() => HandleCsvParser.Parse(unknown));
+        var ex = Assert.Throws<FormatException>(() => HandleCsvParser.Parse(unknown, Images.AllWhole));
 
         Assert.Contains("Two layouts are known", ex.Message);
     }
@@ -324,7 +324,7 @@ public sealed class HandleLineBreakTests
                   @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + RowEnd +
                   @"word.exe,5150,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
         var evil = Assert.Single(parsed.Entries);
@@ -346,7 +346,7 @@ public sealed class HandleLineBreakTests
                   @"svc.exe,700,File,NT AUTHORITY\SYSTEM,0x00000004,C:\decoy.txt" + "\n" +
                   @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000008,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessId is 668 or 700);
         Assert.Equal(2, parsed.UnparsedRows);
@@ -361,7 +361,7 @@ public sealed class HandleLineBreakTests
                   @"evil.exe,4242,Event,CONTOSO\mallory,0x00000010,\BaseNamedObjects\x.docx" + RowEnd +
                   @"evil.exe,4242,File,CONTOSO\mallory,0x00000014,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.Equal(2, parsed.Entries.Count);
         Assert.False(parsed.Entries[0].Unproven);
@@ -378,7 +378,7 @@ public sealed class HandleLineBreakTests
                   @"evil.exe,4242,Event,CONTOSO\mallory,0x00000010,\BaseNamedObjects\x.docx" + "\n" +
                   @"victim.exe,4242,File,NT AUTHORITY\SYSTEM,0x00000014,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessName == "victim.exe");
         Assert.Equal(1, parsed.UnparsedRows);
@@ -390,7 +390,7 @@ public sealed class HandleLineBreakTests
         // The default path_handle_search: file handles to paths on drive letters, none of which can hold
         // a line break. The rule must cost this case nothing.
         var parsed = HandleCsvParser.Parse(File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-u-v-fonts.csv")), driveRefusesControlCharacters: Ntfs.Everywhere);
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-u-v-fonts.csv")), Images.AllWhole, driveRefusesControlCharacters: Ntfs.Everywhere);
 
         Assert.Equal(7, parsed.Entries.Count);
         Assert.All(parsed.Entries, e => Assert.False(e.Unproven));
@@ -406,7 +406,7 @@ public sealed class HandleLineBreakTests
                   @"evil.exe,4242,File,CONTOSO\mallory,0x00000010,E:\x.docx" + "\n" +
                   @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv, driveRefusesControlCharacters: letter => letter == 'C');
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole, driveRefusesControlCharacters: letter => letter == 'C');
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
         Assert.Equal(1, parsed.UnparsedRows);
@@ -420,7 +420,7 @@ public sealed class HandleLineBreakTests
                   @"x,668,File,SYSTEM,0x4,svc.exe,1234,File,CONTOSO\jdoe,0x00000460,\BaseNamedObjects\x.docx" + "\n" +
                   @"victim.exe,669,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole);
 
         Assert.Empty(parsed.Entries);
         Assert.Equal(2, parsed.UnparsedRows);
@@ -438,7 +438,7 @@ public sealed class HandleLineBreakTests
                   @"victim.exe,668,NT AUTHORITY\SYSTEM,0x00000004,File,,C:\shared\x.docx" + lineBreak +
                   @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x00000010,File,,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv, processId: 1234, Ntfs.Everywhere);
+        var parsed = HandleCsvParser.Parse(csv, Images.AllWhole, processId: 1234, Ntfs.Everywhere);
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
         Assert.Equal(3, parsed.Entries.Count);
@@ -454,11 +454,164 @@ public sealed class HandleLineBreakTests
     {
         // The real capture opens on a Key, whose name can hold a break: from there on nothing is proven.
         var parsed = HandleCsvParser.Parse(File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv")), processId: 14032, Ntfs.Everywhere);
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv")), Images.AllWhole, processId: 14032, Ntfs.Everywhere);
 
         Assert.Equal(7, parsed.Entries.Count);
         Assert.False(parsed.Entries[0].Unproven);
         Assert.All(parsed.Entries.Skip(1), e => Assert.True(e.Unproven));
+    }
+}
+
+/// <summary>A line break inside a process image name, which handle.exe prints first on every row.</summary>
+/// <remarks>
+/// Nothing before such a name gives it away: the text ahead of the break is a line of its own, a whole
+/// forged row if the attacker likes, and only the real row's line, which starts after the last break,
+/// names a real process under a name that is not its own.
+/// </remarks>
+public sealed class HandleImageNameLineBreakTests
+{
+    private const string NameSearchHeader = "Process,PID,User,Handle,Type,Share Flags,Name,Access";
+    private const string ProcessHeader = "Process,PID,User,Handle,Type,Share Flags,Name";
+    private const string RowEnd = " \r\n";
+
+    public static TheoryData<string> LineBreaks => new() { "\n", "\r", "\r\n" };
+
+    [Theory]
+    [MemberData(nameof(LineBreaks))]
+    public void A_line_break_in_an_image_name_cannot_blame_another_pid_in_a_name_search(string lineBreak)
+    {
+        // evil.exe's image file is named "victim.exe,668,File,...,C:\shared\x.docx<break>z", and it holds
+        // C:\shared\x.docx. handle.exe prints its image name, then the real fields: the first line is a
+        // complete row blaming PID 668 for a file on an NTFS drive, which no object-name rule doubts.
+        var image = @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + lineBreak + "z";
+        var csv = NameSearchHeader + "\r\n" +
+                  image + @",4242,File,CONTOSO\mallory,0x00000010,C:\shared\x.docx" + RowEnd +
+                  @"word.exe,5150,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(
+            csv, Images.Running((668, "victim.exe"), (4242, image), (5150, "word.exe")),
+            driveRefusesControlCharacters: Ntfs.Everywhere);
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
+
+        // Nothing tells the forged line from a real one, nor where the forgery began, so every line up to
+        // the one that gave it away is counted -- and word.exe, after it, is proven as before.
+        var word = Assert.Single(parsed.Entries);
+        Assert.Equal(5150, word.ProcessId);
+        Assert.False(word.Unproven);
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Theory]
+    [MemberData(nameof(LineBreaks))]
+    public void A_short_line_before_a_forged_row_in_an_image_name_changes_nothing(string lineBreak)
+    {
+        // The reviewer's spelling: a fragment too short to be a row, then the forged row, then the real one.
+        var image = "a" + lineBreak + @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x4,C:\shared\x.docx" + lineBreak + "z";
+        var csv = NameSearchHeader + "\r\n" +
+                  image + @",4242,File,CONTOSO\mallory,0x00000010,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(
+            csv, Images.Running((668, "victim.exe"), (4242, image)), driveRefusesControlCharacters: Ntfs.Everywhere);
+
+        Assert.Empty(parsed.Entries);
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_forged_holder_in_an_image_name_does_not_vouch_for_lines_after_it()
+    {
+        // The forged row names an event, a name that can hold a break, so the rows after it would be held
+        // to PID 668 -- had the forged row been believed. It was not, so nothing can be held to it.
+        var image = @"victim.exe,668,Event,NT AUTHORITY\SYSTEM,0x4,\BaseNamedObjects\x" + "\n" + "z";
+        var csv = NameSearchHeader + "\r\n" +
+                  image + @",4242,File,CONTOSO\mallory,0x00000010,C:\shared\x.docx" + RowEnd +
+                  @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000008,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(
+            csv, Images.Running((668, "victim.exe"), (4242, image)), driveRefusesControlCharacters: Ntfs.Everywhere);
+
+        Assert.Empty(parsed.Entries);
+        Assert.Equal(3, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_row_of_a_process_that_came_or_went_during_the_run_leaves_every_row_before_it_unattributable()
+    {
+        // Its image name cannot be read any more, so whether it held a break cannot be either.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"word.exe,5150,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx" + RowEnd +
+                  @"gone.exe,4242,File,CONTOSO\jdoe,0x00000010,C:\shared\x.docx" + RowEnd +
+                  @"excel.exe,6160,File,CONTOSO\jdoe,0x00000470,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(
+            csv, Images.Running((5150, "word.exe"), (6160, "excel.exe")), driveRefusesControlCharacters: Ntfs.Everywhere);
+
+        var excel = Assert.Single(parsed.Entries);
+        Assert.Equal(6160, excel.ProcessId);
+        Assert.False(excel.Unproven);
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void An_unreadable_row_leaves_the_rows_before_it_unattributable_too()
+    {
+        // The real row's line can also fit two readings -- its first segment is the attacker's -- and then
+        // its PID is not known at all. The forged row before it must not survive that either.
+        var image = @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x4,C:\shared\x.docx" + "\n" + "1,2,File,u,0x1,q";
+        var csv = NameSearchHeader + "\r\n" +
+                  image + @",4242,File,CONTOSO\mallory,0x00000010,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(
+            csv, Images.Running((668, "victim.exe"), (4242, image)), driveRefusesControlCharacters: Ntfs.Everywhere);
+
+        Assert.Empty(parsed.Entries);
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Theory]
+    [MemberData(nameof(LineBreaks))]
+    public void A_line_break_in_the_scoped_process_image_name_marks_its_rows_unproven(string lineBreak)
+    {
+        // Under -p every row is the scoped process's, so they stay listed -- but a forged one among them
+        // must not read as proven.
+        var image = @"evil.exe,4242,NT AUTHORITY\SYSTEM,0x00000004,File,,C:\shared\x.docx" + lineBreak + "evil.exe";
+        var csv = ProcessHeader + "\r\n" +
+                  image + @",4242,CONTOSO\mallory,0x00000010,File,,C:\Windows\System32" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(
+            csv, Images.Running((4242, image)), processId: 4242, Ntfs.Everywhere);
+
+        Assert.Equal(2, parsed.Entries.Count);
+        Assert.All(parsed.Entries, e => Assert.True(e.Unproven));
+        Assert.Equal(0, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_scoped_process_whose_image_is_confirmed_keeps_its_rows_proven()
+    {
+        var csv = ProcessHeader + "\r\n" +
+                  @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x00000004,File,,C:\Windows\System32" + RowEnd +
+                  @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x00000008,File,,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv, Images.Running((1234, "svc.exe")), processId: 1234, Ntfs.Everywhere);
+
+        Assert.Equal(2, parsed.Entries.Count);
+        Assert.All(parsed.Entries, e => Assert.False(e.Unproven));
+    }
+}
+
+/// <summary>Whether the process table confirms a printed image name, for the parser's tests.</summary>
+internal static class Images
+{
+    /// <summary>Every process named as printed, and none came or went: the captures, taken on a quiet machine.</summary>
+    public static bool AllWhole(int processId, string printedImage) => true;
+
+    /// <summary>These processes, under these image names, ran throughout; no other did.</summary>
+    public static Func<int, string, bool> Running(params (int ProcessId, string Image)[] processes)
+    {
+        var table = processes.ToDictionary(p => p.ProcessId, p => p.Image);
+        return (processId, printed) => table.TryGetValue(processId, out var image) && image == printed;
     }
 }
 

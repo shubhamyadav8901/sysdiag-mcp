@@ -33,7 +33,8 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
             new ExternalToolRunner(new ToolLocator(), new WinDiagOptions(), NullLogger<ExternalToolRunner>.Instance),
             new ToolLocator(),
             new WindowsPrivilegeProbe(),
-            new WinDiagOptions());
+            new WinDiagOptions(),
+            new NativeProcessTable());
 
     [Fact]
     public void Finds_a_file_that_this_very_process_is_holding_open()
@@ -108,6 +109,12 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
             // "run path_handle_search" advice worth giving.
             Assert.Contains(viaHandle.Entries, e => e.ProcessId == holder.Id);
             Assert.True(viaHandle.Elevated);
+
+            // The holder ran throughout, so the process table must confirm the image name handle.exe
+            // printed for it. If handle.exe names processes differently from NtQuerySystemInformation,
+            // every search would degrade to unattributable rows, and only this machine can show it.
+            Assert.False(viaHandle.UnconfirmedImage);
+            Assert.All(viaHandle.Entries, e => Assert.False(e.Unproven));
         }
         finally
         {

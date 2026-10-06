@@ -149,6 +149,26 @@ internal sealed class StubExternalToolRunner(string standardOutput = "", int exi
     }
 }
 
+/// <summary>
+/// A process table that answers each snapshot from a fixed list of tables, the last repeating; by default
+/// the given processes, created at time 1, running throughout.
+/// </summary>
+internal sealed class FakeProcessTable : IProcessTable
+{
+    private readonly IReadOnlyDictionary<int, ProcessImage>[] _snapshots;
+
+    public FakeProcessTable(params (int ProcessId, string Image)[] processes)
+        : this([processes.ToDictionary(p => p.ProcessId, p => new ProcessImage(1, p.Image))])
+    {
+    }
+
+    public FakeProcessTable(IReadOnlyDictionary<int, ProcessImage>[] snapshots) => _snapshots = snapshots;
+
+    public int Taken { get; private set; }
+
+    public IReadOnlyDictionary<int, ProcessImage> Snapshot() => _snapshots[Math.Min(Taken++, _snapshots.Length - 1)];
+}
+
 /// <summary>Answers for a process's services and critical flag from fixed values, counting each question.</summary>
 internal sealed class FakeProtectionProbe : IProcessProtectionProbe
 {

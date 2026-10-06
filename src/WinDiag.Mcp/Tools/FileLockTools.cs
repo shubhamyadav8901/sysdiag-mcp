@@ -210,24 +210,38 @@ public sealed class FileLockTools
             // all an empty one. Each of these rows is a handle that exists.
             builder.Append("WARNING: ").Append(result.UnparsedRows)
                 .Append(result.UnparsedRows == 1 ? " row" : " rows")
-                .AppendLine(" of handle.exe's output could not be attributed to a process and are not " +
-                            "listed. handle.exe does not quote its fields, so a process image name " +
-                            "containing commas, or a line break inside an object name, can make a row " +
-                            "ambiguous -- and such a name can be chosen to hide a holder or to blame another " +
-                            "PID. This list is incomplete; do not act on an absence from it. For one process, " +
-                            "process_handles lists what it holds.");
+                .Append(" of handle.exe's output could not be attributed to a process and are not " +
+                        "listed. handle.exe does not quote its fields, so a process image name " +
+                        "containing commas, or a line break inside an image name or an object name, can " +
+                        "make a row ambiguous -- and such a name can be chosen to hide a holder or to blame " +
+                        "another PID. This list is incomplete; do not act on an absence from it. For one " +
+                        "process, process_handles lists what it holds.");
+
+            // Said, because it is the usual cause and is no attack: a row is confirmed only under a process
+            // that was the same process for the whole run.
+            builder.AppendLine(result.UnconfirmedImage
+                ? " Some rows name a process the process table could not confirm under the image name " +
+                  "printed -- most often a holder that started or exited while handle.exe ran; running the " +
+                  "search again may attribute them."
+                : string.Empty);
         }
 
-        if (result.Entries.FirstOrDefault(e => e.Unproven) is { } firstUnproven)
+        var unproven = result.Entries.Where(e => e.Unproven).ToList();
+        if (unproven.Count > 0)
         {
-            // Once, naming where it starts, rather than on every row: under process_handles with all object
-            // types that is nearly every row, and a mark on each would bury the rows it does not apply to.
-            builder.Append("NOTE: from handle ").Append(RenderLimits.Printable(firstUnproven.HandleValue))
-                .Append(" of ").Append(RenderLimits.Printable(firstUnproven.ProcessName))
-                .Append(" (PID ").Append(firstUnproven.ProcessId)
-                .AppendLine(") on, rows follow an object name that can contain a line break, so any of them " +
-                            "may be text from inside that name. The process is certain -- it holds that " +
-                            "object -- but those rows' type, handle and name are not proven.");
+            // Once, with a count and the first, rather than on every row: under process_handles with all
+            // object types that is nearly every row, and a mark on each would bury the rows it does not
+            // apply to. Not "from this row on": rows ahead of an unconfirmed image name are unproven while
+            // the rows after it need not be. The structured list marks each one.
+            var first = unproven[0];
+            builder.Append("NOTE: ").Append(unproven.Count)
+                .Append(unproven.Count == 1 ? " of these rows is" : " of these rows are")
+                .Append(" marked unproven, the first at handle ").Append(RenderLimits.Printable(first.HandleValue))
+                .Append(" of ").Append(RenderLimits.Printable(first.ProcessName))
+                .Append(" (PID ").Append(first.ProcessId)
+                .AppendLine("). Each follows an object name that can contain a line break, or comes before a " +
+                            "line whose image name the process table could not confirm, so it may be text " +
+                            "from inside that name. Its PID is certain, but its other fields are not proven.");
         }
 
         if (result.Entries.Count == 0 && result.UnparsedRows > 0)

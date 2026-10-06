@@ -32,17 +32,20 @@ public sealed class HandleExeInspector : IHandleInspector
     private readonly IToolLocator _locator;
     private readonly IPrivilegeProbe _privileges;
     private readonly WinDiagOptions _options;
+    private readonly IProcessTable _processes;
 
     public HandleExeInspector(
         IExternalToolRunner runner,
         IToolLocator locator,
         IPrivilegeProbe privileges,
-        WinDiagOptions options)
+        WinDiagOptions options,
+        IProcessTable processes)
     {
         _runner = runner;
         _locator = locator;
         _privileges = privileges;
         _options = options;
+        _processes = processes;
     }
 
     public async Task<HandleSearchResult> SearchAsync(
@@ -122,9 +125,15 @@ public sealed class HandleExeInspector : IHandleInspector
 
         var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
 
+        // Read on both sides of the run: a row is confirmed only under a process that was the same
+        // process throughout, which one reading cannot show. See PrintedImageWitness.
+        var before = _processes.Snapshot();
+
         var result = await _runner
             .RunAsync(executable, arguments, ExternalToolPolicy.ConsoleTool, cancellationToken)
             .ConfigureAwait(false);
+
+        var images = new PrintedImageWitness(before, _processes.Snapshot());
 
         // handle.exe reports "no matches" via empty output, not an exit code, and writes access-denied
         // diagnostics to stdout alongside data. Only treat it as failed when nothing usable came back.
@@ -141,7 +150,7 @@ public sealed class HandleExeInspector : IHandleInspector
                 query, [], _privileges.IsElevated, false, 0, includeAllObjectTypes, processScoped);
         }
 
-        var parsed = HandleCsvParser.Parse(result.StandardOutput, scopedTo);
+        var parsed = HandleCsvParser.Parse(result.StandardOutput, images.IsWhole, scopedTo);
         var entries = parsed.Entries;
         var truncated = entries.Count > _options.MaxResults;
 
@@ -153,6 +162,7 @@ public sealed class HandleExeInspector : IHandleInspector
             TotalMatched: entries.Count,
             IncludedAllObjectTypes: includeAllObjectTypes,
             ProcessScoped: processScoped,
-            UnparsedRows: parsed.UnparsedRows);
+            UnparsedRows: parsed.UnparsedRows,
+            UnconfirmedImage: parsed.UnconfirmedImage);
     }
 }
