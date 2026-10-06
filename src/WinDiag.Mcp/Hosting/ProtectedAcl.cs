@@ -1,5 +1,3 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -135,21 +133,53 @@ public static class ProtectedAcl
 
         foreach (var item in Contents(full))
         {
-            if (item.Attributes.HasFlag(FileAttributes.ReparsePoint))
-            {
-                found.Add($"{item.FullName} is a link, which windiag never puts in its directories");
-                continue;
-            }
-
-            var security = item is DirectoryInfo directory
-                ? (FileSystemSecurity)directory.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner)
-                : ((FileInfo)item).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
-            found.AddRange(Exposures(security, DirectoryWriteRights, trusted, "write to").Select(e => $"{item.FullName}: {e}"));
+            found.AddRange(ItemExposures(item.FullName, trusted));
         }
 
         // A directory full of planted files would otherwise produce a refusal nobody can read to the end.
         const int shown = 10;
         return found.Count <= shown ? found : [.. found.Take(shown), $"and {found.Count - shown} more"];
+    }
+
+    /// <summary>Who else can change one item, judged through a handle on the item itself; a link counts.</summary>
+    /// <remarks>
+    /// An item this account cannot read the ACL of counts too, as unknown rather than safe: the repair then
+    /// tries it and names it if that fails as well.
+    /// </remarks>
+    private static IEnumerable<string> ItemExposures(string path, IReadOnlyCollection<SecurityIdentifier> trusted)
+    {
+        SafeFileHandle? handle;
+        try
+        {
+            handle = FileObjects.Open(path, FileObjects.ReadControl | FileObjects.ReadAttributes, FileShare.ReadWrite | FileShare.Delete);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return [$"{path} cannot be read by this account, so who can change it is unknown"];
+        }
+
+        if (handle is null)
+        {
+            // Gone since the listing.
+            return [];
+        }
+
+        using (handle)
+        {
+            var node = FileObjects.Inspect(handle, path);
+            if (node.IsLink)
+            {
+                return [$"{path} is a link, which windiag never puts in its directories"];
+            }
+
+            if (node.IsHardLink)
+            {
+                return [$"{path} is a hard link, the same file as one elsewhere, which windiag never makes"];
+            }
+
+            return Exposures(FileObjects.ReadAcl(handle, node.IsDirectory), DirectoryWriteRights, trusted, "write to")
+                .Select(e => $"{path}: {e}").ToList();
+        }
     }
 
     /// <summary>Everything under <paramref name="directory"/>, hidden and system items included, not looking inside links.</summary>
@@ -328,20 +358,24 @@ public static class ProtectedAcl
     /// exposed, and protecting it would lock every user out of the whole drive. A server belongs in a
     /// directory of its own.</para>
     /// <para>Each directory from below the root down is opened without following a link and checked, and
-    /// the directory itself is held open without delete sharing until the work is done. A check by name
-    /// alone would leave a moment in which whoever can still write it -- that is why it is being
-    /// protected -- renames it and puts a junction in its place, and the ACL, and the takeover of its
-    /// contents, would land on wherever that points: System32, say. Held this way, nobody can rename or
-    /// delete it meanwhile. The directories above are checked but not held: one a user can rename lets
+    /// the directory itself is held open, shared for reading only, until the work is done, and its ACL is
+    /// written through that handle. A check by name alone would leave a moment in which whoever can still
+    /// write it -- that is why it is being protected -- renames it and puts a junction in its place, and the
+    /// ACL, and the takeover of its contents, would land on wherever that points: System32, say. Held this
+    /// way, nobody can rename or delete it meanwhile. The directories above are checked but not held: one a user can rename lets
     /// them redirect the path at any time, before this or after it, which is a matter of where windiag is
     /// put rather than of this moment -- and holding one open needs the right to list it, which a
     /// NetworkService service has on its own directory but not on every directory above it.</para>
     /// <para>A directory that does not exist is created with the ACL already on it, not given it
     /// afterwards: in between it would inherit "Authenticated Users: Modify" from <c>C:\</c>, and a handle
-    /// a user opened then keeps that access whatever the ACL later says.</para>
+    /// a user opened then keeps that access whatever the ACL later says. So is any directory above it that
+    /// does not exist yet, restricted the same way: made with what its parent hands down -- under a drive
+    /// root, "Authenticated Users: Modify" -- any user could rename it and put their own in its place,
+    /// redirecting everything below it.</para>
     /// <para>What is already inside is taken over as tools/windiag-acl.ps1 does, one rule in two places:
     /// see <see cref="TakeOverContents"/>. The script cannot call this, because it runs before anything
-    /// from this repository is on the target.</para>
+    /// from this repository is on the target. It differs in one way, on the safe side: it cannot read a
+    /// reparse tag, so it refuses a deduplicated or compressed file that this takes over.</para>
     /// </remarks>
     /// <exception cref="ConfigurationException">A drive root, a file, or a link.</exception>
     public static void ProtectDirectory(string path, SecurityIdentifier? serviceAccount, bool ownedByAdministrators)
@@ -356,18 +390,35 @@ public static class ProtectedAcl
         }
 
         var acl = DirectoryAcl(serviceAccount, ownedByAdministrators);
+        var write = FileObjects.ReadControl | FileObjects.WriteDac | (ownedByAdministrators ? FileObjects.WriteOwner : 0);
         SafeFileHandle? held = null;
         try
         {
             foreach (var component in Components(full))
             {
+                // The directory itself is held for listing and shared for reading only: share modes bind
+                // only an open that asks for data access, and no-one may open it to write -- to set a
+                // reparse point on it -- or to rename or delete it while this works.
                 var hold = string.Equals(component, full, StringComparison.OrdinalIgnoreCase);
-                var handle = OpenDirectory(component, full, hold);
+                var access = hold ? FileObjects.ListDirectory | FileObjects.ReadAttributes | FileObjects.Synchronize | write : FileObjects.ReadAttributes;
+                var share = hold ? FileShare.Read : FileShare.ReadWrite | FileShare.Delete;
+
+                var handle = FileObjects.Open(component, access, share);
                 if (handle is null)
                 {
                     acl.CreateDirectory(component);
-                    handle = OpenDirectory(component, full, hold)
+                    handle = FileObjects.Open(component, access, share)
                              ?? throw new DirectoryNotFoundException($"{component} was created and is gone again.");
+                }
+
+                try
+                {
+                    RequireDirectory(FileObjects.Inspect(handle, component), component, full);
+                }
+                catch
+                {
+                    handle.Dispose();
+                    throw;
                 }
 
                 if (hold)
@@ -384,15 +435,36 @@ public static class ProtectedAcl
             // item by item below, since until the directory is restricted its contents can still change.
             foreach (var item in Contents(full))
             {
-                RefuseToTakeOver(item.FullName);
+                using var handle = FileObjects.Open(item.FullName, FileObjects.ReadAttributes, FileShare.ReadWrite | FileShare.Delete);
+                if (handle is not null)
+                {
+                    RefuseToTakeOver(FileObjects.Inspect(handle, item.FullName), item.FullName);
+                }
             }
 
-            new DirectoryInfo(full).SetAccessControl(acl);
+            FileObjects.WriteAcl(held!, acl, isDirectory: true);
+
+            // Judged again before it is entered: an owner who could still write it a moment ago may have
+            // made it a mount point, and the ACL written through the handle went on the mount point itself.
+            RequireDirectory(FileObjects.Inspect(held!, full), full, full);
             TakeOverContents(full, ownedByAdministrators);
         }
         finally
         {
             held?.Dispose();
+        }
+    }
+
+    private static void RequireDirectory(FileObjects.Node node, string path, string full)
+    {
+        if (node.IsLink)
+        {
+            throw LinkRefusal(path, full);
+        }
+
+        if (!node.IsDirectory)
+        {
+            throw new ConfigurationException($"{path} is a file, not a directory. Nothing was changed.");
         }
     }
 
@@ -408,31 +480,57 @@ public static class ProtectedAcl
     /// <para>Inheritance stays on so a service account's ACE on the directory still reaches each item.
     /// Explicit rules are always added: a security object with none is .NET's null-DACL placeholder,
     /// which is written as "Everyone: Full Control".</para>
-    /// <para>A directory is listed only after it is restricted, so nothing can be added to it between
-    /// the listing and the reset. When <paramref name="ownedByAdministrators"/> is false -- a service
-    /// account that cannot assign that owner -- owners are left, and the exposure check that follows
-    /// names any that is not trusted.</para>
+    /// <para>Each item is judged and written through one handle opened on the item itself, and a directory
+    /// is judged again after its ACL is written and before it is entered: until then its owner could have
+    /// made it a mount point. A directory is listed only after it is restricted, so nothing can be added to
+    /// it between the listing and the reset.</para>
+    /// <para>When <paramref name="ownedByAdministrators"/> is false -- a service account that cannot assign
+    /// that owner -- owners are left, and the exposure check that follows names any that is not
+    /// trusted.</para>
     /// </remarks>
     private static void TakeOverContents(string directory, bool ownedByAdministrators)
     {
+        var access = FileObjects.ReadControl | FileObjects.WriteDac | FileObjects.ReadAttributes | FileObjects.Synchronize
+                     | (ownedByAdministrators ? FileObjects.WriteOwner : 0);
+
         foreach (var item in new DirectoryInfo(directory).EnumerateFileSystemInfos("*", AllEntries))
         {
-            if (!RefuseToTakeOver(item.FullName))
+            SafeFileHandle? handle;
+            try
+            {
+                handle = FileObjects.Open(item.FullName, access, FileShare.ReadWrite | FileShare.Delete);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                throw new ConfigurationException(
+                    $"{item.FullName} cannot be taken over by this account ({ex.Message}): its ACL shuts out even "
+                    + "administrators, which nothing windiag makes does. Take it over and remove it as an administrator "
+                    + $"(takeown /a /r /d y /f \"{item.FullName}\", then delete it), and run this again.");
+            }
+
+            if (handle is null)
             {
                 // Gone since the listing: moved out by its owner. Nothing can take its place, since the
                 // directory it was in is restricted now.
                 continue;
             }
 
-            if (item is DirectoryInfo nested)
+            using (handle)
             {
-                nested.SetAccessControl(ItemAcl(new DirectorySecurity(), InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, ownedByAdministrators));
-                TakeOverContents(nested.FullName, ownedByAdministrators);
+                var node = FileObjects.Inspect(handle, item.FullName);
+                RefuseToTakeOver(node, item.FullName);
+
+                if (!node.IsDirectory)
+                {
+                    FileObjects.WriteAcl(handle, ItemAcl(new FileSecurity(), InheritanceFlags.None, ownedByAdministrators), isDirectory: false);
+                    continue;
+                }
+
+                FileObjects.WriteAcl(handle, ItemAcl(new DirectorySecurity(), InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, ownedByAdministrators), isDirectory: true);
+                RefuseToTakeOver(FileObjects.Inspect(handle, item.FullName), item.FullName);
             }
-            else
-            {
-                ((FileInfo)item).SetAccessControl(ItemAcl(new FileSecurity(), InheritanceFlags.None, ownedByAdministrators));
-            }
+
+            TakeOverContents(item.FullName, ownedByAdministrators);
         }
     }
 
@@ -450,7 +548,7 @@ public static class ProtectedAcl
         return acl;
     }
 
-    /// <summary>Throws for an item the takeover must not touch; false when it no longer exists.</summary>
+    /// <summary>Throws for an item the takeover must not touch.</summary>
     /// <remarks>
     /// <para>A junction or symbolic link would carry the change to wherever it points. Refused rather than
     /// skipped: a link nobody expected is itself the warning.</para>
@@ -458,132 +556,23 @@ public static class ProtectedAcl
     /// its ACL is that file's. A user can link any file they can read -- a System32 binary included --
     /// and taking it over would hand it to Administrators and, through inheritance, to the service's
     /// account. Nothing windiag writes has a second name.</para>
-    /// <para>Judged through a handle opened on the item itself, without following it.</para>
     /// </remarks>
-    private static bool RefuseToTakeOver(string path)
+    private static void RefuseToTakeOver(FileObjects.Node node, string path)
     {
-        using var handle = CreateFile(
-            path, FileReadAttributes, FileShare.ReadWrite | FileShare.Delete, IntPtr.Zero, FileMode.Open,
-            BackupSemantics | OpenReparsePoint, IntPtr.Zero);
-        if (handle.IsInvalid)
-        {
-            return Marshal.GetLastPInvokeError() is ErrorFileNotFound or ErrorPathNotFound
-                ? false
-                : throw LastError(path);
-        }
-
-        var info = Information(handle, path);
-        if ((info.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0)
+        if (node.IsLink)
         {
             throw new ConfigurationException(
                 $"{path} is a link, which windiag never puts in its directories. Nothing beneath it was changed; "
                 + "remove it and run this again.");
         }
 
-        if ((info.FileAttributes & (uint)FileAttributes.Directory) == 0 && info.NumberOfLinks > 1)
+        if (node.IsHardLink)
         {
             throw new ConfigurationException(
                 $"{path} is a hard link: the same file as one elsewhere on the volume, so restricting it would "
                 + "restrict that one too. Windiag never makes one. Remove it and run this again.");
         }
-
-        return true;
     }
-
-    /// <summary>
-    /// Opens a directory without following it, refusing a link or a file; null when there is nothing at
-    /// <paramref name="path"/>. With <paramref name="hold"/>, delete is not shared, so while the handle is
-    /// open nobody can rename or delete the directory.
-    /// </summary>
-    /// <remarks>
-    /// Held open for listing because share modes are enforced only on an open that asks for data access:
-    /// an attributes-only handle would not stop anyone renaming the directory.
-    /// </remarks>
-    private static SafeFileHandle? OpenDirectory(string path, string full, bool hold)
-    {
-        var handle = CreateFile(
-            path,
-            hold ? FileListDirectory | FileReadAttributes | Synchronize : FileReadAttributes,
-            hold ? FileShare.ReadWrite : FileShare.ReadWrite | FileShare.Delete,
-            IntPtr.Zero, FileMode.Open, BackupSemantics | OpenReparsePoint, IntPtr.Zero);
-        if (handle.IsInvalid)
-        {
-            var error = Marshal.GetLastPInvokeError();
-            handle.Dispose();
-            return error is ErrorFileNotFound or ErrorPathNotFound ? null : throw LastError(path, error);
-        }
-
-        try
-        {
-            var attributes = Information(handle, path).FileAttributes;
-            if ((attributes & (uint)FileAttributes.ReparsePoint) != 0)
-            {
-                throw LinkRefusal(path, full);
-            }
-
-            if ((attributes & (uint)FileAttributes.Directory) == 0)
-            {
-                throw new ConfigurationException($"{path} is a file, not a directory. Nothing was changed.");
-            }
-        }
-        catch
-        {
-            handle.Dispose();
-            throw;
-        }
-
-        return handle;
-    }
-
-    private static ByHandleFileInformation Information(SafeFileHandle handle, string path) =>
-        GetFileInformationByHandle(handle, out var info) ? info : throw LastError(path);
-
-    private static Exception LastError(string path) => LastError(path, Marshal.GetLastPInvokeError());
-
-    private static Exception LastError(string path, int error)
-    {
-        var message = $"{new Win32Exception(error).Message} ({path})";
-        return error switch
-        {
-            ErrorFileNotFound => new FileNotFoundException(message, path),
-            ErrorPathNotFound => new DirectoryNotFoundException(message),
-            ErrorAccessDenied => new UnauthorizedAccessException(message),
-            _ => new IOException(message, unchecked((int)0x80070000) | error)
-        };
-    }
-
-    private const int ErrorFileNotFound = 2;
-    private const int ErrorPathNotFound = 3;
-    private const int ErrorAccessDenied = 5;
-    private const uint FileListDirectory = 0x0001;
-    private const uint FileReadAttributes = 0x0080;
-    private const uint Synchronize = 0x00100000;
-    private const uint BackupSemantics = 0x02000000;
-    private const uint OpenReparsePoint = 0x00200000;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ByHandleFileInformation
-    {
-        public uint FileAttributes;
-        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
-        public uint VolumeSerialNumber;
-        public uint FileSizeHigh;
-        public uint FileSizeLow;
-        public uint NumberOfLinks;
-        public uint FileIndexHigh;
-        public uint FileIndexLow;
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
-    private static extern SafeFileHandle CreateFile(
-        string fileName, uint desiredAccess, FileShare shareMode, IntPtr securityAttributes, FileMode creationDisposition,
-        uint flagsAndAttributes, IntPtr templateFile);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetFileInformationByHandle(SafeFileHandle file, out ByHandleFileInformation information);
 
     /// <summary>Gives the service's key <see cref="ServiceKeyAcl"/>, before the token is written to it.</summary>
     public static void ProtectServiceKey(string serviceName)

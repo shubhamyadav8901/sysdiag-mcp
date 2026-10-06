@@ -40,11 +40,14 @@ function Protect-WinDiagDirectory {
     # Set-Acl follows a junction, so a C:\WinDiag that some user made a junction to C:\Windows would have
     # that restricted and handed to Administrators instead -- and the junction stays theirs, to point
     # somewhere else once the check is done. A link above the directory is the same thing a level up.
-    # Attributes read by path do not follow the last component, so each one is judged as itself.
+    # Attributes read by path do not follow the last component, so each one is judged as itself. Not
+    # asked whether it exists first: Directory.Exists follows a link, so a junction to nowhere -- which a
+    # create through it would then bring into being -- would read as not there yet.
     function Assert-NoLinkOnTheWay {
         foreach ($component in $components) {
-            if (-not ([System.IO.Directory]::Exists($component) -or [System.IO.File]::Exists($component))) { return }
-            if ([System.IO.File]::GetAttributes($component) -band [System.IO.FileAttributes]::ReparsePoint) {
+            try { $attributes = [System.IO.File]::GetAttributes($component) }
+            catch [System.IO.FileNotFoundException], [System.IO.DirectoryNotFoundException] { return }
+            if ($attributes -band [System.IO.FileAttributes]::ReparsePoint) {
                 throw ("$component is a link -- a junction, a symbolic link or a mounted folder" +
                        $(if ($component -ne $full) { ", and $full is reached through it" } else { '' }) +
                        '. Whoever made it can point it somewhere else once it has been checked. Nothing was ' +
@@ -56,7 +59,9 @@ function Protect-WinDiagDirectory {
     # A junction or symbolic link would carry the takeover below to wherever it points -- a user's profile,
     # or System32. A hard link would too, less visibly: it is the same file as one elsewhere, and a user can
     # give any file they can read a second name. Refused rather than skipped: a link nobody expected is
-    # itself the warning, and windiag never makes either.
+    # itself the warning, and windiag never makes either. Every reparse point counts here, where the
+    # server's copy lets a deduplicated or compressed file through: PowerShell cannot read the tag that
+    # tells them apart, and refusing is the side to err on.
     function Assert-Ownable([System.IO.FileSystemInfo] $Item) {
         if ($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             throw ("$($Item.FullName) is a link, which windiag never puts in its directories. " +

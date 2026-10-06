@@ -286,6 +286,9 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
         PlantedTree.HardLink(Path.Combine(path, "dbghelp.dll"), original);
         var before = Acl(original).GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner);
 
+        // The service's start-time check names it too, so the check and the repair agree on what is wrong.
+        Assert.Contains(ProtectedAcl.DirectoryExposures(path, NetworkService), e => e.Contains("hard link", StringComparison.Ordinal));
+
         var ex = Assert.Throws<ConfigurationException>(() => ProtectedAcl.ProtectDirectory(path, NetworkService, ownedByAdministrators: true));
 
         Assert.Contains("hard link", ex.Message, StringComparison.Ordinal);
@@ -308,5 +311,37 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
             Assert.Empty(Rules(made, inherited: true));
             Assert.Empty(ProtectedAcl.DirectoryExposures(made, serviceAccount: null));
         }
+    }
+}
+
+/// <summary>Which reparse points count as links: anything that could lead elsewhere, and not the data tags Windows Server puts on ordinary files.</summary>
+public sealed class ReparsePointClassificationTests
+{
+    private const uint ReparsePoint = (uint)FileAttributes.ReparsePoint;
+    private const uint Directory = (uint)FileAttributes.Directory;
+
+    [Theory]
+    [InlineData(0x80000013u)] // deduplication
+    [InlineData(0x80000017u)] // compact /exe
+    public void A_deduplicated_or_compressed_file_is_not_a_link_so_a_dump_or_the_server_binary_is_not_refused(uint tag)
+    {
+        // A data volume with deduplication, or compact /exe on C:\WinDiag, puts these tags on files that
+        // are entirely ordinary. Counted as links, the next start after update_self refused to run.
+        Assert.False(FileObjects.IsLink(ReparsePoint, tag));
+    }
+
+    [Theory]
+    [InlineData(0xA0000003u)] // a junction or mounted volume
+    [InlineData(0xA000000Cu)] // a symbolic link
+    [InlineData(0x9000001Au)] // a cloud placeholder, whose data a user-run sync engine supplies
+    [InlineData(0x12345678u)] // anything not known to be harmless
+    public void A_file_with_any_other_tag_is_a_link(uint tag) => Assert.True(FileObjects.IsLink(ReparsePoint, tag));
+
+    [Fact]
+    public void A_directory_that_is_a_reparse_point_of_any_kind_is_a_link()
+    {
+        Assert.True(FileObjects.IsLink(ReparsePoint | Directory, 0x80000013u));
+        Assert.False(FileObjects.IsLink(Directory, 0));
+        Assert.False(FileObjects.IsLink(0, 0));
     }
 }

@@ -160,7 +160,7 @@ public sealed class WindowsRestartHelper : IRestartHelper
 
         // Removed rather than left for cmd's ">" to truncate, for the reason WriteScript gives: a log a user
         // left here would keep their ownership, and a link at that name would aim SYSTEM's writes elsewhere.
-        File.Delete(log);
+        RemoveExisting(log);
 
         using var process = Process.Start(new ProcessStartInfo
         {
@@ -187,10 +187,32 @@ public sealed class WindowsRestartHelper : IRestartHelper
     /// </remarks>
     internal static void WriteScript(string path, string script)
     {
-        File.Delete(path);
+        RemoveExisting(path);
         using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         var bytes = Encoding.ASCII.GetBytes(script);
         file.Write(bytes);
+    }
+
+    /// <summary>Frees <paramref name="path"/>'s name, whatever has the file open.</summary>
+    /// <remarks>
+    /// Renamed aside before it is deleted. A delete alone frees the name at once only where Windows deletes
+    /// with POSIX semantics; elsewhere -- older Windows, or a volume without them -- the name stays taken
+    /// while anyone holds the file open, a virus scanner included, and CreateNew would then fail the update.
+    /// A rename frees it everywhere, and the renamed file goes when its last handle closes.
+    /// </remarks>
+    internal static void RemoveExisting(string path)
+    {
+        var aside = $"{path}.{Guid.NewGuid():N}.old";
+        try
+        {
+            File.Move(path, aside);
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+
+        File.Delete(aside);
     }
 
     private static string Quote(string argument) =>

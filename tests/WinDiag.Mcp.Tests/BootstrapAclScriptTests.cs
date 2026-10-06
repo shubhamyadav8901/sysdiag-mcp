@@ -26,6 +26,12 @@ public sealed class ElevatedFactAttribute : FactAttribute
     }
 }
 
+/// <summary>The theory form of <see cref="ElevatedFactAttribute"/>.</summary>
+public sealed class ElevatedTheoryAttribute : TheoryAttribute
+{
+    public ElevatedTheoryAttribute() => Skip = new ElevatedFactAttribute().Skip;
+}
+
 /// <summary>Runs tools/windiag-acl.ps1 itself, not a model of it: the scripts restrict the directories before any installer runs.</summary>
 public sealed class BootstrapAclScriptTests
 {
@@ -145,17 +151,22 @@ public sealed class BootstrapAclScriptTests
         }
     }
 
-    [ElevatedFact]
-    public void The_script_creates_a_missing_directory_with_its_acl_already_on_it()
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_script_creates_a_missing_directory_with_its_acl_already_on_it(string shell)
     {
         // Made by New-Item and restricted afterwards, it inherited "Authenticated Users: Modify" in between,
-        // long enough for a user to open a handle that keeps that access.
+        // long enough for a user to open a handle that keeps that access. Two levels are missing, as with a
+        // -RemotePath of C:\Tools\WinDiag on a machine without C:\Tools.
         var parent = PlantedTree.UnderSystemDriveRoot();
         try
         {
-            var path = Path.Combine(parent, "WinDiag");
+            var path = Path.Combine(parent, "Tools", "WinDiag");
 
-            RunProtectScript(path);
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}' 3>$null", shell);
+
+            Assert.True(exit == 0, output);
 
             var acl = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
             Assert.True(acl.AreAccessRulesProtected);
@@ -168,8 +179,12 @@ public sealed class BootstrapAclScriptTests
         }
     }
 
-    [ElevatedFact]
-    public void The_token_file_is_created_readable_only_by_system_and_administrators_from_its_first_byte()
+    // Both shells, because the scripts take a different path to the same API in each: Windows PowerShell has
+    // .NET Framework's FileStream and Directory overloads that take an ACL, PowerShell 7 the extension methods.
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_token_file_is_created_readable_only_by_system_and_administrators_from_its_first_byte(string shell)
     {
         // bootstrap-target writes the fleet token into the install directory for --token-stdin. Created and
         // then restricted, or inheriting from a directory a user could once write, it could be opened in
@@ -179,7 +194,7 @@ public sealed class BootstrapAclScriptTests
         {
             var file = Path.Combine(directory, "install-token-test.tmp");
 
-            var (exit, output) = RunPowerShell($"New-WinDiagRestrictedFile -Path '{Quote(file)}' -Content 'the-token'");
+            var (exit, output) = RunPowerShell($"New-WinDiagRestrictedFile -Path '{Quote(file)}' -Content 'the-token'", shell);
 
             Assert.True(exit == 0, output);
             Assert.Equal("the-token", File.ReadAllText(file));
@@ -197,8 +212,10 @@ public sealed class BootstrapAclScriptTests
         }
     }
 
-    [ElevatedFact]
-    public void The_token_file_is_never_written_into_a_file_already_at_its_name()
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_token_file_is_never_written_into_a_file_already_at_its_name(string shell)
     {
         // A file left at the name, by a user who could write the directory before it was restricted, is
         // theirs: writing the token into it, as WriteAllText did, handed them the token.
@@ -208,7 +225,7 @@ public sealed class BootstrapAclScriptTests
             var file = Path.Combine(directory, "install-token-test.tmp");
             File.WriteAllText(file, "planted");
 
-            var (exit, _) = RunPowerShell($"New-WinDiagRestrictedFile -Path '{Quote(file)}' -Content 'the-token'");
+            var (exit, _) = RunPowerShell($"New-WinDiagRestrictedFile -Path '{Quote(file)}' -Content 'the-token'", shell);
 
             Assert.NotEqual(0, exit);
             Assert.Equal("planted", File.ReadAllText(file));
@@ -254,11 +271,11 @@ public sealed class BootstrapAclScriptTests
 
     private static string Quote(string value) => value.Replace("'", "''");
 
-    /// <summary>Runs <paramref name="command"/> in Windows PowerShell with tools/windiag-acl.ps1 dot-sourced.</summary>
-    private static (int Exit, string Output) RunPowerShell(string command)
+    /// <summary>Runs <paramref name="command"/> in <paramref name="shell"/> with tools/windiag-acl.ps1 dot-sourced.</summary>
+    private static (int Exit, string Output) RunPowerShell(string command, string shell = "powershell.exe")
     {
         var script = ScriptPath();
-        var start = new ProcessStartInfo("powershell.exe")
+        var start = new ProcessStartInfo(shell)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,

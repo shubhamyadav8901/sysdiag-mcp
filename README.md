@@ -743,7 +743,7 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--password <value>` | Required for an account that is not built in |
 | `--token-stdin` | Reads the token from standard input, so it never appears on the target's command line. Needs an already-elevated shell: stdin cannot cross the UAC prompt. The bootstrap scripts use this |
 | `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call. Prefer `--token-stdin`: a value here is in the installer's command line, which process auditing records |
-| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. The directory must not be reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. Give windiag a directory of its own: when others can write it, it and everything in it are handed to Administrators, and directories above it that do not exist yet are made the same way. The directory must not be reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
 | `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
 | `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
