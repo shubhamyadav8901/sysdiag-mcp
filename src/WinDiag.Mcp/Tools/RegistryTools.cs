@@ -39,7 +39,10 @@ public sealed class RegistryTools
         "On 64-bit Windows the same path names two different keys: view defaults to 'native', what " +
         "regedit shows, and view='32' reads the WOW6432Node copy a 32-bit product writes to. The view " +
         "that was read is always stated in the result, because an answer that does not say is ambiguous. " +
-        "This reads only. To find out why a key cannot be read, use effective_access on the same path.")]
+        "This reads only. To find out why a key cannot be read, use effective_access on the same path. " +
+        "HKLM\\SAM, HKLM\\SECURITY and other users' hives under HKU need the server's arbitrary-read grant, " +
+        "and a value named like a credential (a *TOKEN, a password or a secret, including NAME=value entries " +
+        "in a service's Environment) is always returned redacted, with its size.")]
     public RegistryReadResult RegistryRead(
         [Description(@"Key path, for example HKLM\SOFTWARE\Vendor\Product. HKLM, HKCU, HKCR, HKU and HKCC are accepted.")]
         string path,

@@ -98,7 +98,9 @@ public static class ServerBuilder
                                                   is the deliberate combination for a look-but-do-not-
                                                   touch target. The artifact directory is always
                                                   readable, so a capture_dump of any process is readable
-                                                  without it; lsass, lsaiso and csrss are never dumped
+                                                  without it; lsass, lsaiso and csrss are never dumped.
+                                                  Also opens HKLM\SAM, HKLM\SECURITY and other users'
+                                                  HKU hives to registry_read
           WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
                                                   executable and restarts (default: false)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)

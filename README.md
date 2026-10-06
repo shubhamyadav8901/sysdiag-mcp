@@ -71,7 +71,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
-| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |
+| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant. Available under every grant; HKLM\SAM, HKLM\SECURITY and other users' HKU hives need `--allow-arbitrary-read`, and values named like a credential are always redacted |
 | `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg. Never lsass, lsaiso or csrss (judged by the image in System32): they hold the machine's credentials |
 | `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
@@ -777,7 +777,7 @@ Both take `-Grants`, and **the preset names are not a security policy — check 
 
 | `-Grants` | Passes | Result |
 |---|---|---|
-| `None` | `--read-only` alone | Services and processes only. **Cannot read a single config file** — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
+| `None` | `--read-only` alone | Services, processes and the registry outside HKLM\SAM, HKLM\SECURITY and other users' hives. **Cannot read a single config file** — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
 | `Standard` | `--allow-self-update --allow-command-execution` | The usual fleet target |
 | `All` | those two plus `--allow-arbitrary-write --allow-arbitrary-read` | Full diagnostics |
 

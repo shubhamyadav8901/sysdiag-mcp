@@ -29,6 +29,10 @@ public sealed class WindowsRegistryInspector : IRegistryInspector
 
     private const int MaxBinaryPreviewBytes = 64;
 
+    /// <summary>The server account's SID, whose own HKU hive needs no grant.</summary>
+    private static readonly Lazy<string?> OwnSid =
+        new(() => System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value);
+
     private readonly WinDiagOptions _options;
 
     public WindowsRegistryInspector(WinDiagOptions options)
@@ -47,6 +51,10 @@ public sealed class WindowsRegistryInspector : IRegistryInspector
 
         var (hive, subKey) = RegistryPath.Split(path);
         var registryView = RegistryPath.ParseView(view);
+
+        // The SID is only consulted for HKU, so no other read pays for the identity lookup.
+        RegistryReadScope.RequireReadable(
+            hive, subKey, _options.AllowArbitraryRead, hive == RegistryHive.Users ? OwnSid.Value : null);
 
         using var root = RegistryKey.OpenBaseKey(hive, registryView);
 
@@ -163,7 +171,7 @@ public sealed class WindowsRegistryInspector : IRegistryInspector
         var kind = key.GetValueKind(name);
         var raw = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
 
-        var (rendered, size) = Render(kind, raw);
+        var (rendered, size) = RenderValue(name, raw);
         var truncated = rendered.Length > MaxRenderedChars;
 
         return new RegistryValue(
@@ -174,7 +182,54 @@ public sealed class WindowsRegistryInspector : IRegistryInspector
             SizeBytes: size);
     }
 
-    private static (string Rendered, int SizeBytes) Render(RegistryValueKind kind, object? raw) => raw switch
+    /// <summary>Renders a value for reading, with any credential in it redacted.</summary>
+    /// <remarks>
+    /// <para>Redacted here, before the value reaches the structured content, not in the summary: the summary is
+    /// not the only thing a caller reads.</para>
+    /// <para>Redacted under every grant. A windiag service keeps its bearer token in its own key's Environment
+    /// value, and a second instance's token holder -- a read-only one beside a full one is a documented setup
+    /// -- could otherwise read the full instance's token there and act with its authority. No diagnostic
+    /// question needs a credential's value; whether one is set, and its size, stays visible.</para>
+    /// </remarks>
+    internal static (string Rendered, int SizeBytes) RenderValue(string name, object? raw)
+    {
+        var (rendered, size) = Render(raw);
+
+        if (raw is string[] multi)
+        {
+            // An Environment block: NAME=value entries, one of which may be a token.
+            return (string.Join(" | ", multi.Select(RedactEntry)), size);
+        }
+
+        if (raw is string or byte[] && IsCredentialName(name))
+        {
+            return ($"(redacted: {size} bytes stored; this server never returns a value named like a credential)", size);
+        }
+
+        return (rendered, size);
+    }
+
+    private static string RedactEntry(string entry)
+    {
+        var equals = entry.IndexOf('=', StringComparison.Ordinal);
+        return equals > 0 && IsCredentialName(entry[..equals]) ? entry[..(equals + 1)] + "(redacted)" : entry;
+    }
+
+    /// <summary>A name that says its value is a credential: *TOKEN, or containing PASSWORD, PASSWD or SECRET.</summary>
+    /// <remarks>
+    /// Applied only to string and binary data. A DWORD such as DisablePasswordChange is a setting, and
+    /// hiding it would hide the answer.
+    /// </remarks>
+    private static bool IsCredentialName(string name)
+    {
+        var trimmed = name.Trim();
+        return trimmed.EndsWith("TOKEN", StringComparison.OrdinalIgnoreCase)
+               || trimmed.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase)
+               || trimmed.Contains("PASSWD", StringComparison.OrdinalIgnoreCase)
+               || trimmed.Contains("SECRET", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static (string Rendered, int SizeBytes) Render(object? raw) => raw switch
     {
         null => ("(no data)", 0),
 
