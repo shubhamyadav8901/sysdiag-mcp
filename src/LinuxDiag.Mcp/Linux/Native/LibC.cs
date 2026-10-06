@@ -402,6 +402,25 @@ internal static class LibC
         };
     }
 
+    /// <summary>Gives the path itself -- never what a link there leads to -- to this owner and group.</summary>
+    public static void ChangeOwner(string path, uint userId, uint groupId)
+    {
+        if (lchown(path, userId, groupId) != 0)
+        {
+            var errno = Marshal.GetLastPInvokeError();
+            throw new IOException($"Could not change the owner of '{path}': {Marshal.GetPInvokeErrorMessage(errno)}", errno);
+        }
+    }
+
+    /// <summary>The account this process acts as.</summary>
+    public static uint EffectiveUserId() => geteuid();
+
+    [DllImport(SystemLibrary.C, SetLastError = true)]
+    private static extern int lchown([MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint owner, uint group);
+
+    [DllImport(SystemLibrary.C)]
+    private static extern uint geteuid();
+
     [DllImport(SystemLibrary.C, SetLastError = true)]
     private static extern nint realpath([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] resolved);
 

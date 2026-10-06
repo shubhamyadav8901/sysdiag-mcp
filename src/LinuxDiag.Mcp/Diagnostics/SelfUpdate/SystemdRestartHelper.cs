@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Diag.Mcp.Server.SelfUpdate;
 using LinuxDiag.Mcp.Configuration;
+using LinuxDiag.Mcp.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace LinuxDiag.Mcp.Diagnostics.SelfUpdate;
@@ -18,6 +19,10 @@ public sealed class SystemdRestartHelper(LinuxDiagOptions options, ILogger<Syste
 {
     private const UnixFileMode OwnerOnlyExecutable = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
 
+    /// <summary>Why the artifact directory is not this server's alone; empty when it is.</summary>
+    internal Func<string, IReadOnlyList<string>> DirectoryProblems { get; init; } =
+        directory => TrustedDirectory.Problems(directory, TrustedDirectory.ThisProcess);
+
     public void Launch(string livePath, string stagedPath, string sha256, string logPath)
     {
         var pid = Environment.ProcessId;
@@ -28,6 +33,17 @@ public sealed class SystemdRestartHelper(LinuxDiagOptions options, ILogger<Syste
         var body = Script(pid, livePath, stagedPath, sha256, logPath, restart);
 
         Directory.CreateDirectory(options.ArtifactDirectory, OwnerOnlyExecutable);
+
+        // Checked here as well as at install: a later chmod, or LINUXDIAG_ARTIFACT_DIR pointed somewhere else,
+        // would otherwise let another account swap the script between its creation and sh reading it.
+        if (DirectoryProblems(options.ArtifactDirectory) is { Count: > 0 } problems)
+        {
+            throw new SelfUpdateRejectedException(
+                $"Refusing to update: the helper script would be written to {options.ArtifactDirectory} and run as this " +
+                $"server's account, and another account could change it there. {string.Join(" ", problems)} Make the " +
+                "directory and those above it writable by this server's account alone. Nothing has been changed.");
+        }
+
         File.Delete(script);
         using (var stream = new FileStream(script, new FileStreamOptions
                {

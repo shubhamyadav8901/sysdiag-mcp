@@ -83,7 +83,7 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
                     "devices, name resolution or remote access - and can take these diagnostics down with it. Nothing has been done.");
             }
 
-            dependents = await ActiveDependentsAsync(unit, cancellationToken).ConfigureAwait(false);
+            dependents = await ActiveDependentsAsync(unit, verb, cancellationToken).ConfigureAwait(false);
             if (self is not null && dependents.Contains(self))
             {
                 throw new ServiceControlException(
@@ -156,11 +156,21 @@ public sealed partial class LinuxServiceController(IExternalCommand commands, IL
     }
 
     /// <summary>The services that depend on this one and are active now: the ones a stop takes down with it.</summary>
-    private async Task<List<string>> ActiveDependentsAsync(string unit, CancellationToken cancellationToken)
+    private async Task<List<string>> ActiveDependentsAsync(string unit, string verb, CancellationToken cancellationToken)
     {
         var result = await commands.RunAsync(
             "systemctl", ["list-dependencies", "--reverse", "--all", "--full", "--plain", "--no-legend", "--no-pager", "--", unit], QueryWait, cancellationToken)
             .ConfigureAwait(false);
+        // Fail closed. list-dependencies exits non-zero with empty or partial output on a D-Bus timeout or when one
+        // unit's properties fail part-way through the --all walk; read as "no dependents", that let through a stop
+        // that took ssh.service or this server down with it. An unknown list cannot be shown free of critical units.
+        if (result.ExitCode != 0)
+        {
+            throw new ServiceControlException(
+                $"Refusing to {verb} '{unit}': could not list the services that depend on it " +
+                $"(systemctl reported: {LinuxServiceInspector.FirstLine(result.StandardError)}). Nothing has been done.");
+        }
+
         var names = result.StandardOutput
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Skip(1)
