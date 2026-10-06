@@ -15,12 +15,15 @@ public sealed class UserUnitTests : IDisposable
 
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
-    private string Home => Path.Combine(_root, "home/u");
+    // Normalised, like every path the tests expect back: the units are found by walking directories, which
+    // spells them with this OS's separator, so "home/u" joined as written only matched where that is '/'.
+    private string Home => Path.GetFullPath(Path.Combine(_root, "home/u"));
 
     private PasswdEntry User => new("u", 1000, Home);
 
     private string Write(string path, string text)
     {
+        path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
         return path;
