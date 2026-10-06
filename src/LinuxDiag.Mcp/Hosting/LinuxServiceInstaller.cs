@@ -24,7 +24,10 @@ public static class LinuxServiceInstaller
         // First, so a refused --artifacts leaves everything as it was.
         ArtifactDirectory(options.ArtifactDirectory);
 
+        // Every directory is taken over, and what is in it examined, before anything is written: a refusal in
+        // /etc/linuxdiag, met after the binary was replaced, left the new binary under the old unit and env file.
         OwnedDirectory(InstallDirectory, Executable);
+        OwnedDirectory("/etc/linuxdiag", OwnerOnlyDirectory);
         if (NeedsCopy(source, InstalledExecutable))
         {
             // Copied beside the target and renamed over it, so a running service's binary is replaced
@@ -44,7 +47,6 @@ public static class LinuxServiceInstaller
             File.SetUnixFileMode(InstalledExecutable, Executable);
         }
 
-        OwnedDirectory("/etc/linuxdiag", OwnerOnlyDirectory);
         WriteOwnerOnly(options.EnvironmentFilePath, options.EnvironmentFile());
 
         WriteFresh(options.UnitFilePath, options.UnitFile(InstalledExecutable), UnitFileMode);
@@ -182,6 +184,83 @@ public static class LinuxServiceInstaller
                 $"{path} cannot be used: {string.Join(" ", problems)} Make the directories above it root's and not " +
                 "writable by group or others (chown root:root, chmod go-w), and install again.");
         }
+
+        if (TakeOverContents(path, LibC.LinkStatus, Directory.EnumerateFileSystemEntries, TakeOver) is { Count: > 0 } refused)
+        {
+            throw new ConfigurationException(
+                $"{path} is root's now, but the installer will not take over what is in it: {string.Join(" ", refused)} " +
+                "Remove them and install again; no binary, environment file or unit was written.");
+        }
+    }
+
+    private static void TakeOver(string path, UnixFileMode mode)
+    {
+        LibC.ChangeOwner(path, 0, 0);
+        File.SetUnixFileMode(path, mode);
+    }
+
+    /// <summary>
+    /// Makes everything already inside a directory just taken over root's and writable by root alone; names, one
+    /// sentence each, what it will not take over.
+    /// </summary>
+    /// <remarks>
+    /// <para>Taking over the directory alone left its contents with whoever owned it before: a self-update.log left
+    /// as a link to /etc/shadow was truncated by root's helper, and a file in /opt/linuxdiag stayed its old owner's
+    /// to write. So each entry is made root's with group and other write -- and setuid and setgid -- removed.</para>
+    /// <para>Some things cannot be made safe by changing their owner, and are refused instead: a symbolic link is
+    /// followed by whatever root writes or runs through it, wherever it leads; a file with another name elsewhere
+    /// (a hard link) would carry the change to that file too -- /etc/shadow linked in would lose its group; and a
+    /// FIFO or device has no business here and a FIFO would hang the helper. Nothing is followed: each entry is
+    /// examined with lstat, and a directory is taken over before what is inside it is examined, so its old owner
+    /// can no longer swap an entry between the two.</para>
+    /// </remarks>
+    /// <param name="linkStatus">Owner, mode and link count of the entry itself, a link not followed.</param>
+    /// <param name="entries">The names in a directory, as full paths.</param>
+    /// <param name="takeOver">Makes a path root's with this mode; given only a file or directory, never a link.</param>
+    internal static IReadOnlyList<string> TakeOverContents(
+        string directory, Func<string, FileStatus?> linkStatus, Func<string, IEnumerable<string>> entries, Action<string, UnixFileMode> takeOver)
+    {
+        const int GroupOrOtherWrite = 0b000_010_010;
+        const int SetIdBits = 0b110_000_000_000;
+        var refused = new List<string>();
+        foreach (var entry in entries(directory).Order(StringComparer.Ordinal).ToList())
+        {
+            if (linkStatus(entry) is not { } status)
+            {
+                continue;
+            }
+
+            if (status.IsSymbolicLink)
+            {
+                refused.Add($"{entry} is a symbolic link.");
+                continue;
+            }
+
+            if (!status.IsDirectory && !status.IsRegular)
+            {
+                refused.Add($"{entry} is not a file or directory (a FIFO, socket or device).");
+                continue;
+            }
+
+            if (status.IsRegular && status.LinkCount > 1)
+            {
+                refused.Add($"{entry} has {status.LinkCount - 1} other name(s) elsewhere (a hard link), so taking it over would change that file too.");
+                continue;
+            }
+
+            var mode = status.Mode & 0b111_111_111_111 & ~GroupOrOtherWrite & ~(status.IsRegular ? SetIdBits : 0);
+            if (status.UserId != 0 || status.GroupId != 0 || mode != (status.Mode & 0b111_111_111_111))
+            {
+                takeOver(entry, (UnixFileMode)mode);
+            }
+
+            if (status.IsDirectory)
+            {
+                refused.AddRange(TakeOverContents(entry, linkStatus, entries, takeOver));
+            }
+        }
+
+        return refused;
     }
 
     private static readonly uint[] RootOnly = [0];

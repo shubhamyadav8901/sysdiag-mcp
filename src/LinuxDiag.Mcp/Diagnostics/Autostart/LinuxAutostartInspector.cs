@@ -392,7 +392,21 @@ public sealed class LinuxAutostartInspector(
     /// Users control these paths -- a link in ~/.config/systemd/user, a crontab -- and the server is root, so a
     /// FIFO, a device or an endless file must not be opened, and a huge one is read only as far as the cap.
     /// </remarks>
-    internal static string ReadConfiguration(string path)
+    internal static string ReadConfiguration(string path) => ReadConfiguration(path, null) ?? string.Empty;
+
+    /// <summary>
+    /// As <see cref="ReadConfiguration(string)"/>, but null -- nothing read -- when the file opened is not owned by
+    /// <paramref name="owner"/>.
+    /// </summary>
+    /// <remarks>
+    /// For a file in a user's home whose content, not just one setting's value, is reported: a link or hard link
+    /// there can name any file, and the server is root, so without this a user's link to /root/.ssh/id_ed25519 had
+    /// pieces of the key reported to a caller that may hold no file-read grant at all. Checked on the descriptor
+    /// read, so a link repointed after the check is not read either.
+    /// </remarks>
+    internal static string? ReadConfigurationOwnedBy(string path, long owner) => ReadConfiguration(path, owner);
+
+    private static string? ReadConfiguration(string path, long? owner)
     {
         if (!File.Exists(path))
         {
@@ -401,7 +415,13 @@ public sealed class LinuxAutostartInspector(
 
         try
         {
-            using var stream = new FileStream(LibC.OpenRegularFile(path), FileAccess.Read);
+            using var handle = LibC.OpenRegularFile(path, out var fileOwner);
+            if (owner is not null && fileOwner != owner)
+            {
+                return null;
+            }
+
+            using var stream = new FileStream(handle, FileAccess.Read);
             var buffer = new byte[Math.Min(MaxConfigurationBytes, Math.Max(0, stream.Length))];
             var read = 0;
             int chunk;

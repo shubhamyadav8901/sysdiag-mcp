@@ -1,3 +1,4 @@
+using Diag.Mcp.Core;
 using DiagRelay.Mcp.Tests;
 using LinuxDiag.Mcp.Diagnostics.Autostart;
 using LinuxDiag.Mcp.Linux.Packages;
@@ -17,7 +18,11 @@ namespace LinuxDiag.Mcp.Tests;
 /// </remarks>
 public sealed class UserUnitTests : IDisposable
 {
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-uu-{Guid.NewGuid():N}")).FullName;
+    // Spelled with no link on the way, as /tmp is on Linux. macOS's temp directory is under the /var link, which the
+    // name map's chase of a link target goes through, while the fake realpath below resolves only a path's last
+    // component: the search path and the targets in it came out spelled two ways and no alias matched.
+    private readonly string _root = PathScope.RealPath(
+        Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-uu-{Guid.NewGuid():N}")).FullName);
 
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
@@ -41,14 +46,28 @@ public sealed class UserUnitTests : IDisposable
         File.CreateSymbolicLink(link, target);
     }
 
-    private static string ManagedRead(string path) => File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+    // File.Exists is true for a link that leads nowhere; opening it fails, which reads as nothing, as the server's
+    // own reader has it.
+    private static string ManagedRead(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+    }
 
     private static string? ManagedRealPath(string path)
     {
         try
         {
+            // As realpath(3): null for a link that leads nowhere, not the missing name it points at.
             var info = new FileInfo(path);
-            return info.LinkTarget is null ? info.FullName : info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            return info.LinkTarget is null ? info.FullName
+                : info.ResolveLinkTarget(returnFinalTarget: true) is { Exists: true } target ? target.FullName : null;
         }
         catch (IOException)
         {
@@ -56,8 +75,27 @@ public sealed class UserUnitTests : IDisposable
         }
     }
 
+    /// <summary>The owner check the server makes on the file it opens, modelled by place.</summary>
+    /// <remarks>
+    /// Managed code cannot read a file's owner, so what lies under the user's home is theirs and anything else is
+    /// another account's -- the case that matters, a link out of the home to root's file. A device, such as the
+    /// /dev/null that masks a file, opens as nothing, as the server's reader refuses anything but a regular file.
+    /// </remarks>
+    private string? ManagedReadOwnedBy(string path, long owner)
+    {
+        var real = ManagedRealPath(path);
+        if (real is null || !File.Exists(real) || real.StartsWith("/dev/", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return owner == User.UserId && real.StartsWith(Home + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            ? File.ReadAllText(real)
+            : null;
+    }
+
     private List<AutostartEntry> Audit(UserUnits? units = null, List<string>? limitations = null) =>
-        (units ?? new UserUnits(ManagedRead, ManagedRealPath, _root)).Audit([User], _ => false, limitations ?? []).ToList();
+        (units ?? new UserUnits(ManagedRead, ManagedReadOwnedBy, ManagedRealPath, _root)).Audit([User], _ => false, limitations ?? []).ToList();
 
     /// <summary>A packaged user unit, the user's enable link to it, and the user's drop-in that replaces its ExecStart.</summary>
     private (string Vendor, string DropIn) PackagedUnitOverriddenByTheUser()
@@ -203,6 +241,406 @@ public sealed class UserUnitTests : IDisposable
     }
 
     [UnixFact]
+    public void A_drop_in_under_another_name_linked_to_the_same_unit_file_applies_to_the_enabled_unit()
+    {
+        // Re-check: systemd gives a unit file every name a link in the search path gives it, and reads drop-ins for
+        // all of them -- that is how display-manager.service.d reaches gdm.service. Only the enabled name's drop-ins
+        // were read, so ~/.config/systemd/user/zz.service -> x.service plus zz.service.d/o.conf ran the payload while
+        // the audit reported the packaged program and unpackagedOnly hid it.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), vendor);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/.cache/p\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(vendor, entry.Location);
+        Assert.Equal("/home/u/.cache/p", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void A_users_alias_of_the_service_a_socket_enabled_for_everyone_starts_is_reported_for_that_user()
+    {
+        // The same through a unit enabled for every user: no enable of their own, one link and one drop-in.
+        PackagedSocketEnabledForEveryone();
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(_root, "usr/lib/systemd/user/pipewire.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/.p\n");
+
+        var entries = Audit();
+
+        Assert.Equal("/usr/bin/pipewire", entries.Single(e => e.Profile == "(every user)").ImagePath);
+        var mine = entries.Single(e => e.Profile == "u");
+        Assert.Equal("/home/u/.p", mine.ImagePath);
+        Assert.Contains(dropIn, mine.DropIns);
+    }
+
+    [UnixFact]
+    public void A_template_alias_gives_an_instance_its_drop_ins_under_the_aliases_instance_name()
+    {
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, ".config/systemd/user/zz@.service"), template);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/w\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal([dropIn], entry.DropIns);
+        Assert.Equal("/home/u/w", entry.ImagePath);
+    }
+
+    [UnixFact]
+    public void A_link_to_another_unit_file_or_of_another_type_is_not_an_alias()
+    {
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        var other = Write(Path.Combine(_root, "usr/lib/systemd/user/y.service"), "[Service]\nExecStart=/usr/bin/y\n");
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), other);
+        Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/nope\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/usr/bin/x", entry.ImagePath);
+        Assert.Empty(entry.DropIns);
+    }
+
+    // The alias cases below were each set up for a live user manager (systemd 252, Debian 12) and checked with
+    // `systemctl --user show -p Names,FragmentPath,DropInPaths,ExecStart`; what each asserts is what it showed.
+
+    [UnixFact]
+    public void A_link_that_dangles_but_names_a_unit_in_the_search_path_is_an_alias_of_the_unit_found_under_that_name()
+    {
+        // Re-check: aliases were matched by where a link leads, so ~/.config/systemd/user/zz.service ->
+        // /etc/systemd/user/x.service -- no such file; x.service lives in /usr/lib -- led nowhere and was dropped.
+        // systemd goes by name: zz.service is x.service, and zz.service.d/o.conf replaced its ExecStart.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(_root, "etc/systemd/user/x.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(vendor, entry.Location);
+        Assert.Equal("/home/u/A", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void An_instance_linked_to_a_template_is_another_name_for_that_one_instance()
+    {
+        // Re-check: zz@one.service -> w@.service makes w@one.service also zz@one.service, and zz@one.service.d
+        // applies to it. Only template-to-template links were taken as aliases of an instance.
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), template);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(template, entry.Location);
+        Assert.Equal("/home/u/B", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void An_alias_of_an_alias_in_another_directory_is_followed_by_name()
+    {
+        // zz4.service -> /etc/systemd/user/zz5.service -> q.service: both names are q.service's, and so are their drop-ins.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/q.service"), "[Service]\nExecStart=/usr/bin/q\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/q.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz4.service"), Path.Combine(_root, "etc/systemd/user/zz5.service"));
+        Link(Path.Combine(_root, "etc/systemd/user/zz5.service"), vendor);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz4.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/G\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/G", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [LinuxFact]
+    public void Aliases_are_found_by_name_through_the_servers_own_realpath_even_where_a_link_dangles()
+    {
+        // The name map folds a link's target with realpath(3) on its directory, which is null for a directory that
+        // does not exist -- here /etc/systemd/user -- where the managed fake above still answers.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(_root, "etc/systemd/user/x.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), "../../../../../usr/lib/systemd/user/w@.service");
+        var instanceDropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entries = Audit(UserUnits.Reading(_root));
+
+        Assert.Equal([dropIn], entries.Single(e => e.Entry == "x.service").DropIns);
+        Assert.Equal("/home/u/A", entries.Single(e => e.Entry == "x.service").ImagePath);
+        Assert.Equal([instanceDropIn], entries.Single(e => e.Entry == "w@one.service").DropIns);
+        Assert.Equal("/home/u/B", entries.Single(e => e.Entry == "w@one.service").ImagePath);
+    }
+
+    [UnixFact]
+    public void A_unit_file_linked_in_from_outside_the_search_path_goes_by_the_links_name_alone()
+    {
+        // ll.service -> /opt/real.service is a linked unit file, not an alias: systemd showed Names=ll.service and no
+        // drop-ins, though real.service.d sat in the user's directory. The target's file name was taken as a name.
+        var real = Write(Path.Combine(_root, "opt/real.service"), "[Service]\nExecStart=/opt/real\n");
+        Link(Path.Combine(Home, ".config/systemd/user/ll.service"), real);
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/ll.service"), Path.Combine(Home, ".config/systemd/user/ll.service"));
+        Write(Path.Combine(Home, ".config/systemd/user/real.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/C\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(real, entry.Location);
+        Assert.Equal("/opt/real", entry.ImagePath);
+        Assert.Empty(entry.DropIns);
+    }
+
+    [UnixFact]
+    public void A_dangling_link_for_a_unit_hides_the_packaged_file_of_that_name_rather_than_falling_back_to_it()
+    {
+        // ~/.config/systemd/user/y.service -> /opt/missing.service: systemd took the first y.service on the path and
+        // found it not-found; it never loaded /usr/lib's y.service. The audit skipped the link and reported /usr/bin/y.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/y.service"), "[Service]\nExecStart=/usr/bin/y\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/y.service"), vendor);
+        var link = Path.Combine(Home, ".config/systemd/user/y.service");
+        Link(link, Path.Combine(_root, "opt/missing.service"));
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(link, entry.Location);
+        Assert.Null(entry.ImagePath);
+    }
+
+    /// <summary>
+    /// A packaged x.service and w@.service enabled by the user, and two of the user's own links into /usr/lib's
+    /// directory: ~/lnk to it, and ~/dangling to a directory under it that does not exist.
+    /// </summary>
+    private (string Vendor, string Template) PackagedUnitsAndLinksIntoTheirDirectory()
+    {
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, "lnk"), Path.Combine(_root, "usr/lib/systemd/user"));
+        Link(Path.Combine(Home, "dangling"), Path.Combine(_root, "usr/lib/systemd/user/nope"));
+        return (vendor, template);
+    }
+
+    [UnixTheory]
+    [InlineData("~/lnk/nope/x.service")]
+    [InlineData("../../../lnk/nope/x.service")]
+    [InlineData("~/lnk/./nope/./x.service")]
+    [InlineData("~/dangling/x.service")]
+    public void A_link_through_the_users_own_link_into_the_search_path_to_a_missing_directory_is_still_an_alias(string target)
+    {
+        // Re-review: the link's directory was folded with realpath(3), and where any part of it was missing, as text.
+        // systemd's chase(CHASE_NOFOLLOW|CHASE_NONEXISTENT) resolves the part that exists, ~/lnk included, and appends
+        // the rest as written: zz.service -> ~/lnk/nope/x.service is /usr/lib/systemd/user/nope/x.service to it, in the
+        // search path ("Suspicious symlink ..., treating as alias"), so zz.service.d replaced x.service's ExecStart.
+        // The audit saw ~/lnk/nope/x.service, outside the search path, and reported the packaged /usr/bin/x.
+        // ~/dangling leads nowhere, so realpath(3) gives up on it; chase follows it all the same.
+        var (vendor, _) = PackagedUnitsAndLinksIntoTheirDirectory();
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), target.Replace("~", Home, StringComparison.Ordinal));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+
+        var entry = Assert.Single(Audit(), e => e.Entry == "x.service");
+
+        Assert.Equal(vendor, entry.Location);
+        Assert.Equal("/home/u/A", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void An_instance_linked_through_the_users_own_link_to_a_template_in_a_missing_directory_is_an_alias_of_that_instance()
+    {
+        // zz@one.service -> ~/lnk/nope/w@.service is chased to /usr/lib/systemd/user/nope/w@.service: an alias of
+        // w@one.service, which zz@one.service.d then changes.
+        var (_, template) = PackagedUnitsAndLinksIntoTheirDirectory();
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), Path.Combine(Home, "lnk/nope/w@.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entry = Assert.Single(Audit(), e => e.Entry == "w@one.service");
+
+        Assert.Equal(template, entry.Location);
+        Assert.Equal("/home/u/B", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixTheory]
+    [InlineData("/usr/lib/systemd/user/nope/../x.service")]
+    [InlineData("/usr/lib/systemd/user/w@.service/x.service")]
+    [InlineData("/usr/lib/systemd/user/w@.service/../x.service")]
+    [InlineData("~/loop/x.service")]
+    public void A_link_target_systemd_cannot_chase_is_ignored_so_a_lower_file_of_the_name_loads(string target)
+    {
+        // chase fails on ".." after a component that does not exist, on anything after a file, ".." too (ENOTDIR),
+        // and on a link loop; systemd then warns, enters nothing for the name and loads the next directory's zz.service. Folded as
+        // text, the first two read as aliases of x.service, which zz.service.d then reached; the loop as the user's own
+        // zz.service, hiding the packaged one.
+        var (vendor, _) = PackagedUnitsAndLinksIntoTheirDirectory();
+        var packaged = Write(Path.Combine(_root, "usr/lib/systemd/user/zz.service"), "[Service]\nExecStart=/usr/bin/zz\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/zz.service"), packaged);
+        Link(Path.Combine(Home, "loop"), Path.Combine(Home, "loop"));
+        var spelled = target.StartsWith('~') ? target.Replace("~", Home, StringComparison.Ordinal) : _root + target;
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), spelled);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+
+        var entries = Audit();
+
+        var x = Assert.Single(entries, e => e.Entry == "x.service");
+        Assert.Equal(vendor, x.Location);
+        Assert.Equal("/usr/bin/x", x.ImagePath);
+        Assert.Empty(x.DropIns);
+        var zz = Assert.Single(entries, e => e.Entry == "zz.service");
+        Assert.Equal(packaged, zz.Location);
+        Assert.Equal([dropIn], zz.DropIns);
+    }
+
+    [LinuxFact]
+    public void Links_through_the_users_own_link_into_the_search_path_are_aliases_through_the_servers_own_readers()
+    {
+        var (vendor, template) = PackagedUnitsAndLinksIntoTheirDirectory();
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(Home, "lnk/nope/x.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), "../../../dangling/w@.service");
+        var instanceDropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entries = Audit(UserUnits.Reading(_root));
+
+        Assert.Equal(vendor, entries.Single(e => e.Entry == "x.service").Location);
+        Assert.Equal([dropIn], entries.Single(e => e.Entry == "x.service").DropIns);
+        Assert.Equal("/home/u/A", entries.Single(e => e.Entry == "x.service").ImagePath);
+        Assert.Equal(template, entries.Single(e => e.Entry == "w@one.service").Location);
+        Assert.Equal([instanceDropIn], entries.Single(e => e.Entry == "w@one.service").DropIns);
+        Assert.Equal("/home/u/B", entries.Single(e => e.Entry == "w@one.service").ImagePath);
+    }
+
+    [UnixTheory]
+    [InlineData(".config/environment.d/50-x.conf", "# comment\nLD_PRELOAD=/home/u/evil.so\nPATH=/home/u/bin:$PATH\n", "environment.d/50-x.conf", "every unit")]
+    [InlineData(".config/systemd/user.conf", "[Manager]\nDefaultEnvironment=\"LD_PRELOAD=/home/u/evil.so\" PATH=/home/u/bin\n", "user.conf", "every unit")]
+    [InlineData(".config/systemd/user.conf.d/o.conf", "[Manager]\nDefaultEnvironment=LD_PRELOAD=/home/u/evil.so 'PATH=/home/u/bin x'\n", "user.conf.d/o.conf", "every unit")]
+    [InlineData(".config/systemd/user.conf.d/m.conf", "[Manager]\nManagerEnvironment=LD_PRELOAD=/home/u/evil.so PATH=/x\n", "user.conf.d/m.conf", "the generators it runs")]
+    public void A_users_own_environment_for_their_systemd_manager_is_reported_as_unpackaged_input(string relative, string text, string name, string reach)
+    {
+        // Re-check: the user manager hands ~/.config/environment.d and DefaultEnvironment= in ~/.config/systemd/user.conf
+        // to every unit it starts, so LD_PRELOAD there ran the user's code inside every packaged user service --
+        // each still Packaged=true, and hidden by unpackagedOnly. The files are reported as entries of their own.
+        PackagedSocketEnabledForEveryone();
+        var file = Write(Path.Combine(Home, relative), text);
+
+        var entries = Audit();
+
+        var environment = entries.Single(e => e.Entry == name);
+        Assert.Equal("u", environment.Profile);
+        Assert.Equal(file, environment.Location);
+        Assert.Contains("LD_PRELOAD, PATH", environment.Description, StringComparison.Ordinal);
+        Assert.Contains(reach, environment.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("evil.so", environment.Description, StringComparison.Ordinal);
+
+        var verified = LinuxAutostartInspector.Verify(environment, _ => null, _ => "md5");
+        Assert.False(verified.Packaged);
+        Assert.False(LinuxAutostartInspector.Hidden(verified, new AutostartQuery(UnpackagedOnly: true)));
+    }
+
+    [UnixTheory]
+    [InlineData("[x]\nLD_PRELOAD=/home/u/e.so\n")]
+    [InlineData("X\\\nLD_PRELOAD=/home/u/e.so\n")]
+    [InlineData("# a comment that ends in a backslash \\\nLD_PRELOAD=/home/u/e.so\n")]
+    public void An_environment_d_file_is_read_as_systemd_reads_it_so_no_line_before_a_variable_hides_it(string text)
+    {
+        // Re-check: environment.d was read as a unit file, so one "[x]" line made everything after it a section's
+        // and the file no entry at all -- while systemd's env-file parser, which has no sections, set LD_PRELOAD in
+        // every unit. A line ending in a backslash hid the next line the same way.
+        Write(Path.Combine(Home, ".config/environment.d/k.conf"), text);
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Contains("sets LD_PRELOAD for every unit", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void An_environment_file_that_sets_nothing_or_is_masked_is_not_an_entry()
+    {
+        PackagedSocketEnabledForEveryone();
+        Write(Path.Combine(Home, ".config/environment.d/empty.conf"), "# nothing\n\n");
+        Write(Path.Combine(Home, ".config/systemd/user.conf"), "[Manager]\n#DefaultEnvironment=A=1\nDefaultTimeoutStopSec=5s\n");
+        // Masked: a link to /dev/null is how a user switches off a system-wide environment.d file of the same name.
+        // It sets nothing, and is not someone else's file to report -- the reader opens a device as nothing.
+        Link(Path.Combine(Home, ".config/environment.d/50-masked.conf"), "/dev/null");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("pipewire.socket", entry.Entry);
+    }
+
+    [UnprivilegedLinuxFact]
+    public void The_servers_own_reader_reads_a_users_own_environment_file_and_never_one_linked_to_roots()
+    {
+        // The owner is read from the file the server opens, which only the real reader can do: here the test's own
+        // account is the user, and /etc/os-release -- root's, with NAME= and VERSION_ID= lines -- is linked in.
+        // Unprivileged, because run as root the test's account would own /etc/os-release.
+        var user = new PasswdEntry("u", LinuxDiag.Mcp.Linux.Native.LibC.EffectiveUserId(), Home);
+        Write(Path.Combine(Home, ".config/environment.d/50-own.conf"), "LD_PRELOAD=/home/u/evil.so\n");
+        Link(Path.Combine(Home, ".config/environment.d/60-root.conf"), "/etc/os-release");
+        Link(Path.Combine(Home, ".config/environment.d/70-masked.conf"), "/dev/null");
+
+        var entries = UserUnits.Reading(_root).Audit([user], _ => false, []).ToList();
+
+        Assert.Equal(["environment.d/50-own.conf", "environment.d/60-root.conf"], entries.Select(e => e.Entry));
+        Assert.Contains("sets LD_PRELOAD for", entries[0].Description, StringComparison.Ordinal);
+        Assert.Contains("owned by another account", entries[1].Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("NAME", entries[1].Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void An_environment_file_linked_to_another_accounts_file_is_named_but_its_contents_never_reach_the_caller()
+    {
+        // Review: environment.d/k.conf -> /root/.ssh/id_ed25519 had the root server read the key, and the base64 line
+        // ending in '=' padding came back as a "variable name". The caller may hold no file-read grant at all.
+        var key = Write(Path.Combine(_root, "root/.ssh/id_ed25519"),
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nc2VjcmV0dG9rZW4=\n-----END OPENSSH PRIVATE KEY-----\n");
+        var link = Path.Combine(Home, ".config/environment.d/k.conf");
+        Link(link, key);
+
+        var entries = Audit();
+
+        var entry = Assert.Single(entries);
+        Assert.Equal("environment.d/k.conf", entry.Entry);
+        Assert.Equal(link, entry.Location);
+        Assert.Contains("owned by another account", entry.Description, StringComparison.Ordinal);
+        Assert.All(entries, e => Assert.DoesNotContain("c2VjcmV0dG9rZW4", e.Description, StringComparison.Ordinal));
+        Assert.False(LinuxAutostartInspector.Hidden(
+            LinuxAutostartInspector.Verify(entry, _ => null, _ => "md5"), new AutostartQuery(UnpackagedOnly: true)));
+    }
+
+    [UnixFact]
+    public void Only_names_systemd_would_take_as_variables_are_reported_from_a_users_own_file()
+    {
+        // systemd ignores an assignment whose name is not [A-Za-z_][A-Za-z0-9_]*; reporting such text as a name would
+        // pass on whatever the line holds rather than what the manager sets.
+        Write(Path.Combine(Home, ".config/environment.d/x.conf"), "GOOD_1=a\n1BAD=b\nA-B=c\nhas space=d\n");
+        Write(Path.Combine(Home, ".config/systemd/user.conf"), "[Manager]\nDefaultEnvironment=OK=1 9NO=2 \"x y=3\"\n");
+
+        var entries = Audit();
+
+        Assert.Contains("sets GOOD_1 for", entries.Single(e => e.Entry == "environment.d/x.conf").Description, StringComparison.Ordinal);
+        Assert.Contains("sets OK for", entries.Single(e => e.Entry == "user.conf").Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_user_with_only_an_environment_file_and_no_units_of_their_own_is_still_read()
+    {
+        // The per-user pass skipped every home with no ~/.config/systemd/user, which is where environment.d users are.
+        Write(Path.Combine(Home, ".config/environment.d/x.conf"), "LD_PRELOAD=/home/u/evil.so\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("environment.d/x.conf", entry.Entry);
+    }
+
+    [UnixFact]
     public void A_socket_enabled_for_everyone_is_not_repeated_for_a_user_whose_files_leave_it_alone()
     {
         PackagedSocketEnabledForEveryone();
@@ -295,5 +733,23 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal(["/c", "/d\\\\"], UnitFile.Values(texts, "Service", "ExecStart"));
         Assert.Equal(["/a", "/b    two"], UnitFile.Values(texts.Take(1), "Service", "ExecStart"));
         Assert.Null(UnitFile.Last([], "Timer", "Unit"));
+    }
+
+    [Fact]
+    public void Environment_file_names_are_the_ones_systemds_env_file_parser_sets()
+    {
+        // Each file was handed to a live systemd 252's environment.d generator; it set exactly A1, A2, A4, A6, A8, A9,
+        // A11, A12 and B12. A3 follows a comment ending in a backslash, which 252 still continued onto the next line
+        // and 254 and later do not: it is reported, as the newer systemd sets it. "export A7" is pushed by the parser
+        // and then refused as a name -- that filter is the caller's. An empty value sets nothing.
+        string[] files =
+        [
+            "[x]\nA1=1\n", "X\\\nA2=1\n", "# c \\\nA3=1\n", "A4=\"x\nB4=y\"\n", "A5=\nA5b=\"\"\n", "  A6 = v\n",
+            "export A7=1\n", "A8='a'b\nA9=a\\\nB9=c\n", "A10", "A11=1", "A12=1\r\nB12=2\r\n",
+        ];
+
+        Assert.Equal(
+            ["A1", "A2", "A3", "A4", "A6", "export A7", "A8", "A9", "A11", "A12", "B12"],
+            files.SelectMany(UnitFile.EnvironmentFileKeys));
     }
 }

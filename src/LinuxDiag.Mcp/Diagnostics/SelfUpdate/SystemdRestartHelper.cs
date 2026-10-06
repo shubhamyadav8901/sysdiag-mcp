@@ -101,10 +101,16 @@ public sealed class SystemdRestartHelper(LinuxDiagOptions options, ILogger<Syste
             ? throw new SelfUpdateRejectedException($"'{value}' contains a single quote, which the update helper cannot carry safely. Nothing has been changed.")
             : $"'{value}'";
 
+    /// <remarks>
+    /// The log is removed before it is first written, never written through: whatever was at its name -- a link to
+    /// /etc/shadow, a hard link, a FIFO left by whoever controlled the directory before -- is gone rather than
+    /// truncated or blocked on, and the file written is a new one root creates.
+    /// </remarks>
     internal static string Script(int pid, string live, string staged, string sha256, string log, string restartCommand) => $"""
         #!/bin/sh
         # Written by linuxdiag update_self. Runs outside the service's cgroup (see SystemdRestartHelper).
         log={ShellQuote(log)}
+        rm -f "$log"
         echo "[$(date -u +%FT%TZ)] self-update starting for PID {pid}" > "$log"
         while kill -0 {pid} 2>/dev/null; do sleep 1; done
         echo "[$(date -u +%FT%TZ)] server exited; re-verifying" >> "$log"

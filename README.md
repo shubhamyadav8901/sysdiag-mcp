@@ -359,7 +359,7 @@ or later, which every distribution .NET 9 supports has.
 | `service_control` | `systemctl start/stop/restart` | Writable server only. Services only, never a pattern. Stopping or restarting a unit the machine needs (journald, logind, udevd, networking, resolver, dbus, polkit, SSH, VPN tunnels such as `tailscaled` and `wg-quick@`), this server's own unit (use `update_self`), or a unit whose stop would take one of those down is refused; starting them is allowed. A service that powers off, reboots or suspends the machine is refused for every action. Waits at most 75 s, then reports "still running" |
 | `event_log_tail` | `journalctl -o json` | `unit`, `minutes`, `levels`, `provider` (the syslog identifier), `match` (`FIELD=value`), `maxEvents` |
 | `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database - integrity, not provenance |
-| `autostart_audit` | enabled units, users' units, systemd generators, cron, rc.local, profile.d, ld.so.preload | `unpackagedOnly` checks the unit, its drop-ins, the program and an interpreter's script against their packages |
+| `autostart_audit` | enabled units, users' units (with the drop-ins of every name a link gives a unit file) and the `environment.d` and `user.conf` files in their homes (variable names only; one another account owns is named, never read), systemd generators, cron, rc.local, profile.d, ld.so.preload | `unpackagedOnly` checks the unit, its drop-ins, the program and an interpreter's script against their packages |
 | `effective_access` | statx, ACL and capability xattrs, mountinfo, `faccessat` | For an `account` or a `processId`: each right with the rule that decides, and the first directory it cannot search |
 
 These tools run `systemctl` and `journalctl` from the system directories only, with a fixed `PATH`, `LC_ALL=C.UTF-8` and no pager, and never pass a caller's value where it could be read as an option. A host without dpkg (a non-Debian distribution) still gets SHA-256 from `file_signatures`, and `capabilities` reports it Degraded, naming the missing database.
@@ -386,9 +386,9 @@ hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the
 
 | Path | What |
 |---|---|
-| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary. `/opt/linuxdiag` and `/etc/linuxdiag` are made root's, with these modes, even when they already exist |
+| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary. `/opt/linuxdiag`, `/etc/linuxdiag` and the default `/var/lib/linuxdiag` are made root's, with these modes, even when they already exist, and so is everything already in them, with group and other write removed. A symbolic link, a hard-linked file, a FIFO or a device inside one is refused instead: remove it and install again |
 | `/etc/linuxdiag/linuxdiag.env` | root-owned `0600`: the token, bind address and grants |
-| `/var/lib/linuxdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it and every directory above it, so `/tmp` is refused. A missing one is made `0700` only where root alone controls the directories above it, and nothing is made when it is refused |
+| `/var/lib/linuxdiag` | `0700`: the artifact directory. `--artifacts` must be an absolute path with no `.` or `..` component. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, every directory above it and every link on the way to it — a link another account owns in `/tmp` is refused wherever it leads — so `/tmp` is refused. A missing one is made `0700` only where root alone controls the directories above it, and nothing is made when it is refused |
 | `/etc/systemd/system/linuxdiag.service` | `Type=notify`, `Restart=on-failure` |
 
 The unit is deliberately **not** sandboxed (no `ProtectSystem` and similar): a diagnostics server has to

@@ -77,13 +77,26 @@ public sealed record LinuxServiceInstallOptions
         }
 
         var supplied = Flag("--token-stdin") ? ReadToken(stdin ?? Console.In) : Value("--token");
+
+        // The installer judges the directory the kernel reaches, taking ".." from wherever a link led; the server reads
+        // LINUXDIAG_ARTIFACT_DIR through GetFullPath, which folds ".." as text and resolves a relative path against
+        // the service's "/". With /opt/L -> /var/lib, /opt/L/../evil was judged as /var/evil and used as /opt/evil.
+        // Refused rather than normalised for one of them: either choice approves a directory the operator did not name.
+        var artifacts = Value("--artifacts");
+        if (artifacts is not null && (!Path.IsPathRooted(artifacts) || artifacts.Split('/').Any(c => c is "." or "..")))
+        {
+            throw new ConfigurationException(
+                $"--artifacts {artifacts} must be an absolute path with no '.' or '..' in it: the installer and the " +
+                "service would otherwise each take it to a different directory. Nothing was installed.");
+        }
+
         return new LinuxServiceInstallOptions
         {
             Name = name,
             Bind = bind,
             Token = supplied ?? BearerTokenGate.GenerateToken(),
             TokenWasSupplied = supplied is not null,
-            ArtifactDirectory = Value("--artifacts"),
+            ArtifactDirectory = artifacts,
             AllowSelfUpdate = Flag("--allow-self-update"),
             AllowCommandExecution = Flag("--allow-command-execution"),
             AllowArbitraryWrite = Flag("--allow-arbitrary-write"),

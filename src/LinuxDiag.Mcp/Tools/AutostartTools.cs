@@ -22,14 +22,16 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
         UseStructuredContent = true)]
     [Description(
         "List what is configured to run without anybody starting it - enabled systemd services, timers, sockets and " +
-        "paths (with the unit a timer or socket actually runs), users' systemd units, cron (system and users' " +
+        "paths (with the unit a timer or socket actually runs), users' systemd units and the environment.d and user.conf " +
+        "files in their homes that set what every one of those units inherits, cron (system and users' " +
         "crontabs, /etc/cron.d, cron.hourly/daily/weekly/monthly), /etc/rc.local, /etc/profile.d and /etc/ld.so.preload " +
         "- with the program each one runs. categories takes one or more of: all, services, timers, sockets, paths, " +
         "userunits, cron, generators, rclocal, profiled, preload. verifyPackages checks every file that decides what runs - unit " +
         "file, drop-ins, program, and the script an interpreter runs - against the dpkg database; unpackagedOnly " +
         "returns only entries with a file that is not from a package or was changed, which is usually the fastest " +
         "route to an answer. Not covered: XDG autostart, udev RUN+=, anacrontab, at jobs, update-motd.d, " +
-        "modules-load.d and modprobe install lines.")]
+        "modules-load.d, modprobe install lines, and the system-wide environment systemd hands units (/etc/environment, " +
+        "/etc/environment.d, DefaultEnvironment= in /etc/systemd/system.conf and user.conf).")]
     public async Task<AutostartAuditToolResult> AutostartAudit(
         [Description("Comma-separated category names, or 'all'. Defaults to all.")] string categories = "all",
         [Description("Only entries whose name, program, file, description or command contains this text")] string? nameFilter = null,

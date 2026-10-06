@@ -22,15 +22,18 @@ public sealed class TrustedDirectoryTests
     private const ushort Directory = 0x4000;
     private static readonly uint[] Root = [0];
 
-    /// <summary>A hand-written file system: each path's owner and mode, and the links between paths.</summary>
+    /// <summary>A hand-written file system: each entry's owner and mode, links included -- each with an owner of its own.</summary>
+    /// <remarks>Answers as lstat and readlink do: a link is never followed here; the walk under test follows it.</remarks>
     private sealed class Tree
     {
+        private const ushort SymbolicLink = 0xA000;
+
         private readonly Dictionary<string, FileStatus> _entries = new(StringComparer.Ordinal)
         {
             ["/"] = Dir(0, 0b111_101_101),
         };
 
-        public Dictionary<string, string> Links { get; } = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _links = new(StringComparer.Ordinal);
 
         public Tree With(string path, uint uid, int mode)
         {
@@ -38,28 +41,24 @@ public sealed class TrustedDirectoryTests
             return this;
         }
 
-        private static FileStatus Dir(uint uid, int mode) => new(uid, 0, (ushort)(Directory | mode), false, false);
-
-        public FileStatus? Status(string path) => _entries.TryGetValue(RealPath(path) ?? path, out var status) ? status : null;
-
-        public string? RealPath(string path)
+        public Tree Link(string link, string target, uint owner = 0)
         {
-            foreach (var (link, target) in Links)
-            {
-                if (path == link || path.StartsWith(link + "/", StringComparison.Ordinal))
-                {
-                    path = target + path[link.Length..];
-                }
-            }
-
-            return _entries.ContainsKey(path) ? path : null;
+            _links[link] = target;
+            _entries[link] = new FileStatus(owner, 0, SymbolicLink | 0b111_111_111, false, false);
+            return this;
         }
 
+        private static FileStatus Dir(uint uid, int mode) => new(uid, 0, (ushort)(Directory | mode), false, false);
+
+        public FileStatus? LinkStatus(string path) => _entries.TryGetValue(path, out var status) ? status : null;
+
+        public string? ReadLink(string path) => _links.GetValueOrDefault(path);
+
         public IReadOnlyList<string> Problems(string path, uint[]? trusted = null) =>
-            TrustedDirectory.Problems(path, trusted ?? Root, Status, RealPath);
+            TrustedDirectory.Problems(path, trusted ?? Root, LinkStatus, ReadLink);
 
         public IReadOnlyList<string> ProblemsBeforeCreating(string path) =>
-            TrustedDirectory.ProblemsBeforeCreating(path, Root, Status, RealPath);
+            TrustedDirectory.ProblemsBeforeCreating(path, Root, LinkStatus, ReadLink);
     }
 
     [UnixFact]
@@ -118,9 +117,58 @@ public sealed class TrustedDirectoryTests
         // /data/diag is root's alone, but the link to it sits in a directory anyone can write, so the link
         // itself can be replaced.
         var tree = new Tree().With("/data", 0, 0b111_101_101).With("/data/diag", 0, 0b111_000_000).With("/shared", 0, 0b111_111_111);
-        tree.Links["/shared/diag"] = "/data/diag";
+        tree.Link("/shared/diag", "/data/diag");
 
         Assert.Contains(tree.Problems("/shared/diag"), p => p.StartsWith("/shared is writable", StringComparison.Ordinal));
+    }
+
+    [UnixFact]
+    public void A_link_another_account_owns_in_sticky_tmp_is_refused_even_though_it_leads_to_a_root_only_directory()
+    {
+        // Re-check: `ln -s /root /tmp/diag` as uid 1000, then --artifacts /tmp/diag. /tmp is sticky and /root is
+        // root's 0700, so only where the link led was judged and it passed -- but the link is the user's, the sticky
+        // bit lets its owner replace it, and they could repoint it between the check and root's sh opening the
+        // script inside: root code execution.
+        var tree = new Tree().With("/tmp", 0, 0b1_111_111_111).With("/root", 0, 0b111_000_000)
+            .Link("/tmp/diag", "/root", owner: 1000).Link("/tmp/mine", "/root", owner: 0);
+
+        Assert.Contains(tree.Problems("/tmp/diag"), p => p.StartsWith(
+            "/tmp/diag is a link owned by uid 1000, not root, in the shared sticky directory /tmp", StringComparison.Ordinal));
+        Assert.Contains(tree.ProblemsBeforeCreating("/tmp/diag/new"), p => p.StartsWith("/tmp/diag is a link owned by uid 1000", StringComparison.Ordinal));
+        Assert.Empty(tree.Problems("/tmp/mine"));
+    }
+
+    [UnixFact]
+    public void A_link_met_halfway_is_judged_though_it_is_neither_the_path_as_written_nor_where_it_ends()
+    {
+        // realpath plus the spelling saw /, /opt and /root here, never /tmp/y or /shared/y in between.
+        var tree = new Tree().With("/opt", 0, 0b111_101_101).With("/tmp", 0, 0b1_111_111_111).With("/root", 0, 0b111_000_000)
+            .With("/shared", 0, 0b111_111_111)
+            .Link("/opt/x", "/tmp/y").Link("/tmp/y", "/root", owner: 1000)
+            .Link("/opt/z", "../shared/y").Link("/shared/y", "/root");
+
+        Assert.Contains(tree.Problems("/opt/x"), p => p.StartsWith("/tmp/y is a link owned by uid 1000", StringComparison.Ordinal));
+        Assert.Contains(tree.Problems("/opt/z"), p => p.StartsWith("/shared is writable", StringComparison.Ordinal));
+    }
+
+    [UnixFact]
+    public void Dot_dot_after_a_link_is_taken_from_where_the_link_led_not_from_its_spelling()
+    {
+        // /safe/l/../diag is /data/diag to the kernel; folded by spelling it was /safe/diag, which is not what root uses.
+        var tree = new Tree().With("/safe", 0, 0b111_101_101).With("/safe/diag", 0, 0b111_000_000)
+            .With("/data", 0, 0b111_111_111).With("/data/sub", 0, 0b111_101_101).With("/data/diag", 0, 0b111_000_000)
+            .Link("/safe/l", "/data/sub");
+
+        Assert.Empty(tree.Problems("/safe/diag"));
+        Assert.Contains(tree.Problems("/safe/l/../diag"), p => p.StartsWith("/data is writable", StringComparison.Ordinal));
+    }
+
+    [UnixFact]
+    public void A_link_loop_is_a_problem_not_a_hang()
+    {
+        var tree = new Tree().Link("/a", "/b").Link("/b", "/a");
+
+        Assert.Contains(tree.Problems("/a/diag"), p => p.Contains("a loop", StringComparison.Ordinal));
     }
 
     [UnixFact]
@@ -139,7 +187,7 @@ public sealed class TrustedDirectoryTests
         var tree = new Tree().With("/srv", 0, 0b111_101_101).With("/srv/team", 0, 0b111_111_000)
             .With("/var", 0, 0b111_101_101).With("/var/lib", 0, 0b111_101_101)
             .With("/tmp", 0, 0b1_111_111_111).With("/data", 0, 0b111_101_101).With("/shared", 0, 0b111_111_111);
-        tree.Links["/var/data"] = "/shared";
+        tree.Link("/var/data", "/shared");
 
         Assert.Contains(tree.ProblemsBeforeCreating("/srv/team/diag/a"), p => p.StartsWith("/srv/team is writable", StringComparison.Ordinal));
         Assert.Contains(tree.ProblemsBeforeCreating("/var/data/diag"), p => p.StartsWith("/shared is writable", StringComparison.Ordinal));
@@ -227,16 +275,35 @@ public sealed class TrustedDirectoryTests
         }
     }
 
+    [UnprivilegedLinuxFact]
+    public void The_real_check_reads_a_links_own_owner_in_sticky_tmp_not_its_targets()
+    {
+        // Through the real lstat: a link this (non-root) account makes in /tmp to root's /usr. Following it, as
+        // stat does, saw only root's directory.
+        var link = Path.Combine("/tmp", $"ld-link-{Guid.NewGuid():N}");
+        File.CreateSymbolicLink(link, "/usr");
+        try
+        {
+            Assert.Contains(TrustedDirectory.Problems(link, Root),
+                p => p.StartsWith($"{link} is a link owned by uid {LibC.EffectiveUserId()}", StringComparison.Ordinal));
+            Assert.Empty(TrustedDirectory.Problems("/usr", Root));
+        }
+        finally
+        {
+            File.Delete(link);
+        }
+    }
+
     [LinuxFact]
     public void The_real_check_passes_a_root_owned_system_directory_and_flags_a_world_writable_one()
     {
-        Assert.Empty(TrustedDirectory.Problems("/usr/bin", Root, LibC.Status, LibC.RealPath));
+        Assert.Empty(TrustedDirectory.Problems("/usr/bin", Root));
 
         var open = System.IO.Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-ww-{Guid.NewGuid():N}")).FullName;
         try
         {
             File.SetUnixFileMode(open, (UnixFileMode)0b111_111_111);
-            Assert.Contains(TrustedDirectory.Problems(open, [0, LibC.EffectiveUserId()], LibC.Status, LibC.RealPath),
+            Assert.Contains(TrustedDirectory.Problems(open, [0, LibC.EffectiveUserId()]),
                 p => p.Contains("writable by its group or by everyone", StringComparison.Ordinal));
         }
         finally
