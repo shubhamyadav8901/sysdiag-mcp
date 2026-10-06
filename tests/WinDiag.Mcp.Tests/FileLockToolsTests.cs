@@ -130,6 +130,34 @@ public sealed class FileLockToolsTests
         Assert.Contains("WINDIAG_MAX_RESULTS", result.Summary);
     }
 
+    [Fact]
+    public async Task An_empty_search_with_unreadable_rows_never_says_nothing_matched()
+    {
+        // A row handle.exe printed but this parser could not attribute -- an image name with a comma
+        // makes one -- is a holder that exists. Reporting "No open file references matched" over it is
+        // the confident negative that ends an investigation.
+        var tools = Build(handles: new HandleSearchResult(
+            "x.docx", [], true, false, 0, IncludedAllObjectTypes: false, UnparsedRows: 1));
+
+        var result = await tools.PathHandleSearch("x.docx");
+
+        Assert.StartsWith("WARNING", result.Summary);
+        Assert.Contains("1 row", result.Summary);
+        Assert.DoesNotContain("No open file references matched", result.Summary);
+        Assert.Equal(1, result.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_process_with_unreadable_rows_is_never_said_to_hold_nothing()
+    {
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "PID 1234", [], true, false, 0, IncludedAllObjectTypes: true, ProcessScoped: true, UnparsedRows: 3));
+
+        Assert.Contains("3 rows", summary);
+        Assert.DoesNotContain("holds no open handles", summary);
+        Assert.DoesNotContain("holds no open file references", summary);
+    }
+
     private const string SampleCsv =
         "Process,PID,User,Handle,Type,Share Flags,Name,Access\r\napp.exe,7,File,CONTOSO\\u,0x9,C:\\t\r\n";
 

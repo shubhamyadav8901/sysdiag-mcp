@@ -18,7 +18,7 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Parses_captured_output_positionally_not_by_header_name()
     {
-        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"));
+        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv")).Entries;
 
         Assert.Equal(7, entries.Count);
 
@@ -37,7 +37,7 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Skips_the_header_row_without_treating_it_as_data()
     {
-        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"));
+        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv")).Entries;
 
         Assert.DoesNotContain(entries, e => e.ProcessName == "Process");
     }
@@ -53,7 +53,7 @@ public sealed class HandleCsvParserTests
             explorer.exe,3628,File,CONTOSO\user,0x0000068C,C:\Windows\Fonts\StaticCache.dat
             """;
 
-        var entries = HandleCsvParser.Parse(csv);
+        var entries = HandleCsvParser.Parse(csv).Entries;
 
         var entry = Assert.Single(entries);
         Assert.Equal("explorer.exe", entry.ProcessName);
@@ -69,7 +69,7 @@ public sealed class HandleCsvParserTests
             app.exe,42,File,CONTOSO\user,0x000000F0,C:\Data\Reports, Q3\summary.docx
             """;
 
-        var entry = Assert.Single(HandleCsvParser.Parse(csv));
+        var entry = Assert.Single(HandleCsvParser.Parse(csv).Entries);
 
         Assert.Equal(@"C:\Data\Reports, Q3\summary.docx", entry.Name);
     }
@@ -90,7 +90,7 @@ public sealed class HandleCsvParserTests
             explorer.exe,3628,CONTOSO\user,0x00000054,File,,C:\Windows\System32
             """;
 
-        var entry = Assert.Single(HandleCsvParser.Parse(csv));
+        var entry = Assert.Single(HandleCsvParser.Parse(csv).Entries);
 
         Assert.Equal("explorer.exe", entry.ProcessName);
         Assert.Equal(3628, entry.ProcessId);
@@ -103,8 +103,8 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Returns_nothing_for_empty_output()
     {
-        Assert.Empty(HandleCsvParser.Parse(string.Empty));
-        Assert.Empty(HandleCsvParser.Parse("   \r\n  "));
+        Assert.Empty(HandleCsvParser.Parse(string.Empty).Entries);
+        Assert.Empty(HandleCsvParser.Parse("   \r\n  ").Entries);
     }
 
     [Fact]
@@ -115,7 +115,97 @@ public sealed class HandleCsvParserTests
             app.exe,42,File,CONTOSO\user,0x000000F0,C:\Windows\Fonts\arial.ttf
             """;
 
-        Assert.Equal(@"C:\Windows\Fonts\arial.ttf", Assert.Single(HandleCsvParser.Parse(csv)).Name);
+        Assert.Equal(@"C:\Windows\Fonts\arial.ttf", Assert.Single(HandleCsvParser.Parse(csv).Entries).Name);
+    }
+
+    [Fact]
+    public void Finds_no_unattributable_rows_in_either_real_capture()
+    {
+        // The count below must mean something when it is not zero, so it must be zero on real output.
+        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv")).UnparsedRows);
+        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-p-explorer.csv"), processId: 14032).UnparsedRows);
+    }
+
+    [Fact]
+    public void Keeps_a_comma_in_the_process_image_name_out_of_the_pid_column()
+    {
+        // Commas are legal in NTFS names, so in image names, and handle.exe quotes nothing. Read by
+        // fixed position, `a,b.exe` put "b.exe" in the PID column, the row failed to parse and was
+        // skipped -- and an elevated search then said "No open file references matched", the confident
+        // negative this tool exists to never give.
+        const string csv = """
+            Process,PID,User,Handle,Type,Share Flags,Name,Access
+            a,b.exe,1234,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx
+            """;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        var entry = Assert.Single(parsed.Entries);
+        Assert.Equal("a,b.exe", entry.ProcessName);
+        Assert.Equal(1234, entry.ProcessId);
+        Assert.Equal("File", entry.Type);
+        Assert.Equal(@"CONTOSO\jdoe", entry.User);
+        Assert.Equal("0x00000460", entry.HandleValue);
+        Assert.Equal(@"C:\shared\x.docx", entry.Name);
+        Assert.Equal(0, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void Never_blames_a_pid_spelled_out_inside_a_process_image_name()
+    {
+        // A binary named `x,668,File,SYSTEM,0x4,svc.exe` -- no character Windows forbids -- read by
+        // fixed position came out as process x, PID 668, user SYSTEM, with the real PID buried in the
+        // name. The lock was pinned on whichever victim the name chose, and the next step a caller
+        // takes on a holder is process_control or capture_dump. Two readings fit this row, and nothing
+        // in it can settle which is real -- the forged reading's name always contains the real one, so
+        // even the search term matches both. Neither is picked; the row is reported as unreadable.
+        const string csv = """
+            Process,PID,User,Handle,Type,Share Flags,Name,Access
+            x,668,File,SYSTEM,0x4,svc.exe,1234,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx
+            """;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
+        Assert.Empty(parsed.Entries);
+        Assert.Equal(1, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void Anchors_a_process_scoped_row_on_the_pid_that_was_asked_for()
+    {
+        // In -p mode the PID is known before handle.exe runs, so it is the anchor: a PID spelled out
+        // in the image name cannot be taken for it, and a comma in the name cannot shift the columns.
+        const string csv = """
+            Process,PID,User,Handle,Type,Share Flags,Name
+            x,668,SYSTEM,0x4,Key,,y.exe,1234,CONTOSO\jdoe,0x0000000C,Key,,HKLM\SOFTWARE\Contoso
+            """;
+
+        var parsed = HandleCsvParser.Parse(csv, processId: 1234);
+
+        var entry = Assert.Single(parsed.Entries);
+        Assert.Equal(1234, entry.ProcessId);
+        Assert.Equal("x,668,SYSTEM,0x4,Key,,y.exe", entry.ProcessName);
+        Assert.Equal(@"CONTOSO\jdoe", entry.User);
+        Assert.Equal("Key", entry.Type);
+        Assert.Equal(@"HKLM\SOFTWARE\Contoso", entry.Name);
+    }
+
+    [Fact]
+    public void Counts_a_long_enough_row_it_cannot_read_instead_of_skipping_it()
+    {
+        const string csv = """
+            Process,PID,User,Handle,Type,Share Flags,Name,Access
+            app.exe,not-a-pid,File,CONTOSO\jdoe,0x00000460,C:\x
+            Error obtaining handle information: Access denied
+            """;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.Empty(parsed.Entries);
+
+        // The diagnostic line is too short to be a row and is still skipped; the malformed row is not.
+        Assert.Equal(1, parsed.UnparsedRows);
     }
 
     [Fact]
@@ -142,7 +232,7 @@ public sealed class ProcessScopedHandleLayoutTests
     private static string Fixture() =>
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv"));
 
-    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture());
+    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture(), processId: 14032).Entries;
 
     [Fact]
     public void Reads_the_process_scoped_layout()

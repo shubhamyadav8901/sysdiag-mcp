@@ -15,14 +15,19 @@ public sealed record WhoLocksPathResult(
     IReadOnlyList<LockHolder> Holders,
     bool Exhaustive);
 
-/// <summary>Structured result of <c>path_handle_search</c>.</summary>
+/// <summary>Structured result of <c>path_handle_search</c> and <c>process_handles</c>.</summary>
+/// <param name="UnparsedRows">
+/// Rows handle.exe printed that could not be attributed to one process, and are not in
+/// <see cref="Handles"/>. Non-zero means the list is incomplete.
+/// </param>
 public sealed record PathHandleSearchResult(
     string Summary,
     string Query,
     IReadOnlyList<HandleEntry> Handles,
     bool Elevated,
     bool Truncated,
-    int TotalMatched);
+    int TotalMatched,
+    int UnparsedRows = 0);
 
 /// <summary>Tools answering "what is holding this open?".</summary>
 [McpServerToolType]
@@ -111,7 +116,8 @@ public sealed class FileLockTools
             Handles: result.Entries,
             Elevated: result.Elevated,
             Truncated: result.Truncated,
-            TotalMatched: result.TotalMatched);
+            TotalMatched: result.TotalMatched,
+            UnparsedRows: result.UnparsedRows);
     }
 
     /// <summary>
@@ -191,6 +197,27 @@ public sealed class FileLockTools
                 "cannot see handles in processes running as other users or as SYSTEM, and an absent " +
                 "entry here does not mean the handle does not exist. Restart the server elevated for " +
                 "a complete answer.");
+        }
+
+        if (result.UnparsedRows > 0)
+        {
+            // Leads, like the elevation warning, because it qualifies every line below it -- and above
+            // all an empty one. Each of these rows is a handle that exists.
+            builder.Append("WARNING: ").Append(result.UnparsedRows)
+                .Append(result.UnparsedRows == 1 ? " row" : " rows")
+                .AppendLine(" of handle.exe's output could not be attributed to a process and are not " +
+                            "listed. handle.exe does not quote its fields, so a process image name " +
+                            "containing commas can make a row ambiguous -- and such a name can be chosen " +
+                            "to hide a holder or to blame another PID. This list is incomplete; do not " +
+                            "act on an absence from it.");
+        }
+
+        if (result.Entries.Count == 0 && result.UnparsedRows > 0)
+        {
+            // Never the "nothing matched" wording below: something did, and could not be read.
+            builder.Append("No row could be attributed to a process with confidence, which is NOT the " +
+                           "same as nothing matching '").Append(result.Query).Append("'.");
+            return builder.ToString();
         }
 
         if (result.Entries.Count == 0)

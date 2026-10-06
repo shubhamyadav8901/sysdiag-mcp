@@ -77,7 +77,8 @@ public sealed class ProcessTools
             result.Entries,
             result.Elevated,
             result.Truncated,
-            result.TotalMatched);
+            result.TotalMatched,
+            result.UnparsedRows);
     }
 
     [McpServerTool(

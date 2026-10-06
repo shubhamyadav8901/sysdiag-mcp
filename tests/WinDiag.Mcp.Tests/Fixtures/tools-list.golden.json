@@ -1234,6 +1234,10 @@
         },
         "totalMatched": {
           "type": "integer"
+        },
+        "unparsedRows": {
+          "type": "integer",
+          "default": 0
         }
       },
       "required": [
@@ -1410,6 +1414,10 @@
         },
         "totalMatched": {
           "type": "integer"
+        },
+        "unparsedRows": {
+          "type": "integer",
+          "default": 0
         }
       },
       "required": [
