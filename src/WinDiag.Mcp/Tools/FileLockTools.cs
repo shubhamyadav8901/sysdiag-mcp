@@ -221,7 +221,7 @@ public sealed class FileLockTools
         {
             // Never the "nothing matched" wording below: something did, and could not be read.
             builder.Append("No row could be attributed to a process with confidence, which is NOT the " +
-                           "same as nothing matching '").Append(result.Query).Append("'.");
+                           "same as nothing matching '").Append(RenderLimits.Printable(result.Query)).Append("'.");
             return builder.ToString();
         }
 
