@@ -99,7 +99,11 @@ public static class ServerBuilder
                                                   NOT override this one -- reading is what a read-only
                                                   server is for, so --read-only --allow-arbitrary-read
                                                   is the deliberate combination for a look-but-do-not-
-                                                  touch target
+                                                  touch target. The artifact directory is always
+                                                  readable, so a capture_dump of any process is readable
+                                                  without it; lsass, lsaiso and csrss are never dumped.
+                                                  Also opens HKLM\SAM, HKLM\SECURITY and other users'
+                                                  HKU hives to registry_read
           WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
                                                   executable and restarts, and to let put_file write into
                                                   the server's own directory to stage it (default: false)
@@ -249,6 +253,8 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<Diagnostics.Modules.IModuleInspector, Diagnostics.Modules.WindowsModuleInspector>();
         // Fully qualified: Diagnostics.Control.IServiceController would otherwise collide with
         // System.ServiceProcess.ServiceController, which the services inspector already brings in.
+        services.AddSingletonIfMissing<
+            Diagnostics.Control.IProcessProtectionProbe, Diagnostics.Control.WindowsProcessProtectionProbe>();
         services.AddSingletonIfMissing<
             Diagnostics.Control.IProcessController, Diagnostics.Control.WindowsProcessController>();
         services.AddSingletonIfMissing<

@@ -54,6 +54,15 @@ follow from that, and which are deliberate rather than oversights:
   one shared check rather than two copies. Widening it is opt-in
   (`WINDIAG_ALLOW_ARBITRARY_WRITE`, `WINDIAG_ALLOW_ARBITRARY_READ`) because reading anywhere the
   elevated account can reach is exfiltration.
+- **`registry_read` is available under every grant, read-only included,** and reads whatever the
+  server's account can. HKLM\SAM, HKLM\SECURITY and other users' hives under HKU need
+  `WINDIAG_ALLOW_ARBITRARY_READ`, and a value named like a credential -- a windiag instance's own
+  `WINDIAG_TOKEN` in its service key's `Environment` among them -- is returned redacted under every grant.
+- **A dump is a read of a process's memory.** `capture_dump` writes into the artifact directory, which
+  `get_file` reads without `WINDIAG_ALLOW_ARBITRARY_READ`, so a writable server's token can read the
+  memory of any process the server can open -- SYSTEM services included. The processes that hold the
+  machine's credentials (`lsass`, `lsaiso`) are refused outright, with no grant to turn it back on;
+  `WINDIAG_READ_ONLY` removes the tool entirely.
 - **A signed server refuses an unsigned replacement, or one from another publisher.** On Windows the
   self-update signature check is a ratchet, not a setting: unsigned development builds keep working,
   but a target already running a signed build accepts only a validly signed replacement whose signer

@@ -168,11 +168,11 @@ public sealed class AutostartTools
 
         builder.Append(result.TotalMatched)
             .Append(result.TotalMatched == 1 ? " autostart entry" : " autostart entries")
-            .Append(" in ").Append(categories);
+            .Append(" in ").Append(RenderLimits.Printable(categories));
 
         if (!string.IsNullOrWhiteSpace(nameFilter))
         {
-            builder.Append(" matching '").Append(nameFilter).Append('\'');
+            builder.Append(" matching '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
         }
 
         builder.AppendLine(":");
@@ -180,18 +180,18 @@ public sealed class AutostartTools
         foreach (var group in result.Entries.Take(RenderLimits.MaxRenderedRows)
                      .GroupBy(e => e.Category, StringComparer.OrdinalIgnoreCase))
         {
-            builder.Append("[").Append(group.Key).AppendLine("]");
+            builder.Append("[").Append(RenderLimits.Printable(group.Key)).AppendLine("]");
 
             foreach (var entry in group)
             {
-                builder.Append("- ").Append(entry.Entry);
+                builder.Append("- ").Append(RenderLimits.Printable(entry.Entry));
 
                 if (!entry.Enabled)
                 {
                     builder.Append(" (disabled)");
                 }
 
-                builder.Append("  ").Append(entry.ImagePath ?? "(no image recorded)");
+                builder.Append("  ").Append(RenderLimits.Printable(entry.ImagePath) ?? "(no image recorded)");
 
                 if (entry.ImageMissing)
                 {
@@ -206,17 +206,18 @@ public sealed class AutostartTools
                 }
                 else if (entry.Company is { } company)
                 {
-                    builder.Append("  ").Append(company);
+                    builder.Append("  ").Append(RenderLimits.Printable(company));
                 }
 
                 builder.AppendLine();
-                builder.Append("    ").Append(entry.Location);
+                builder.Append("    ").Append(RenderLimits.Printable(entry.Location));
 
-                // Every profile is scanned, so a per-user entry is ambiguous without whose it is.
+                // Every profile is scanned, so a per-user entry is ambiguous without whose it is. The profile
+                // name is an account name, which a user chooses, so it is escaped like the rest.
                 if (entry.Profile is { } profile
                     && !string.Equals(profile, "System-wide", StringComparison.OrdinalIgnoreCase))
                 {
-                    builder.Append("  (profile ").Append(profile).Append(')');
+                    builder.Append("  (profile ").Append(RenderLimits.Printable(profile)).Append(')');
                 }
 
                 builder.AppendLine();

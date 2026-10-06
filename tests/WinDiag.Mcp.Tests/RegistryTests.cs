@@ -256,6 +256,16 @@ public sealed class RegistryInspectorTests
     }
 
     [Fact]
+    public void Refuses_hklm_sam_before_opening_anything_when_the_server_has_no_read_grant()
+    {
+        // The scope check is wired into Read itself, ahead of the open: as SYSTEM the open would succeed.
+        var ex = Assert.Throws<RegistryQueryException>(
+            () => Inspector().Read(@"HKLM\SAM\SAM", null, null, CancellationToken.None));
+
+        Assert.Contains("WINDIAG_ALLOW_ARBITRARY_READ=1", ex.Message);
+    }
+
+    [Fact]
     public void Refuses_a_path_that_names_no_hive()
     {
         Assert.Throws<RegistryPathException>(

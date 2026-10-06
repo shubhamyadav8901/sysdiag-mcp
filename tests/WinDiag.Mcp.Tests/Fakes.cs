@@ -1,5 +1,6 @@
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Autostart;
+using WinDiag.Mcp.Diagnostics.Control;
 using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Locks;
@@ -145,5 +146,34 @@ internal sealed class StubExternalToolRunner(string standardOutput = "", int exi
 
         return Task.FromResult(new ExternalToolResult(
             executableName, argv, exitCode, standardOutput, string.Empty, TimeSpan.Zero));
+    }
+}
+
+/// <summary>Answers for a process's services and critical flag from fixed values, counting each question.</summary>
+internal sealed class FakeProtectionProbe : IProcessProtectionProbe
+{
+    public Dictionary<int, IReadOnlyList<string>> Services { get; } = [];
+
+    public bool Critical { get; init; }
+
+    public Exception? ServicesFailure { get; init; }
+
+    public int Calls { get; private set; }
+
+    public IReadOnlyList<string> ServicesHostedBy(int processId)
+    {
+        Calls++;
+        if (ServicesFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        return Services.TryGetValue(processId, out var services) ? services : [];
+    }
+
+    public bool IsCritical(System.Diagnostics.Process process)
+    {
+        Calls++;
+        return Critical;
     }
 }

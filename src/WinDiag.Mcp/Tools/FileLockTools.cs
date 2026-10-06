@@ -138,7 +138,7 @@ public sealed class FileLockTools
 
         if (result.Holders.Count == 0)
         {
-            builder.Append("Restart Manager found no process holding ").Append(fullPath).Append('.');
+            builder.Append("Restart Manager found no process holding ").Append(RenderLimits.Printable(fullPath)).Append('.');
 
             if (!pathExists)
             {
@@ -155,16 +155,16 @@ public sealed class FileLockTools
 
         builder.Append(result.Holders.Count)
             .Append(result.Holders.Count == 1 ? " process holds " : " processes hold ")
-            .Append(fullPath)
+            .Append(RenderLimits.Printable(fullPath))
             .AppendLine(":");
 
         foreach (var holder in result.Holders)
         {
-            builder.Append("- ").Append(holder.ProcessName).Append(" (PID ").Append(holder.ProcessId).Append(')');
+            builder.Append("- ").Append(RenderLimits.Printable(holder.ProcessName)).Append(" (PID ").Append(holder.ProcessId).Append(')');
 
             if (holder.ServiceShortName is { } service)
             {
-                builder.Append(" [service ").Append(service).Append(']');
+                builder.Append(" [service ").Append(RenderLimits.Printable(service)).Append(']');
             }
             else if (holder.Kind != LockHolderKind.Unknown)
             {
@@ -173,7 +173,7 @@ public sealed class FileLockTools
 
             if (holder.FriendlyName is { } friendly && !string.Equals(friendly, holder.ProcessName, StringComparison.OrdinalIgnoreCase))
             {
-                builder.Append(" - ").Append(friendly);
+                builder.Append(" - ").Append(RenderLimits.Printable(friendly));
             }
 
             if (!holder.StillRunning)
@@ -234,9 +234,9 @@ public sealed class FileLockTools
             {
                 // A PID was named, so there is no search term to widen and no point suggesting one.
                 builder.Append(result.IncludedAllObjectTypes
-                    ? $"{result.Query} holds no open handles of any object type, which for a live " +
+                    ? $"{RenderLimits.Printable(result.Query)} holds no open handles of any object type, which for a live " +
                       "process is unusual enough to suspect it has exited. Check process_list."
-                    : $"{result.Query} holds no open file references -- no file handles and no mapped " +
+                    : $"{RenderLimits.Printable(result.Query)} holds no open file references -- no file handles and no mapped " +
                       "sections either, since this search covers both. It may still hold non-file " +
                       "objects such as registry keys, mutants or events; call again with " +
                       "includeAllObjectTypes=true for those.");
@@ -244,11 +244,11 @@ public sealed class FileLockTools
             else if (result.IncludedAllObjectTypes)
             {
                 builder.Append("No open handles of any object type matched '")
-                    .Append(result.Query).Append("'.");
+                    .Append(RenderLimits.Printable(result.Query)).Append("'.");
             }
             else
             {
-                builder.Append("No open file references matched '").Append(result.Query)
+                builder.Append("No open file references matched '").Append(RenderLimits.Printable(result.Query))
                     .Append("'. This search covered file handles and mapped sections, so a holder ")
                     .Append("that only mapped the file would have shown up. If you are looking for a ")
                     .Append("registry key or another non-file object, call again with ")
@@ -260,17 +260,17 @@ public sealed class FileLockTools
 
         builder.Append(result.TotalMatched)
             .Append(result.TotalMatched == 1 ? " handle matches '" : " handles match '")
-            .Append(result.Query)
+            .Append(RenderLimits.Printable(result.Query))
             .AppendLine("':");
 
         foreach (var entry in result.Entries.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(entry.ProcessName).Append(" (PID ").Append(entry.ProcessId).Append(") ")
-                .Append(entry.Type).Append(": ").Append(entry.Name);
+            builder.Append("- ").Append(RenderLimits.Printable(entry.ProcessName)).Append(" (PID ").Append(entry.ProcessId).Append(") ")
+                .Append(RenderLimits.Printable(entry.Type)).Append(": ").Append(RenderLimits.Printable(entry.Name));
 
             if (entry.User is { } user)
             {
-                builder.Append(" [").Append(user).Append(']');
+                builder.Append(" [").Append(RenderLimits.Printable(user)).Append(']');
             }
 
             builder.AppendLine();

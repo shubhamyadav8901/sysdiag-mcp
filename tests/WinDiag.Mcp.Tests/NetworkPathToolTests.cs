@@ -64,6 +64,9 @@ public sealed class NetworkPathToolTests
             Asked.AddRange(paths);
             return new SignatureQueryResult([], paths);
         }
+
+        public FileSignature InspectHeld(string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("path refusal never reaches a held-file signature check");
     }
 
     private sealed class RecordingActivity : IActivityInspector

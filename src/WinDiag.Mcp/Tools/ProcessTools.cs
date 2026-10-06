@@ -145,7 +145,7 @@ public sealed class ProcessTools
 
         if (result.Limitation is { } limitation)
         {
-            builder.Append("WARNING: ").AppendLine(limitation);
+            builder.Append("WARNING: ").AppendLine(RenderLimits.Printable(limitation));
         }
 
         if (result.Processes.Count == 0)
@@ -158,7 +158,7 @@ public sealed class ProcessTools
 
             if (!string.IsNullOrWhiteSpace(nameFilter))
             {
-                builder.Append(" '").Append(nameFilter).Append('\'');
+                builder.Append(" '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
             }
 
             builder.Append('.');
@@ -171,7 +171,7 @@ public sealed class ProcessTools
 
         foreach (var process in result.Processes.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(process.Name).Append(" (PID ").Append(process.ProcessId);
+            builder.Append("- ").Append(RenderLimits.Printable(process.Name)).Append(" (PID ").Append(process.ProcessId);
             if (process.ParentProcessId is { } parent)
             {
                 builder.Append(", parent ").Append(parent);
@@ -189,7 +189,8 @@ public sealed class ProcessTools
 
             if (process.CommandLine is { } commandLine)
             {
-                builder.Append("    ").AppendLine(Truncate(commandLine, 400));
+                // Escaped before it is cut: cut first, a line of control characters escapes to six times the budget.
+                builder.Append("    ").AppendLine(Truncate(RenderLimits.Printable(commandLine), 400));
             }
         }
 
@@ -222,7 +223,7 @@ public sealed class ProcessTools
             builder.Append("No named pipes matched");
             if (!string.IsNullOrWhiteSpace(nameFilter))
             {
-                builder.Append(" '").Append(nameFilter).Append('\'');
+                builder.Append(" '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
             }
 
             builder.Append('.');
@@ -248,7 +249,7 @@ public sealed class ProcessTools
 
         foreach (var pipe in result.Pipes.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(pipe.Name).Append(": ").Append(pipe.InstancesCreated)
+            builder.Append("- ").Append(RenderLimits.Printable(pipe.Name)).Append(": ").Append(pipe.InstancesCreated)
                 .Append(pipe.Unlimited
                     ? " instances created (no limit)"
                     : $" of {pipe.MaximumInstances} instances created");

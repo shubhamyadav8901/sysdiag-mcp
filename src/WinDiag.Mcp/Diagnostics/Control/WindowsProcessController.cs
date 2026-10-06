@@ -10,19 +10,8 @@ namespace WinDiag.Mcp.Diagnostics.Control;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsProcessController : IProcessController
 {
-    /// <summary>
-    /// Processes that must never be touched, whatever the caller asks.
-    /// </summary>
-    /// <remarks>
-    /// Ending any of these either bugchecks the machine or logs the session out. A diagnostics tool
-    /// taking down the machine it is diagnosing is the single worst thing it can do, and "the caller
-    /// asked for it" is no defence when the caller is a language model working from a stale PID.
-    /// </remarks>
-    private static readonly HashSet<string> Untouchable = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "System", "Idle", "Registry", "Memory Compression",
-        "smss", "csrss", "wininit", "winlogon", "services", "lsass", "lsaiso"
-    };
+    /// <summary>Processes that must never be touched, whatever the caller asks; see <see cref="ProtectedTargets"/>.</summary>
+    private static readonly IReadOnlySet<string> Untouchable = ProtectedTargets.CoreProcesses;
 
     /// <summary>
     /// How far a live process's start time may differ from the caller's before it is treated as reused.
@@ -30,10 +19,12 @@ public sealed class WindowsProcessController : IProcessController
     private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(2);
 
     private readonly ILogger<WindowsProcessController> _logger;
+    private readonly IProcessProtectionProbe _protection;
 
-    public WindowsProcessController(ILogger<WindowsProcessController> logger)
+    public WindowsProcessController(ILogger<WindowsProcessController> logger, IProcessProtectionProbe protection)
     {
         _logger = logger;
+        _protection = protection;
     }
 
     public ProcessControlResult Control(
@@ -87,12 +78,75 @@ public sealed class WindowsProcessController : IProcessController
                 "session out. Nothing has been done.");
         }
 
+        // Resume is never refused: it is how a frozen host is thawed, and refusing it would turn a mistake
+        // the caller can undo into one nobody can.
+        if (action != ProcessAction.Resume)
+        {
+            RequireUnprotected(process, actualName, processId, action);
+        }
+
         var startTime = SafeStartTime(process);
         var detail = Act(process, action, actualName, processId);
 
         _logger.LogWarning("{Action} {Name} (PID {Pid})", action, actualName, processId);
 
         return new ProcessControlResult(processId, actualName, startTime, action, detail);
+    }
+
+    /// <summary>Refuses a process whose name is harmless but whose role is not.</summary>
+    /// <remarks>
+    /// <para>The name list above cannot see these. Every svchost is called svchost, and the one hosting
+    /// DcomLaunch is a critical process -- ending it bugchecks the machine with CRITICAL_PROCESS_DIED -- while
+    /// the ones hosting RpcSs or Winmgmt take RPC and WMI with them, and with those process_list and the
+    /// service tools. service_control already refused to stop those services; ending their host by PID did
+    /// the same thing without asking it. So the host is refused for whatever service_control refuses, and for
+    /// anything Windows itself has marked critical.</para>
+    /// <para>Fails closed: a process whose services or critical flag cannot be read is refused, because "could
+    /// not tell" is not "safe".</para>
+    /// </remarks>
+    private void RequireUnprotected(Process process, string name, int processId, ProcessAction action)
+    {
+        var verb = action.ToString().ToLowerInvariant();
+
+        IReadOnlyList<string> hosted;
+        try
+        {
+            hosted = _protection.ServicesHostedBy(processId);
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            throw new ProcessControlException(
+                $"Refusing to {verb} '{name}' (PID {processId}): could not list the services it hosts " +
+                $"({ex.Message}), so whether it hosts one the machine needs is unknown. Nothing has been done.", ex);
+        }
+
+        var critical = hosted.Where(ProtectedTargets.CriticalServices.Contains).ToList();
+        if (critical.Count > 0)
+        {
+            throw new ProcessControlException(
+                $"Refusing to {verb} '{name}' (PID {processId}): it hosts {string.Join(", ", critical)}, which " +
+                "service_control also refuses to stop. Ending or freezing the host stops them with it, and " +
+                "without them RPC, WMI or the whole machine goes down. Nothing has been done.");
+        }
+
+        bool isCritical;
+        try
+        {
+            isCritical = _protection.IsCritical(process);
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            throw new ProcessControlException(
+                $"Refusing to {verb} '{name}' (PID {processId}): could not read whether Windows marks it " +
+                $"critical ({ex.Message}). Nothing has been done.", ex);
+        }
+
+        if (isCritical)
+        {
+            throw new ProcessControlException(
+                $"Refusing to {verb} '{name}' (PID {processId}): Windows marks it a critical process, and " +
+                "ending one bugchecks the machine (CRITICAL_PROCESS_DIED). Nothing has been done.");
+        }
     }
 
     private string Act(Process process, ProcessAction action, string name, int processId)

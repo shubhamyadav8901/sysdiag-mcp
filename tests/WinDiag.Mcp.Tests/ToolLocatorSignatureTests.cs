@@ -40,6 +40,9 @@ public sealed class ToolLocatorSignatureTests : IDisposable
             Inspected.AddRange(paths);
             return new SignatureQueryResult([.. paths.Select(p => Signature(p, Next.Verdict, Next.Signer))], []);
         }
+
+        public FileSignature InspectHeld(string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("the tool locator checks a binary by path, never a held file");
     }
 
     [Fact]
