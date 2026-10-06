@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Modules;
@@ -89,6 +90,22 @@ public sealed class ModuleRenderingTests
         Assert.Contains("[REBASED from 0x10000000]", summary);
         Assert.Contains("1 module was", summary);
         Assert.Contains("already occupied that range", summary);
+    }
+
+    [Fact]
+    public void Marks_a_module_whose_file_was_replaced_and_does_not_call_the_list_clean()
+    {
+        // Verified, nothing unsigned -- but one module's verdict was never taken, because the file at its
+        // path is not the code that is running. "Every module is signed" would be the false comfort the
+        // rename-and-replace trick is after.
+        var replaced = Module("evil.dll") with { ReplacedOnDisk = true };
+        var result = Result([replaced, Module("kernel32.dll", "Valid")]) with { ReplacedCount = 1 };
+
+        var summary = ModuleTools.Render(result, null, true);
+
+        Assert.Contains("evil.dll  C:\\Windows\\System32\\evil.dll  v10.0.19045.1  [REPLACED ON DISK]", summary);
+        Assert.Contains("1 module's file on disk is no longer the image that was loaded", summary);
+        Assert.DoesNotContain("Every module returned is signed and trusted", summary);
     }
 
     [Fact]
@@ -186,6 +203,53 @@ public sealed class PeImageReaderTests
     }
 
     [Fact]
+    public void Reads_the_same_header_from_leading_bytes_as_from_the_file()
+    {
+        // The in-memory check hands TryParse the bytes it read out of another process, so the two
+        // entry points must agree exactly on the same image.
+        var path = typeof(PeImageReaderTests).Assembly.Location;
+        var bytes = File.ReadAllBytes(path).AsSpan(0, PeImageReader.HeaderBytes);
+
+        var fromFile = PeImageReader.TryRead(path);
+        var fromBytes = PeImageReader.TryParse(bytes);
+
+        Assert.NotNull(fromFile);
+        Assert.Equal(fromFile, fromBytes);
+        Assert.NotEqual(0u, fromFile!.Value.SizeOfImage);
+    }
+
+    [Fact]
+    public void A_different_link_stamp_is_a_different_build_but_a_different_image_base_is_not()
+    {
+        // The loader writes the base an image actually got into the header it maps, so comparing
+        // ImageBase would call every relocated module replaced. The link stamp it never touches.
+        var original = File.ReadAllBytes(typeof(PeImageReaderTests).Assembly.Location)[..PeImageReader.HeaderBytes];
+        var peOffset = BitConverter.ToInt32(original, 0x3C);
+        var baseline = PeImageReader.TryParse(original)!.Value;
+
+        var restamped = (byte[])original.Clone();
+        restamped[peOffset + 4 + 4] ^= 0x01;
+
+        var rebased = (byte[])original.Clone();
+        var magic = BitConverter.ToUInt16(rebased, peOffset + 4 + 20);
+        rebased[peOffset + 4 + 20 + (magic == 0x20B ? 24 : 28) + 2] ^= 0x10;
+
+        Assert.False(baseline.IsSameBuildAs(PeImageReader.TryParse(restamped)!.Value));
+        Assert.NotEqual(baseline.ImageBase, PeImageReader.TryParse(rebased)!.Value.ImageBase);
+        Assert.True(baseline.IsSameBuildAs(PeImageReader.TryParse(rebased)!.Value));
+    }
+
+    [Fact]
+    public void Refuses_a_pe_offset_that_would_overflow_rather_than_throwing()
+    {
+        // These bytes can come from another process's memory, outside any try block.
+        var bytes = new byte[PeImageReader.HeaderBytes];
+        BitConverter.TryWriteBytes(bytes.AsSpan(0x3C), int.MaxValue - 8);
+
+        Assert.Null(PeImageReader.TryParse(bytes));
+    }
+
+    [Fact]
     public void Sees_an_image_that_did_not_opt_into_aslr()
     {
         // Everything on a modern Windows install is /DYNAMICBASE, so the positive assertion above would
@@ -245,6 +309,42 @@ public sealed class ModuleInspectorTests
         // number the caller cannot act on.
         Assert.All(result.Modules, m => Assert.NotNull(m.PreferredBase));
         Assert.All(result.Modules, m => Assert.NotNull(m.Relocated));
+
+        // Not null: proves the mapped headers were actually read and compared, not skipped.
+        Assert.All(result.Modules, m => Assert.False(m.ReplacedOnDisk));
+    }
+
+    [Fact]
+    public void Flags_a_dll_renamed_away_and_replaced_while_loaded_and_does_not_verify_the_replacement()
+    {
+        // The hole: NTFS lets a loaded DLL be renamed though not overwritten, and the loader keeps the
+        // original path. Rename an unsigned DLL away, put a signed copy at its path, and the module was
+        // reported with the copy's version and signature. Done here for real, with system DLLs standing
+        // in for both, so the check is against an actual mapping rather than a description of one.
+        var directory = Path.Combine(Path.GetTempPath(), $"windiag-modules-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"windiag-probe-{Guid.NewGuid():N}.dll");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), path);
+
+        var library = NativeLibrary.Load(path);
+        try
+        {
+            File.Move(path, path + ".loaded");
+            File.Copy(Path.Combine(Environment.SystemDirectory, "msimg32.dll"), path);
+
+            var result = Inspector().List(Environment.ProcessId, Path.GetFileName(path), true, CancellationToken.None);
+
+            var module = Assert.Single(result.Modules);
+            Assert.True(module.ReplacedOnDisk);
+            Assert.Null(module.SignatureVerdict);
+            Assert.Null(module.PreferredBase);
+            Assert.Equal(1, result.ReplacedCount);
+        }
+        finally
+        {
+            NativeLibrary.Free(library);
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
@@ -267,5 +367,107 @@ public sealed class ModuleInspectorTests
 
         Assert.Contains("No modules could be read", ex.Message);
         Assert.DoesNotContain("Only part", ex.Message);
+    }
+}
+
+/// <summary>
+/// Whether the file at a module's path is still the loaded image, decided from the two headers alone.
+/// </summary>
+public sealed class ModuleReplacedOnDiskTests
+{
+    private static readonly PeImageHeader Loaded = new(0x180000000, DynamicBase: false, PeImageHeader.MachineAmd64,
+        TimeDateStamp: 0x5E1F_0001, SizeOfImage: 0x2_0000, CheckSum: 0x1_2345);
+
+    /// <summary>What the loader leaves in the mapped header after moving the image: only ImageBase.</summary>
+    private static readonly PeImageHeader SameFileOnDisk = Loaded with { ImageBase = 0x10000000 };
+
+    private static readonly PeImageHeader OtherFileOnDisk = SameFileOnDisk with { TimeDateStamp = 0x6000_0002 };
+
+    [Fact]
+    public void A_file_matching_the_loaded_header_is_not_replaced_even_though_the_image_was_moved()
+    {
+        Assert.False(WindowsModuleInspector.ReplacedOnDisk(Loaded, SameFileOnDisk, fileExists: true));
+    }
+
+    [Fact]
+    public void A_file_with_a_different_build_header_is_replaced()
+    {
+        Assert.True(WindowsModuleInspector.ReplacedOnDisk(Loaded, OtherFileOnDisk, fileExists: true));
+    }
+
+    [Fact]
+    public void A_file_that_is_gone_is_replaced()
+    {
+        Assert.True(WindowsModuleInspector.ReplacedOnDisk(Loaded, null, fileExists: false));
+    }
+
+    [Fact]
+    public void Says_unknown_rather_than_no_when_either_header_could_not_be_read()
+    {
+        // An unreadable mapping or an access-denied file is not evidence that nothing changed.
+        Assert.Null(WindowsModuleInspector.ReplacedOnDisk(null, SameFileOnDisk, fileExists: true));
+        Assert.Null(WindowsModuleInspector.ReplacedOnDisk(Loaded, null, fileExists: true));
+    }
+
+    [Fact]
+    public void Takes_no_relocation_verdict_from_a_header_that_belongs_to_another_file()
+    {
+        // The replacement here was built for a fixed base and the loaded image is not at it: read naively
+        // that is a base collision, which would be a finding about a file that is not even loaded.
+        var module = WindowsModuleInspector.Describe(
+            "evil.dll", @"C:\App\evil.dll", 0x180000000, 4096, "10.0.1", "Microsoft Corporation",
+            loaded: Loaded, onDisk: OtherFileOnDisk, fileExists: true);
+
+        Assert.True(module.ReplacedOnDisk);
+        Assert.Null(module.PreferredBase);
+        Assert.Null(module.Relocated);
+        Assert.False(module.BaseCollision);
+    }
+
+    [Fact]
+    public void Still_reads_the_preferred_base_from_the_file_when_it_matches()
+    {
+        var module = WindowsModuleInspector.Describe(
+            "app.dll", @"C:\App\app.dll", 0x180000000, 4096, null, null,
+            loaded: Loaded, onDisk: SameFileOnDisk, fileExists: true);
+
+        Assert.False(module.ReplacedOnDisk);
+        Assert.Equal("0x10000000", module.PreferredBase);
+        Assert.True(module.BaseCollision);
+    }
+
+    [Fact]
+    public void Does_not_verify_the_file_that_replaced_a_loaded_module()
+    {
+        // The verdict would be the replacement's -- signed, in the attack -- and the module would then
+        // drop out of the unsigned count the tool exists to produce.
+        var signatures = new RecordingSignatureInspector();
+        var inspector = new WindowsModuleInspector(signatures, WinDiagOptions.FromEnvironment(new System.Collections.Hashtable()));
+
+        var replaced = new LoadedModule("evil.dll", @"C:\App\evil.dll", "0x1", 1, null, null, null, null, ReplacedOnDisk: true);
+        var intact = new LoadedModule("app.dll", @"C:\App\app.dll", "0x2", 1, null, null, null, null, ReplacedOnDisk: false);
+
+        var verified = inspector.Verify([replaced, intact], CancellationToken.None);
+
+        Assert.Equal([@"C:\App\app.dll"], signatures.Asked);
+        Assert.Null(verified.Single(m => m.Name == "evil.dll").SignatureVerdict);
+        Assert.Equal("Valid", verified.Single(m => m.Name == "app.dll").SignatureVerdict);
+    }
+
+    /// <summary>Calls every file it is asked about validly signed, and remembers what it was asked.</summary>
+    private sealed class RecordingSignatureInspector : ISignatureInspector
+    {
+        public List<string> Asked { get; } = [];
+
+        public SignatureQueryResult Inspect(IReadOnlyList<string> paths, CancellationToken cancellationToken)
+        {
+            Asked.AddRange(paths);
+
+            return new SignatureQueryResult(
+                paths.Select(p => new FileSignature(
+                    p, SignatureVerdict.Valid, "Signature is present and trusted.", false, "Microsoft Windows",
+                    null, null, null, null, null, null, 1, DateTimeOffset.UnixEpoch, "00")).ToList(),
+                []);
+        }
     }
 }

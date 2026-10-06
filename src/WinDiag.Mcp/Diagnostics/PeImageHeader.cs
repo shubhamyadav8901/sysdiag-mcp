@@ -13,7 +13,16 @@ namespace WinDiag.Mcp.Diagnostics;
 /// only reliable way to tell a Sysinternals 32-bit launcher from the real thing, since both are named
 /// the same.
 /// </param>
-public readonly record struct PeImageHeader(ulong ImageBase, bool DynamicBase, ushort Machine)
+/// <param name="TimeDateStamp">The COFF link stamp (a content hash under reproducible builds).</param>
+/// <param name="SizeOfImage">How much address space the image occupies once mapped.</param>
+/// <param name="CheckSum">The optional header's checksum; zero for most images that are not drivers.</param>
+public readonly record struct PeImageHeader(
+    ulong ImageBase,
+    bool DynamicBase,
+    ushort Machine,
+    uint TimeDateStamp,
+    uint SizeOfImage,
+    uint CheckSum)
 {
     public const ushort MachineI386 = 0x014C;
     public const ushort MachineAmd64 = 0x8664;
@@ -21,6 +30,22 @@ public readonly record struct PeImageHeader(ulong ImageBase, bool DynamicBase, u
 
     /// <summary>True for an image that cannot run as a 64-bit process.</summary>
     public bool Is32Bit => Machine == MachineI386;
+
+    /// <summary>
+    /// True when two headers describe the same build of an image: same machine, link stamp, mapped size
+    /// and checksum.
+    /// </summary>
+    /// <remarks>
+    /// <c>ImageBase</c> is deliberately not compared. The loader writes the address an image actually got
+    /// into the header it maps, so a relocated module's in-memory header and its own file disagree there
+    /// by design. These four fields the loader never touches. Identity of the header, not of every byte:
+    /// a file patched in place with its header kept would still match.
+    /// </remarks>
+    public bool IsSameBuildAs(PeImageHeader other) =>
+        Machine == other.Machine
+        && TimeDateStamp == other.TimeDateStamp
+        && SizeOfImage == other.SizeOfImage
+        && CheckSum == other.CheckSum;
 }
 
 /// <summary>
@@ -46,6 +71,17 @@ public static class PeImageReader
     private const ushort Pe32PlusMagic = 0x020B;
     private const int Pe32ImageBaseOffset = 28;
     private const int Pe32PlusImageBaseOffset = 24;
+    private const int CoffTimeDateStampOffset = 4;
+
+    // Same offsets in both optional-header layouts, for the same reason as DllCharacteristics below.
+    private const int SizeOfImageOffset = 56;
+    private const int CheckSumOffset = 64;
+
+    /// <summary>
+    /// How many leading bytes of an image <see cref="TryParse"/> needs. The optional header cannot start
+    /// further in than this and still be a real image.
+    /// </summary>
+    public const int HeaderBytes = 1024;
 
     // Same offset in both optional-header layouts: PE32+ drops BaseOfData (4 bytes) but widens
     // ImageBase by the same 4, so everything from SectionAlignment onwards realigns.
@@ -71,54 +107,69 @@ public static class PeImageReader
             using var stream = new FileStream(
                 path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096);
 
-            // The optional header cannot start further in than this and still be a real image; the read
-            // is one buffer so a short or truncated file fails on length rather than on seeking.
-            Span<byte> header = stackalloc byte[1024];
+            // One buffer, so a short or truncated file fails on length rather than on seeking.
+            Span<byte> header = stackalloc byte[HeaderBytes];
             var read = stream.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
-            if (read < DosHeaderLfaNewOffset + 4)
-            {
-                return null;
-            }
 
-            header = header[..read];
-
-            var peOffset = BinaryPrimitives.ReadInt32LittleEndian(header[DosHeaderLfaNewOffset..]);
-            if (peOffset < 0 || peOffset + 4 + CoffHeaderSize + DllCharacteristicsOffset + 2 > header.Length)
-            {
-                return null;
-            }
-
-            if (BinaryPrimitives.ReadUInt32LittleEndian(header[peOffset..]) != PeSignature)
-            {
-                return null;
-            }
-
-            // The COFF header opens with the machine type, immediately after the signature.
-            var machine = BinaryPrimitives.ReadUInt16LittleEndian(header[(peOffset + 4)..]);
-
-            var optional = header[(peOffset + 4 + CoffHeaderSize)..];
-            var magic = BinaryPrimitives.ReadUInt16LittleEndian(optional);
-
-            var imageBase = magic switch
-            {
-                Pe32Magic => BinaryPrimitives.ReadUInt32LittleEndian(optional[Pe32ImageBaseOffset..]),
-                Pe32PlusMagic => BinaryPrimitives.ReadUInt64LittleEndian(optional[Pe32PlusImageBaseOffset..]),
-                _ => 0UL
-            };
-
-            if (imageBase == 0)
-            {
-                return null;
-            }
-
-            var characteristics = BinaryPrimitives.ReadUInt16LittleEndian(optional[DllCharacteristicsOffset..]);
-
-            return new PeImageHeader(imageBase, (characteristics & DynamicBaseFlag) != 0, machine);
+            return TryParse(header[..read]);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                       or NotSupportedException or ArgumentException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Reads the header from an image's leading bytes, wherever they came from -- a file, or a module's
+    /// mapping in another process. Null when they are not a PE header.
+    /// </summary>
+    public static PeImageHeader? TryParse(ReadOnlySpan<byte> header)
+    {
+        if (header.Length < DosHeaderLfaNewOffset + 4)
+        {
+            return null;
+        }
+
+        // In long arithmetic: these bytes may come from another process's memory, and an e_lfanew near
+        // int.MaxValue would otherwise wrap past this check into an out-of-range slice.
+        var peOffset = BinaryPrimitives.ReadInt32LittleEndian(header[DosHeaderLfaNewOffset..]);
+        if (peOffset < 0 || (long)peOffset + 4 + CoffHeaderSize + DllCharacteristicsOffset + 2 > header.Length)
+        {
+            return null;
+        }
+
+        if (BinaryPrimitives.ReadUInt32LittleEndian(header[peOffset..]) != PeSignature)
+        {
+            return null;
+        }
+
+        // The COFF header opens with the machine type, immediately after the signature.
+        var machine = BinaryPrimitives.ReadUInt16LittleEndian(header[(peOffset + 4)..]);
+
+        var optional = header[(peOffset + 4 + CoffHeaderSize)..];
+        var magic = BinaryPrimitives.ReadUInt16LittleEndian(optional);
+
+        var imageBase = magic switch
+        {
+            Pe32Magic => BinaryPrimitives.ReadUInt32LittleEndian(optional[Pe32ImageBaseOffset..]),
+            Pe32PlusMagic => BinaryPrimitives.ReadUInt64LittleEndian(optional[Pe32PlusImageBaseOffset..]),
+            _ => 0UL
+        };
+
+        if (imageBase == 0)
+        {
+            return null;
+        }
+
+        var characteristics = BinaryPrimitives.ReadUInt16LittleEndian(optional[DllCharacteristicsOffset..]);
+
+        return new PeImageHeader(
+            imageBase,
+            (characteristics & DynamicBaseFlag) != 0,
+            machine,
+            TimeDateStamp: BinaryPrimitives.ReadUInt32LittleEndian(header[(peOffset + 4 + CoffTimeDateStampOffset)..]),
+            SizeOfImage: BinaryPrimitives.ReadUInt32LittleEndian(optional[SizeOfImageOffset..]),
+            CheckSum: BinaryPrimitives.ReadUInt32LittleEndian(optional[CheckSumOffset..]));
     }
 }

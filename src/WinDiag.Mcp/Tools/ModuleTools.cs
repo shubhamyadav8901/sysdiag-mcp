@@ -35,9 +35,15 @@ public sealed class ModuleTools
         "each. Use it when the version on disk and the version in use might differ - a stale copy " +
         "beside the executable, a shell extension loaded from somewhere unexpected, or an add-in that " +
         "is not the build you shipped. " +
-        "Set verifySignatures to check each one's Authenticode signature, which finds unsigned or " +
-        "tampered modules loaded into a signed process. That is slower, so it applies only to the " +
-        "modules actually returned - filter by name first if you know what you are looking for. " +
+        "Version and signature are read from the file now at each module's path, so each module's " +
+        "loaded PE header is compared with that file's: one that no longer matches - renamed away and " +
+        "replaced while loaded, or updated under the running process - is marked [REPLACED ON DISK] and " +
+        "its signature is not checked. " +
+        "Set verifySignatures to check each one's Authenticode signature, which finds unsigned modules " +
+        "loaded into a signed process; it is not tamper detection against a process that is already " +
+        "compromised, which can rewrite its own module list and headers. That is slower, so it applies " +
+        "only to the modules actually returned - filter by name first if you know what you are looking " +
+        "for. " +
         "Each module also reports the base address it asked for against the one it got, and flags a " +
         "module that was built for a fixed address and got moved anyway - a base collision, which " +
         "costs it its shared pages.")]
@@ -86,6 +92,12 @@ public sealed class ModuleTools
                 builder.Append("  v").Append(version);
             }
 
+            if (module.ReplacedOnDisk == true)
+            {
+                // Right after the version, because it is the version this qualifies.
+                builder.Append("  [REPLACED ON DISK]");
+            }
+
             if (module.SignatureVerdict is { } verdict && verdict != "Valid")
             {
                 builder.Append("  [").Append(verdict.ToUpperInvariant()).Append(']');
@@ -101,11 +113,16 @@ public sealed class ModuleTools
 
         RenderLimits.NoteElision(builder, result.Modules.Count, "returned modules");
 
+        var replacedShown = result.Modules.Count(m => m.ReplacedOnDisk == true);
+
         if (verified)
         {
             builder.AppendLine();
             builder.Append(result.UnsignedCount switch
             {
+                0 when replacedShown > 0 =>
+                    "Every module checked is signed and trusted, but the ones marked [REPLACED ON DISK] " +
+                    "could not be checked.",
                 0 => "Every module returned is signed and trusted.",
                 1 => "1 of the modules returned is unsigned or untrusted - that is the one worth looking " +
                      "at first.",
@@ -117,6 +134,16 @@ public sealed class ModuleTools
         {
             builder.AppendLine().Append("Signatures were not checked. Pass verifySignatures to find " +
                                         "unsigned or tampered modules.");
+        }
+
+        if (result.ReplacedCount > 0)
+        {
+            builder.AppendLine().Append(result.ReplacedCount == 1 ? "1 module's" : $"{result.ReplacedCount} modules'")
+                .Append(" file on disk is no longer the image that was loaded: the loaded PE header and the " +
+                        "file's differ, or the file is gone. Marked [REPLACED ON DISK]; the version shown " +
+                        "is the file now at that path, and its signature was not checked because the code " +
+                        "running is not that file. An update installed under a running process looks like " +
+                        "this, and so does a DLL renamed away and replaced to pass a signature check.");
         }
 
         if (result.CollisionCount > 0)
