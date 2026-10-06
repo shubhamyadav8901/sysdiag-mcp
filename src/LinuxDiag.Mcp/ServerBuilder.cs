@@ -47,8 +47,8 @@ public static class ServerBuilder
           LinuxDiag.Mcp --service-status [--service-name <n>]
         Installs /opt/linuxdiag/LinuxDiag.Mcp, /etc/linuxdiag/<n>.env (0600: token and grants),
         /var/lib/linuxdiag (0700) and /etc/systemd/system/<n>.service, then enables and starts it.
-        An existing --artifacts directory is used as it is and must be root's alone, above it and any link
-        on the way to it included.
+        --artifacts takes an absolute path with no '.' or '..'. An existing one is used as it is and must be
+        root's alone, above it and any link on the way to it included.
         --token-stdin reads the token from standard input, keeping it out of sudo's log and ps.
 
         put_file writes freely only under the artifact directory. Into the server's own directory

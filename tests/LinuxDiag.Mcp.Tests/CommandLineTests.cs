@@ -77,6 +77,24 @@ public sealed class CommandLineTests
         Assert.Contains("--service-name needs a value", ex.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("/opt/L/../evil")]
+    [InlineData("/srv/./a")]
+    [InlineData("/srv/a/..")]
+    [InlineData("srv/a")]
+    public void An_artifact_directory_that_is_relative_or_holds_dot_components_is_refused(string value)
+    {
+        // Re-check: the installer judged --artifacts /opt/L/../evil where the kernel goes, /var/evil with /opt/L ->
+        // /var/lib, while the server folds ".." by spelling and used /opt/evil -- a directory nobody had judged. A
+        // relative path splits the same way: the installer's working directory against the service's "/".
+        var ex = Assert.Throws<ConfigurationException>(() =>
+            LinuxServiceInstallOptions.Parse(["--install-service", "--http", Bind, "--artifacts", value]));
+
+        Assert.Contains($"--artifacts {value}", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("absolute", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was installed", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void An_option_given_twice_is_refused_rather_than_one_silently_winning()
     {
