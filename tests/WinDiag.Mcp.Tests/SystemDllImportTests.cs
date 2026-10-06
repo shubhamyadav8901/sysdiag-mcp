@@ -16,7 +16,13 @@ public sealed class SystemDllImportTests
 {
     private static readonly Assembly Server = typeof(ServerBuilder).Assembly;
 
-    private static MethodInfo[] Imports() => Server.GetTypes()
+    // System.Diagnostics.EventLog imports wevtapi.dll, which is not a KnownDLL either, and the runtime
+    // probes the server's folder first for a package's imports exactly as it does for this assembly's.
+    private static readonly Assembly EventLog = typeof(System.Diagnostics.Eventing.Reader.EventLogQuery).Assembly;
+
+    private static MethodInfo[] Imports() => Imports(Server);
+
+    private static MethodInfo[] Imports(Assembly assembly) => assembly.GetTypes()
         .SelectMany(type => type.GetMethods(
             BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
             BindingFlags.DeclaredOnly))
@@ -37,6 +43,32 @@ public sealed class SystemDllImportTests
         Assert.True(
             ex is InvalidOperationException,
             "WinDiag.Mcp has no DllImport resolver, so its imports are probed in the server's own folder first.");
+    }
+
+    [Fact]
+    public void The_event_log_package_has_the_same_resolver_registered()
+    {
+        RuntimeHelpers.RunModuleConstructor(Server.ManifestModule.ModuleHandle);
+
+        var ex = Record.Exception(() => NativeLibrary.SetDllImportResolver(EventLog, (_, _, _) => IntPtr.Zero));
+
+        Assert.True(
+            ex is InvalidOperationException,
+            "System.Diagnostics.EventLog has no DllImport resolver, so a wevtapi.dll beside the server is loaded by event_log_tail.");
+    }
+
+    [Fact]
+    public void The_event_log_package_imports_wevtapi_and_nothing_the_resolver_cannot_serve()
+    {
+        // Windows only, like the rest of this suite: elsewhere the test host loads the package's
+        // platform-neutral build, which imports nothing.
+        var libraries = Imports(EventLog).Select(m => m.GetCustomAttribute<DllImportAttribute>()!.Value).Distinct().ToArray();
+
+        Assert.Contains(libraries, name => name.Equals("wevtapi.dll", StringComparison.OrdinalIgnoreCase));
+        foreach (var library in libraries)
+        {
+            Assert.Equal(Path.Combine(Environment.SystemDirectory, library), System32Library.PathFor(library, Environment.SystemDirectory));
+        }
     }
 
     [Fact]

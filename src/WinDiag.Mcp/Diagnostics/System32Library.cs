@@ -4,7 +4,10 @@ using System.Runtime.InteropServices;
 
 namespace WinDiag.Mcp.Diagnostics;
 
-/// <summary>Loads every DLL this assembly imports from System32 by absolute path, never from beside the server.</summary>
+/// <summary>
+/// Loads every DLL this assembly and the event log package import from System32 by absolute path, never
+/// from beside the server.
+/// </summary>
 /// <remarks>
 /// <para>
 /// A plain <c>[DllImport("dbghelp.dll")]</c> is probed first in the host's native search directories --
@@ -26,12 +29,29 @@ namespace WinDiag.Mcp.Diagnostics;
 /// kit does: the imports are spread over a dozen types here, and the runtime accepts one resolver per
 /// assembly. <c>SystemDllImportTests</c> sweeps the assembly for an import this cannot serve.
 /// </para>
+/// <para>
+/// The same probe order applies to a package's imports, so <c>System.Diagnostics.EventLog</c> -- the one
+/// referenced package that imports a DLL outside KnownDLLs, <c>wevtapi.dll</c> for <c>event_log_tail</c> --
+/// gets the resolver too. The runtime's own assemblies are not covered: their imports (crypt32, ncrypt and
+/// the like) are probed the same way, and serving them all from here would mean owning every name the
+/// framework loads. For those the boundary is the server folder itself: its ACL, and <c>put_file</c>
+/// writing there only with the self-update grant.
+/// </para>
 /// </remarks>
 internal static class System32Library
 {
+    /// <summary>The assemblies whose imports are served from System32.</summary>
+    internal static Assembly[] Covered =>
+        [typeof(System32Library).Assembly, typeof(System.Diagnostics.Eventing.Reader.EventLogQuery).Assembly];
+
     [ModuleInitializer]
-    internal static void Register() =>
-        NativeLibrary.SetDllImportResolver(typeof(System32Library).Assembly, Resolve);
+    internal static void Register()
+    {
+        foreach (var assembly in Covered)
+        {
+            NativeLibrary.SetDllImportResolver(assembly, Resolve);
+        }
+    }
 
     /// <summary>Where <paramref name="libraryName"/> is loaded from, or a refusal for a name that is not a bare DLL.</summary>
     /// <remarks>
@@ -46,7 +66,7 @@ internal static class System32Library
         {
             throw new DllNotFoundException(
                 $"'{libraryName}' is not a bare DLL file name, so it cannot be loaded from System32. " +
-                "Every import in WinDiag.Mcp names a Windows DLL, such as \"dbghelp.dll\".");
+                "Every import served here names a Windows DLL, such as \"dbghelp.dll\".");
         }
 
         return Path.Combine(systemDirectory, libraryName);
