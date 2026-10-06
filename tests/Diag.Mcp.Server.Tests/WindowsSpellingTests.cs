@@ -145,6 +145,112 @@ public sealed class WindowsSpellingTests
         Assert.Equal(expected, PathScope.DriveLetterRoot(root));
     }
 
+    /// <summary>
+    /// What GetFullPathNameW does to a drive path, as far as these facts need: '/' becomes '\', a segment
+    /// loses a trailing '.', and the path loses trailing spaces. A \\?\ path skips all of it.
+    /// </summary>
+    private static string FakeGetFullPath(string path) =>
+        string.Join('\\', path.Replace('/', '\\').Split('\\').Select(s => s.Length > 1 && s.EndsWith('.') ? s[..^1] : s))
+            .TrimEnd(' ');
+
+    [Theory]
+    [InlineData(@"\\?\C:\Diag\art\build.bin", @"C:\Diag\art\build.bin")]
+    [InlineData(@"\??\C:\Diag\art\build.bin", @"C:\Diag\art\build.bin")]
+    [InlineData(@"\\.\D:\dumps\x.dmp", @"D:\dumps\x.dmp")]
+    [InlineData(@"C:\Diag\art\build.bin", @"C:\Diag\art\build.bin")]
+    [InlineData(@"C:\Diag\art\j \build.bin", @"C:\Diag\art\j \build.bin")]
+    public void A_drive_path_is_judged_and_written_in_its_drive_letter_spelling(string full, string expected)
+    {
+        Assert.Equal(expected, PathScope.WindowsSpelling(full, full, FakeGetFullPath));
+    }
+
+    [Theory]
+    [InlineData(@"\\?\C:\Diag\art\j.\crypt32.dll")]
+    [InlineData(@"\\?\C:\Diag\art\crypt32.dll.")]
+    [InlineData(@"\\?\C:\Diag\art\crypt32.dll ")]
+    [InlineData(@"\\?\C:\Diag\art\..\WinDiag\crypt32.dll")]
+    [InlineData(@"\??\C:\Diag\art\j.\crypt32.dll")]
+    public void A_prefixed_name_the_drive_letter_spelling_cannot_reach_is_refused(string full)
+    {
+        // \\?\ skips Win32's normalisation, so \\?\C:\Diag\art\j.\ is the entry literally named "j.": a
+        // junction there to the server folder carried a write past the self-update gate, because the walk
+        // judged C:\Diag\art\j. -- which every ordinary lookup reads as "j", which did not exist -- while the
+        // bytes went through the literal name. There is no drive-letter spelling of such a path to judge.
+        var ex = Assert.Throws<FileTransferException>(() => PathScope.WindowsSpelling(full, full, FakeGetFullPath));
+
+        Assert.Contains(full, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_drive_path_windows_would_read_differently_a_second_time_is_refused()
+    {
+        // The write normalises the path once more; a spelling that is not where normalising stops names one
+        // entry to the judge and another to the write.
+        Assert.Throws<FileTransferException>(
+            () => PathScope.WindowsSpelling(@"C:\Diag\art\j.\crypt32.dll", "x", FakeGetFullPath));
+    }
+
+    [Theory]
+    [InlineData(@"\\?\Volume{11111111-1111-1111-1111-111111111111}\x")]
+    [InlineData(@"\\server\share\x.")]
+    [InlineData(@"\\?\UNC\server\share\x")]
+    public void A_path_that_is_not_on_a_drive_letter_is_left_to_the_network_rule(string full)
+    {
+        Assert.Equal(full, PathScope.WindowsSpelling(full, full, _ => throw new InvalidOperationException("not asked")));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Diag\art\j.", @"\\?\C:\Diag\art\j.")]
+    [InlineData(@"C:\Diag\art\j ", @"\\?\C:\Diag\art\j ")]
+    [InlineData("C:/Diag/art", @"\\?\C:\Diag\art")]
+    [InlineData(@"\\server\share\x", @"\\server\share\x")]
+    public void Each_component_is_looked_up_by_its_literal_name(string path, string expected)
+    {
+        // Directory.Exists and LinkTarget normalise an ordinary path: C:\Diag\art\j  (a trailing space) is
+        // looked up as "j", while a write to C:\Diag\art\j \x goes through "j ". The walk asks in the
+        // \\?\ form, which every call reads exactly as written.
+        Assert.Equal(expected, PathScope.LiteralWindowsPath(path));
+    }
+
+    [WindowsFact]
+    public void A_real_prefixed_path_is_resolved_to_its_drive_letter_spelling_or_refused()
+    {
+        var temp = Path.GetTempPath().TrimEnd('\\');
+
+        Assert.Equal(Path.Combine(temp, "f.bin"), PathScope.Resolve(@"\\?\" + Path.Combine(temp, "f.bin"), "path"));
+        Assert.Throws<FileTransferException>(() => PathScope.Resolve(@"\\?\" + Path.Combine(temp, "j.", "f.bin"), "path"));
+    }
+
+    [WindowsFact]
+    public void A_link_named_with_a_trailing_dot_cannot_carry_a_prefixed_write_past_the_self_update_gate()
+    {
+        using var layout = new RealLayout();
+        Directory.CreateSymbolicLink(@"\\?\" + Path.Combine(layout.Artifacts, "j."), layout.Server);
+
+        var receiver = new FileReceiver(ArtifactsAbove(layout.Artifacts), NullLogger<FileReceiver>.Instance, layout.Server);
+        Record.Exception(() => receiver.Receive(
+            new FileWriteRequest(@"\\?\" + Path.Combine(layout.Artifacts, "j.", "crypt32.dll"), [1, 2, 3]), CancellationToken.None));
+
+        Assert.False(File.Exists(Path.Combine(layout.Server, "crypt32.dll")), "a write through 'j.' landed beside the server");
+    }
+
+    [WindowsFact]
+    public void A_link_named_with_a_trailing_space_is_judged_as_the_link_it_is()
+    {
+        // No prefix needed: Win32 trims a trailing space only at the end of a path, so C:\...\j \crypt32.dll
+        // opens through "j ", while Directory.Exists(C:\...\j ) -- the last component of what the walk asked --
+        // looked at "j".
+        using var layout = new RealLayout();
+        Directory.CreateSymbolicLink(@"\\?\" + Path.Combine(layout.Artifacts, "j "), layout.Server);
+
+        var receiver = new FileReceiver(ArtifactsAbove(layout.Artifacts), NullLogger<FileReceiver>.Instance, layout.Server);
+        var refused = Record.Exception(() => receiver.Receive(
+            new FileWriteRequest(Path.Combine(layout.Artifacts, "j ", "crypt32.dll"), [1, 2, 3]), CancellationToken.None));
+
+        Assert.False(File.Exists(Path.Combine(layout.Server, "crypt32.dll")), "a write through 'j ' landed beside the server");
+        Assert.Contains("WINDIAG_ALLOW_SELF_UPDATE=1", Assert.IsType<FileTransferException>(refused).Message, StringComparison.Ordinal);
+    }
+
     [WindowsFact]
     public void The_long_path_prefix_spelling_of_the_server_directory_is_in_it()
     {

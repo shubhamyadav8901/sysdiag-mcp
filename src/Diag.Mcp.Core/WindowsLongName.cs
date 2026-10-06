@@ -49,10 +49,11 @@ public static class WindowsLongName
     /// </exception>
     public static string Of(string path, string requested)
     {
-        // The \\?\ form lifts MAX_PATH, as the function documents; a deep path must not be refused for
-        // its depth. Drive-letter paths only: anything else was refused before the walk began.
-        var driveRooted = path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\';
-        var asked = driveRooted ? @"\\?\" + path : path;
+        // The \\?\ form lifts MAX_PATH, as the function documents, so a deep path is not refused for its
+        // depth; and it reads the name literally, as the walk's own lookups do, so "j." is not taken for "j".
+        // Drive-letter paths only: anything else was refused before the walk began.
+        var asked = PathScope.LiteralWindowsPath(path);
+        var driveRooted = !string.Equals(asked, path, StringComparison.Ordinal);
 
         var capacity = (uint)asked.Length + 1;
         while (true)
