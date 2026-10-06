@@ -41,14 +41,28 @@ public sealed class UserUnitTests : IDisposable
         File.CreateSymbolicLink(link, target);
     }
 
-    private static string ManagedRead(string path) => File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+    // File.Exists is true for a link that leads nowhere; opening it fails, which reads as nothing, as the server's
+    // own reader has it.
+    private static string ManagedRead(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+    }
 
     private static string? ManagedRealPath(string path)
     {
         try
         {
+            // As realpath(3): null for a link that leads nowhere, not the missing name it points at.
             var info = new FileInfo(path);
-            return info.LinkTarget is null ? info.FullName : info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            return info.LinkTarget is null ? info.FullName
+                : info.ResolveLinkTarget(returnFinalTarget: true) is { Exists: true } target ? target.FullName : null;
         }
         catch (IOException)
         {
@@ -283,6 +297,115 @@ public sealed class UserUnitTests : IDisposable
 
         Assert.Equal("/usr/bin/x", entry.ImagePath);
         Assert.Empty(entry.DropIns);
+    }
+
+    // The alias cases below were each set up for a live user manager (systemd 252, Debian 12) and checked with
+    // `systemctl --user show -p Names,FragmentPath,DropInPaths,ExecStart`; what each asserts is what it showed.
+
+    [UnixFact]
+    public void A_link_that_dangles_but_names_a_unit_in_the_search_path_is_an_alias_of_the_unit_found_under_that_name()
+    {
+        // Re-check: aliases were matched by where a link leads, so ~/.config/systemd/user/zz.service ->
+        // /etc/systemd/user/x.service -- no such file; x.service lives in /usr/lib -- led nowhere and was dropped.
+        // systemd goes by name: zz.service is x.service, and zz.service.d/o.conf replaced its ExecStart.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(_root, "etc/systemd/user/x.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(vendor, entry.Location);
+        Assert.Equal("/home/u/A", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void An_instance_linked_to_a_template_is_another_name_for_that_one_instance()
+    {
+        // Re-check: zz@one.service -> w@.service makes w@one.service also zz@one.service, and zz@one.service.d
+        // applies to it. Only template-to-template links were taken as aliases of an instance.
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), template);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(template, entry.Location);
+        Assert.Equal("/home/u/B", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void An_alias_of_an_alias_in_another_directory_is_followed_by_name()
+    {
+        // zz4.service -> /etc/systemd/user/zz5.service -> q.service: both names are q.service's, and so are their drop-ins.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/q.service"), "[Service]\nExecStart=/usr/bin/q\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/q.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz4.service"), Path.Combine(_root, "etc/systemd/user/zz5.service"));
+        Link(Path.Combine(_root, "etc/systemd/user/zz5.service"), vendor);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz4.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/G\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/G", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [LinuxFact]
+    public void Aliases_are_found_by_name_through_the_servers_own_realpath_even_where_a_link_dangles()
+    {
+        // The name map folds a link's target with realpath(3) on its directory, which is null for a directory that
+        // does not exist -- here /etc/systemd/user -- where the managed fake above still answers.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(_root, "etc/systemd/user/x.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), "../../../../../usr/lib/systemd/user/w@.service");
+        var instanceDropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entries = Audit(UserUnits.Reading(_root));
+
+        Assert.Equal([dropIn], entries.Single(e => e.Entry == "x.service").DropIns);
+        Assert.Equal("/home/u/A", entries.Single(e => e.Entry == "x.service").ImagePath);
+        Assert.Equal([instanceDropIn], entries.Single(e => e.Entry == "w@one.service").DropIns);
+        Assert.Equal("/home/u/B", entries.Single(e => e.Entry == "w@one.service").ImagePath);
+    }
+
+    [UnixFact]
+    public void A_unit_file_linked_in_from_outside_the_search_path_goes_by_the_links_name_alone()
+    {
+        // ll.service -> /opt/real.service is a linked unit file, not an alias: systemd showed Names=ll.service and no
+        // drop-ins, though real.service.d sat in the user's directory. The target's file name was taken as a name.
+        var real = Write(Path.Combine(_root, "opt/real.service"), "[Service]\nExecStart=/opt/real\n");
+        Link(Path.Combine(Home, ".config/systemd/user/ll.service"), real);
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/ll.service"), Path.Combine(Home, ".config/systemd/user/ll.service"));
+        Write(Path.Combine(Home, ".config/systemd/user/real.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/C\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(real, entry.Location);
+        Assert.Equal("/opt/real", entry.ImagePath);
+        Assert.Empty(entry.DropIns);
+    }
+
+    [UnixFact]
+    public void A_dangling_link_for_a_unit_hides_the_packaged_file_of_that_name_rather_than_falling_back_to_it()
+    {
+        // ~/.config/systemd/user/y.service -> /opt/missing.service: systemd took the first y.service on the path and
+        // found it not-found; it never loaded /usr/lib's y.service. The audit skipped the link and reported /usr/bin/y.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/y.service"), "[Service]\nExecStart=/usr/bin/y\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/y.service"), vendor);
+        var link = Path.Combine(Home, ".config/systemd/user/y.service");
+        Link(link, Path.Combine(_root, "opt/missing.service"));
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(link, entry.Location);
+        Assert.Null(entry.ImagePath);
     }
 
     [UnixTheory]

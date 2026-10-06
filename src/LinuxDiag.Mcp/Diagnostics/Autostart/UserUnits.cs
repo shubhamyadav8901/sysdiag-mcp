@@ -305,27 +305,15 @@ internal sealed class UserUnits(
     /// <summary>The unit file loaded for a name, and the drop-ins applied to it, in the order they apply.</summary>
     internal UnitFiles Resolve(string name, IReadOnlyList<string> path)
     {
-        // The first directory holding the name wins; an instance falls back to its template's file.
-        // A link that leads nowhere is skipped, as systemd skips it, so a lower directory's file still loads.
-        var candidates = new[] { name, Template(name) }.OfType<string>();
-        var fragment = candidates
-            .SelectMany(c => path.Select(d => Path.Combine(d, c)))
-            .FirstOrDefault(File.Exists);
-
-        // A unit file linked under another name is an alias, and the drop-ins of every name apply: the name the
-        // fragment's link leads to, and every link anywhere in the search path that leads to the same file.
-        var names = new List<string> { name };
-        if (fragment is not null)
+        // The file and every name it goes by come from systemd's name map, and drop-ins apply under each name: that is
+        // how display-manager.service.d reaches gdm.service, and how a user's zz.service.d reached a packaged x.service.
+        if (!_maps.TryGetValue(path, out var map))
         {
-            var real = RealOr(fragment);
-            if (Path.GetFileName(real) is var file && file != name && file != Template(name) &&
-                Path.GetExtension(file) == Path.GetExtension(name))
-            {
-                names.Add(file);
-            }
-
-            names.AddRange(Aliases(path, real, name).Where(a => !names.Contains(a)));
+            _maps[path] = map = UnitNameMap.Build(path, realPath);
         }
+
+        var (fragment, aliases) = map.Find(name);
+        var names = aliases.Prepend(name).Distinct(StringComparer.Ordinal).ToList();
 
         // As systemd's dropin.c orders them: for each name, each directory from the highest priority down, under the
         // name, its template and its dash prefixes; the type-wide service.d last. A file name seen once is not applied
@@ -355,56 +343,8 @@ internal sealed class UserUnits(
         return new UnitFiles(fragment, dropIns);
     }
 
-    /// <summary>The other names a unit file goes by: each link in the search path that leads to it.</summary>
-    /// <remarks>
-    /// <para>As systemd's unit_file_build_name_map: every link directly in a search-path directory names the file it
-    /// leads to, and unit_find_dropin_paths reads drop-ins under every one of those names -- how
-    /// display-manager.service.d reaches gdm.service. Looking only from the enabled name's side missed a user's
-    /// ~/.config/systemd/user/zz.service linked to a packaged x.service, whose zz.service.d replaced its ExecStart.</para>
-    /// <para>An instance's aliases come from its template's: zz@.service linked to w@.service makes w@one.service
-    /// also zz@one.service. A link of another type, or between a template and a plain unit, is no alias.</para>
-    /// </remarks>
-    private IEnumerable<string> Aliases(IReadOnlyList<string> path, string realFragment, string name)
-    {
-        if (!_aliases.TryGetValue(path, out var map))
-        {
-            map = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-            foreach (var directory in path.Where(Directory.Exists))
-            {
-                foreach (var entry in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
-                {
-                    if (Path.GetExtension(entry).Length > 1 && new FileInfo(entry).LinkTarget is not null && realPath(entry) is { } target)
-                    {
-                        (map.TryGetValue(target, out var names) ? names : map[target] = []).Add(Path.GetFileName(entry));
-                    }
-                }
-            }
-
-            _aliases[path] = map;
-        }
-
-        var instance = Template(name) is null ? null : name[(name.IndexOf('@', StringComparison.Ordinal) + 1)..name.LastIndexOf('.')];
-        foreach (var alias in map.GetValueOrDefault(realFragment) ?? [])
-        {
-            if (Path.GetExtension(alias) != Path.GetExtension(name))
-            {
-                continue;
-            }
-
-            var aliasIsTemplate = alias.Contains("@.", StringComparison.Ordinal);
-            if (instance is null && !aliasIsTemplate)
-            {
-                yield return alias;
-            }
-            else if (instance is not null && aliasIsTemplate)
-            {
-                yield return alias.Replace("@.", "@" + instance + ".", StringComparison.Ordinal);
-            }
-        }
-    }
-
-    /// <summary>Each search path's links, by the file they lead to; built once per path, as systemd builds its map once.</summary>
-    private readonly Dictionary<IReadOnlyList<string>, Dictionary<string, List<string>>> _aliases = new(ReferenceEqualityComparer.Instance);
+    /// <summary>Each search path's name map; built once per path, as systemd builds its map once.</summary>
+    private readonly Dictionary<IReadOnlyList<string>, UnitNameMap> _maps = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The names a unit's drop-in directories go by: its own, its template's, each dash prefix's, then its type's.</summary>
     internal static IReadOnlyList<string> DropInNames(IReadOnlyList<string> names) =>
