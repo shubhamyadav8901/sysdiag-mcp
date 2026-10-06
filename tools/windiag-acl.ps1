@@ -83,6 +83,44 @@ private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(
 private static extern bool GetFileInformationByHandleEx(
     Microsoft.Win32.SafeHandles.SafeFileHandle file, int infoClass, out TagInfo info, uint size);
 
+[DllImport("netapi32.dll", CharSet = CharSet.Unicode)]
+private static extern int NetLocalGroupGetMembers(
+    string server, string group, int level, out IntPtr buffer, int max, out int read, out int total, IntPtr resume);
+
+[DllImport("netapi32.dll")]
+private static extern int NetApiBufferFree(IntPtr buffer);
+
+[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+private static extern bool ConvertSidToStringSidW(IntPtr sid, out IntPtr text);
+
+[DllImport("kernel32.dll")]
+private static extern IntPtr LocalFree(IntPtr memory);
+
+// The SIDs of the local group's direct members, as S-1-... strings; empty if they cannot be read.
+public static string[] Members(string group)
+{
+    IntPtr buffer;
+    int read, total;
+    if (NetLocalGroupGetMembers(null, group, 0, out buffer, -1, out read, out total, IntPtr.Zero) != 0)
+    {
+        if (buffer != IntPtr.Zero) { NetApiBufferFree(buffer); }
+        return new string[0];
+    }
+    try
+    {
+        var sids = new System.Collections.Generic.List<string>();
+        for (int i = 0; i < read; i++)
+        {
+            IntPtr text;
+            // LOCALGROUP_MEMBERS_INFO_0: one PSID each.
+            if (!ConvertSidToStringSidW(Marshal.ReadIntPtr(buffer, i * IntPtr.Size), out text)) { continue; }
+            try { sids.Add(Marshal.PtrToStringUni(text)); } finally { LocalFree(text); }
+        }
+        return sids.ToArray();
+    }
+    finally { NetApiBufferFree(buffer); }
+}
+
 [DllImport("advapi32.dll", SetLastError = true)]
 private static extern bool GetKernelObjectSecurity(
     Microsoft.Win32.SafeHandles.SafeFileHandle handle, uint information, byte[] descriptor, uint length, out uint needed);
@@ -115,15 +153,28 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
     # the scripts install as LocalSystem, and a directory another account can write is not one to stage a
     # binary into that PsExec then runs as SYSTEM.
     $trusted = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3425522526-1101993487-2163447651-1013034063'
+
+    # For the directories above $full, which these scripts never change, the group's direct members count as
+    # well -- the server's ProtectedAcl.TrustedAbove. A D:\Ops locked to administrators by hand but made by
+    # the built-in Administrator is owned by that account, not the group; refused, nothing short of changing
+    # its owner would let it be used. Looked up by name, which is localised, from the group's SID. Members
+    # reached only through a domain group are not counted: expanding one needs a domain controller.
+    $trustedAbove = $trusted
+    try {
+        $groupName = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544').Translate(
+            [System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+        $trustedAbove = @($trusted) + @([WinDiagAcl.Handle]::Members($groupName))
+    }
+    catch { }
     $directoryWriteRights = 0x500D0046   # GENERIC_ALL | GENERIC_WRITE | write, append, delete child, delete, WRITE_DAC, WRITE_OWNER
     $renameRights = 0x100D0000           # GENERIC_ALL | DELETE | WRITE_DAC | WRITE_OWNER
     $removeChildRights = 0x100C0040      # GENERIC_ALL | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER
 
     # Who other than $trusted owns the descriptor's object, or holds any of $Rights on it through an allow
     # ACE that applies to it -- the server's ProtectedAcl.Exposures, in the same words.
-    function Get-Exposure($Descriptor, [int] $Rights, [string] $Verb) {
+    function Get-Exposure($Descriptor, [int] $Rights, [string] $Verb, [string[]] $Trust = $trusted) {
         $found = @()
-        if ($Descriptor.Owner -and $trusted -notcontains $Descriptor.Owner.Value) {
+        if ($Descriptor.Owner -and $Trust -notcontains $Descriptor.Owner.Value) {
             $found += "$(Get-AccountName $Descriptor.Owner) owns it, so can change who has access"
         }
         if ($null -eq $Descriptor.DiscretionaryAcl) {
@@ -136,7 +187,7 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
                 $ace.AceQualifier -ne [System.Security.AccessControl.AceQualifier]::AccessAllowed -or
                 ($ace.AceFlags -band [System.Security.AccessControl.AceFlags]::InheritOnly) -or
                 $ace.SecurityIdentifier.Value -eq 'S-1-3-0' -or       # CREATOR OWNER: only ever about a future child
-                $trusted -contains $ace.SecurityIdentifier.Value) { continue }
+                $Trust -contains $ace.SecurityIdentifier.Value) { continue }
             if ($ace.AccessMask -band $Rights) { $found += "$(Get-AccountName $ace.SecurityIdentifier) can $Verb it" }
         }
         $found | Select-Object -Unique
@@ -166,12 +217,12 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
 
             $descriptor = New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList $bytes, 0
             if ($component -ne "$root\") {
-                $problems += @(Get-Exposure $parent $removeChildRights 'remove what is in') | ForEach-Object { "${parentPath}, which holds ${component}: $_" }
+                $problems += @(Get-Exposure $parent $removeChildRights 'remove what is in' $trustedAbove) | ForEach-Object { "${parentPath}, which holds ${component}: $_" }
                 if ($component -eq $full) {
                     $problems += @(Get-Exposure $descriptor $directoryWriteRights 'write to') | ForEach-Object { "${component}: $_" }
                 }
                 else {
-                    $problems += @(Get-Exposure $descriptor $renameRights 'rename or remove') | ForEach-Object { "${component}, on the way to it: $_" }
+                    $problems += @(Get-Exposure $descriptor $renameRights 'rename or remove' $trustedAbove) | ForEach-Object { "${component}, on the way to it: $_" }
                 }
             }
             $parent = $descriptor
@@ -190,7 +241,8 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
                 'installer and the service have. If windiag runs from it, let update_self bring the target ' +
                 'to this release, whose server restricts it on its next start; otherwise rename it aside ' +
                 '(Rename-Item) or pick another path, and run this again. A directory above it that others ' +
-                'can rename must be restricted to administrators first.')
+                'can rename must be restricted to administrators first; one an account outside the local ' +
+                'Administrators group owns must be handed to the group (icacls <dir> /setowner *S-1-5-32-544).')
         }
     }
 

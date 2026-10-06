@@ -113,6 +113,40 @@ public sealed class BootstrapAclScriptTests
         }
     }
 
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_script_accepts_a_path_below_a_directory_an_individual_administrator_owns_and_only_administrators_can_change(string shell)
+    {
+        // -RemotePath D:\Ops\WinDiag on a server whose D:\Ops the built-in Administrator made and locked down:
+        // owned by that account, not the group. The server trusts it above its directories; so must the script,
+        // or bootstrap refuses what the service it installs then accepts. An ordinary user's is still refused.
+        using var admin = new TemporaryLocalUser(administrator: true);
+        using var user = new TemporaryLocalUser(administrator: false);
+        var parent = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
+            var path = Path.Combine(parent, "WinDiag");
+
+            PlantedTree.SetOwner(parent, user.Sid);
+            var (refused, refusal) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
+            Assert.True(refused != 0, $"the script accepted a path below a directory an ordinary user owns: {refusal}");
+            Assert.Contains($"{user.Name} owns it", refusal, StringComparison.Ordinal);
+            Assert.Contains("/setowner *S-1-5-32-544", refusal, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(path));
+
+            PlantedTree.SetOwner(parent, admin.Sid);
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
+            Assert.True(exit == 0, output);
+            Assert.True(Directory.Exists(path));
+        }
+        finally
+        {
+            PlantedTree.Remove(parent);
+        }
+    }
+
     [ElevatedFact]
     public void The_script_refuses_a_directory_reached_through_a_junction_and_changes_nothing_where_it_points()
     {
