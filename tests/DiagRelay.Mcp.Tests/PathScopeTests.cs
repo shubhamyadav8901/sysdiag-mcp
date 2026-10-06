@@ -169,3 +169,107 @@ public sealed class RelayFileScopePortableTests
         Assert.Contains(RelayFileScope.RootsVariable, ex.Message, StringComparison.Ordinal);
     }
 }
+
+/// <summary>
+/// The relay's roots judged on real paths. A lexical check alone lets a link planted inside a root carry
+/// push_file's read, or pull_file's write, anywhere the link points, while the path in the request still
+/// looks confined.
+/// </summary>
+/// <remarks>
+/// Unix only: creating a symbolic link on Windows needs a privilege a test host usually lacks, and the
+/// walk itself is shared with the server, whose suite covers junctions on Windows.
+/// </remarks>
+public sealed class RelayFileScopeLinkTests : IDisposable
+{
+    private readonly string _base = Directory.CreateDirectory(
+        Path.Combine(Path.GetTempPath(), $"diag-links-{Guid.NewGuid():N}")).FullName;
+
+    private string Root => Directory.CreateDirectory(Path.Combine(_base, "root")).FullName;
+
+    private string Outside => Directory.CreateDirectory(Path.Combine(_base, "outside")).FullName;
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_base, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Best effort: a leftover temp directory must not fail the test that made it.
+        }
+    }
+
+    [UnixFact]
+    public void A_link_inside_a_root_to_a_file_outside_it_is_refused()
+    {
+        // What push_file would read: the request names root/keys, the bytes come from outside/id_ed25519.
+        var secret = Path.Combine(Outside, "id_ed25519");
+        File.WriteAllText(secret, "private key");
+        var link = Path.Combine(Root, "keys");
+        File.CreateSymbolicLink(link, secret);
+
+        var ex = Assert.Throws<RelayException>(() => RelayFileScope.Require(link, "localPath", [Root]));
+
+        // Named by where it really is: on macOS the temp directory itself sits behind /var -> /private/var.
+        Assert.Contains(PathScope.RealPath(secret), ex.Message, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_linked_directory_inside_a_root_cannot_carry_a_new_file_outside_it()
+    {
+        // What pull_file would write: the file does not exist yet, but the directory it goes into is a link.
+        Directory.CreateSymbolicLink(Path.Combine(Root, "dumps"), Outside);
+
+        Assert.Throws<RelayException>(
+            () => RelayFileScope.Require(Path.Combine(Root, "dumps", "authorized_keys"), "localPath", [Root]));
+    }
+
+    [UnixFact]
+    public void A_link_whose_target_climbs_through_another_link_is_judged_where_the_kernel_lands()
+    {
+        // root/hop -> outside/deep/dir, and root/trick -> "hop/../f". Collapsed as spelled that is root/f,
+        // inside; the kernel goes through hop first and opens outside/deep/f.
+        var deep = Directory.CreateDirectory(Path.Combine(Outside, "deep", "dir")).FullName;
+        File.WriteAllText(Path.Combine(Outside, "deep", "f"), "secret");
+        Directory.CreateSymbolicLink(Path.Combine(Root, "hop"), deep);
+        File.CreateSymbolicLink(Path.Combine(Root, "trick"), Path.Combine("hop", "..", "f"));
+
+        Assert.Throws<RelayException>(
+            () => RelayFileScope.Require(Path.Combine(Root, "trick"), "localPath", [Root]));
+    }
+
+    [UnixFact]
+    public void A_root_reached_through_a_link_still_admits_what_is_inside_it()
+    {
+        // Both sides are resolved, so an operator whose builds folder is itself a link is not refused.
+        var real = Directory.CreateDirectory(Path.Combine(Outside, "builds")).FullName;
+        var linkedRoot = Path.Combine(_base, "builds");
+        Directory.CreateSymbolicLink(linkedRoot, real);
+        var inside = Path.Combine(linkedRoot, "win-x64", "WinDiag.Mcp.exe");
+
+        Assert.Equal(inside, RelayFileScope.Require(inside, "localPath", [linkedRoot]));
+    }
+
+    [UnixFact]
+    public void A_link_that_stays_inside_the_root_is_allowed()
+    {
+        var build = Path.Combine(Root, "win-x64", "WinDiag.Mcp.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(build)!);
+        File.WriteAllText(build, "build");
+        var latest = Path.Combine(Root, "latest");
+        File.CreateSymbolicLink(latest, build);
+
+        Assert.Equal(latest, RelayFileScope.Require(latest, "localPath", [Root]));
+    }
+
+    [UnixFact]
+    public void A_link_loop_inside_a_root_is_refused_rather_than_followed_forever()
+    {
+        File.CreateSymbolicLink(Path.Combine(Root, "a"), Path.Combine(Root, "b"));
+        File.CreateSymbolicLink(Path.Combine(Root, "b"), Path.Combine(Root, "a"));
+
+        Assert.Throws<RelayException>(
+            () => RelayFileScope.Require(Path.Combine(Root, "a", "x"), "localPath", [Root]));
+    }
+}

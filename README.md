@@ -233,7 +233,8 @@ because an unverified copy is a different artifact from a verified one.
 **These are the first thing the relay does that touches local disk**, so the local side is confined the
 way the target side already confines `put_file` and `get_file` — reusing `FileScope`, not a second copy
 of it. `SYSDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of the
-per-user artifact folder plus, in a build tree, the tree the relay sits in; a `..` is judged by where it lands.
+per-user artifact folder plus, in a build tree, the tree the relay sits in; a `..` is judged by where it lands,
+and a link by where it leads.
 
 The per-user folder is `%TEMP%\sysdiag` on Windows and `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag`
 elsewhere. The build tree is added only when the relay runs from `artifacts/diagrelay` (or

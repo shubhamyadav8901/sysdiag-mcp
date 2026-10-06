@@ -157,8 +157,18 @@ internal static class RelayFileScope
     }
 
     /// <summary>
-    /// Canonicalises a local path and requires it to sit inside one of the roots.
+    /// Canonicalises a local path and requires it to sit inside one of the roots, both as spelled and with
+    /// every link along it followed.
     /// </summary>
+    /// <remarks>
+    /// <para>The spelled check alone let a link inside a root -- <c>root/keys</c> pointing at
+    /// <c>~/.ssh/id_ed25519</c>, or a linked directory a pull writes into -- carry the transfer anywhere
+    /// while the path in the request still looked confined. The roots are resolved the same way, so a
+    /// builds folder that is itself a link still admits what is inside it.</para>
+    /// <para>The walk is <see cref="PathScope.Walk(string)"/>, the one the server's put_file and get_file
+    /// use. A path it cannot judge -- a link loop, an unreadable link, a procfs magic link -- is refused,
+    /// not let through as spelled.</para>
+    /// </remarks>
     /// <param name="what">Named in the error, so the caller learns which argument was refused.</param>
     public static string Require(string? path, string what, IReadOnlyList<string> roots)
     {
@@ -174,6 +184,7 @@ internal static class RelayFileScope
 
         if (roots.Any(root => PathScope.IsUnder(full, root)))
         {
+            RequireRealPathInside(full, what, roots);
             return full;
         }
 
@@ -182,6 +193,52 @@ internal static class RelayFileScope
             $"({string.Join(", ", roots)}). Set {RootsVariable} to a semicolon-separated list of roots to " +
             "widen it -- deliberately, because this is the boundary that stops one tool call copying an " +
             "arbitrary local file onto a target.");
+    }
+
+    private static void RequireRealPathInside(string full, string what, IReadOnlyList<string> roots)
+    {
+        string real;
+        try
+        {
+            var (landed, crossesMagicLink) = PathScope.Walk(full);
+            if (crossesMagicLink)
+            {
+                throw new RelayException(
+                    $"The {what} '{full}' passes through a procfs link, so where it lands cannot be judged. " +
+                    "Name the file by a path without one.");
+            }
+
+            real = landed;
+        }
+        catch (FileTransferException ex)
+        {
+            throw new RelayException(ex.Message);
+        }
+
+        if (roots.Select(RealRoot).Any(root => root is not null && PathScope.IsUnder(real, root)))
+        {
+            return;
+        }
+
+        throw new RelayException(
+            $"The {what} '{full}' leads through a link to '{real}', which is outside the directories the " +
+            $"relay may touch on this machine ({string.Join(", ", roots)}). Name the file where it really " +
+            $"is, inside one of them, or set {RootsVariable} to include it -- deliberately, because a link " +
+            "inside a root is otherwise a way round this boundary.");
+    }
+
+    /// <summary>A root with its links followed, or null when it cannot be judged -- which then admits nothing.</summary>
+    private static string? RealRoot(string root)
+    {
+        try
+        {
+            var (real, crossesMagicLink) = PathScope.Walk(root);
+            return crossesMagicLink ? null : real;
+        }
+        catch (FileTransferException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
