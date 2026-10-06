@@ -161,9 +161,22 @@ public sealed record ServiceInstallOptions
 
             if (values.Contains(known, StringComparer.Ordinal))
             {
-                if (i + 1 >= args.Count)
+                // A value that is itself an option means the real value was dropped on the way here --
+                // Windows PowerShell 5.1 drops an empty string argument to a native exe, so `--token $tok`
+                // with an empty $tok arrives as `--token --allow-command-execution`. Taken as the value, that
+                // installed a guessable token AND, because flags are looked for anywhere, the grant beside
+                // it. "--" rather than HttpBind's single "-": every option here is spelled with two, and a
+                // password or a pinned token is free to begin with one.
+                var value = i + 1 < args.Count ? args[i + 1] : null;
+                if (string.IsNullOrWhiteSpace(value))
                 {
                     throw new ConfigurationException($"{known} needs a value. Nothing was changed.");
+                }
+
+                if (value.StartsWith("--", StringComparison.Ordinal))
+                {
+                    throw new ConfigurationException(
+                        $"{known} needs a value, and '{value}' is an option, not a value. Nothing was changed.");
                 }
 
                 i++;

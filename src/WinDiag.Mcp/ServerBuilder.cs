@@ -80,7 +80,8 @@ public static class ServerBuilder
                                       uninstall. Scoped to an address, never a subnet
           --no-restart-on-failure     Default is to let the SCM restart it if the process dies
 
-          An option not listed here is refused, and nothing is installed.
+          An option not listed here is refused, and nothing is installed. So is an option whose value
+          is missing, empty or another option (--token --read-only).
 
           The token is written to the service's own registry key, which the installer first restricts
           to SYSTEM and Administrators -- never to a machine-wide variable, which every local user can

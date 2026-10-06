@@ -739,8 +739,11 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--no-restart-on-failure` | Default is to let the SCM restart it if the process dies |
 
 An option not in this table is refused and nothing is installed, so a misspelt `--readonly` cannot
-quietly register a writable service. A server started by hand likewise takes only `--http`: its grants
-are the `WINDIAG_*` variables, and `--read-only` on that command line is refused rather than ignored.
+quietly register a writable service. So is an option whose value is missing, empty or another option:
+Windows PowerShell 5.1 drops an empty `$tok` from `--token $tok`, and the grant after it would otherwise
+have become the token and still been granted. A server started by hand likewise takes only `--http`:
+its grants are the `WINDIAG_*` variables, and `--read-only` on that command line is refused rather than
+ignored.
 
 **Flags and environment variables are two spellings of one setting.** Each grant flag becomes its
 `WINDIAG_*` variable (see [Configuration](#configuration)) in the service's own registry key —

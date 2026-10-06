@@ -279,6 +279,36 @@ public sealed class ServiceInstallationTests
         Assert.Contains("--token", ex.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("--token", "--allow-command-execution")]
+    [InlineData("--token", "--read-only")]
+    [InlineData("--artifacts", "--read-only")]
+    [InlineData("--password", "--allow-self-update")]
+    [InlineData("--token", "")]
+    [InlineData("--account", " ")]
+    public void Refuses_an_option_whose_value_was_dropped_rather_than_taking_the_next_option_as_it(string option, string next)
+    {
+        // Windows PowerShell 5.1 drops an empty string argument to a native exe, so `--token $tok` with
+        // an empty $tok arrives as `--token --allow-command-execution`: read that way, the install had
+        // command execution granted AND a bearer token anyone could guess. An empty value is refused too,
+        // because PowerShell 7 does pass it, and a token of "" is no token at all.
+        var ex = Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", option, next, "--service-name", "w"));
+
+        Assert.Contains($"{option} needs a value", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Still_accepts_a_value_that_merely_begins_with_a_single_dash()
+    {
+        // Only "--" marks an option: every option windiag has is spelled that way, while a password or a
+        // pinned token is free to begin with one dash.
+        var options = Parse("--http", "http://x:1", "--token", "-abc123", "--account", @".\diag", "--password", "-p4ss");
+
+        Assert.Equal("-abc123", options.Token);
+        Assert.Equal("-p4ss", options.Password);
+    }
+
     [Fact]
     public void Refuses_an_option_given_twice_rather_than_silently_using_the_first()
     {
