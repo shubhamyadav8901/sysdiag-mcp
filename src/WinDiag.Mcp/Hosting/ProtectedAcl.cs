@@ -156,10 +156,33 @@ public static class ProtectedAcl
 
         if (serviceAccount is not null && serviceAccount != LocalSystem)
         {
-            acl.AddAccessRule(new FileSystemAccessRule(serviceAccount, FileSystemRights.Modify, everything, PropagationFlags.None, AccessControlType.Allow));
+            acl.AddAccessRule(ServiceAccountRule(serviceAccount));
         }
 
         return acl;
+    }
+
+    /// <summary>The ACE <see cref="DirectoryAcl"/> gives a service account other than SYSTEM.</summary>
+    internal static FileSystemAccessRule ServiceAccountRule(SecurityIdentifier serviceAccount) =>
+        new(serviceAccount, FileSystemRights.Modify, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow);
+
+    /// <summary>Whether <paramref name="security"/> already lets the service account modify the directory and what it holds.</summary>
+    internal static bool GrantsServiceAccount(CommonObjectSecurity security, SecurityIdentifier serviceAccount) =>
+        security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .OfType<FileSystemAccessRule>()
+            .Any(rule => rule.AccessControlType == AccessControlType.Allow
+                         && serviceAccount.Equals(rule.IdentityReference)
+                         && (rule.FileSystemRights & FileSystemRights.Modify) == FileSystemRights.Modify
+                         && rule.InheritanceFlags == (InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit)
+                         && !rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly));
+
+    /// <summary>Adds <see cref="ServiceAccountRule"/> to a directory's ACL, leaving everything else as it is.</summary>
+    public static void GrantServiceAccount(string path, SecurityIdentifier serviceAccount)
+    {
+        var directory = new DirectoryInfo(path);
+        var acl = directory.GetAccessControl(AccessControlSections.Access);
+        acl.AddAccessRule(ServiceAccountRule(serviceAccount));
+        directory.SetAccessControl(acl);
     }
 
     /// <summary>The service key's DACL: SYSTEM and Administrators full control, nothing inherited.</summary>

@@ -56,8 +56,9 @@ function Protect-WinDiagDirectory {
     # inherited ACEs are replaced -- and an owner can always grant itself write access again. A user who
     # made C:\WinDiag first could otherwise keep a file in it that the staging copy then overwrites in
     # place, keeping their ownership, and rewrite it after the hash check. So every item is handed to
-    # Administrators and left with only what it inherits from here. A container is listed only after it
-    # is restricted, so nothing can be added to it between the listing and the reset.
+    # Administrators, and every explicit ACE it had is replaced by SYSTEM and Administrators only. A
+    # container is listed only after it is restricted, so nothing can be added to it between the listing
+    # and the reset.
     function Reset-WinDiagContents([string] $Directory) {
         foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force)) {
             # A junction or symbolic link would carry the reset to wherever it points -- a user's profile,
@@ -67,10 +68,25 @@ function Protect-WinDiagDirectory {
                        "Nothing beneath it was changed; remove it and run this again.")
             }
 
-            $itemAcl = if ($item.PSIsContainer) { New-Object System.Security.AccessControl.DirectorySecurity }
-                       else { New-Object System.Security.AccessControl.FileSecurity }
+            # Explicit SYSTEM and Administrators ACEs, and inheritance left on so a service account's ACE on
+            # the directory still reaches the item. Never a security object with no rules added: a fresh one
+            # holds .NET's null-DACL placeholder, which Set-Acl writes as "Everyone: Full Control" -- every
+            # file here, the server binary included, would become writable by every user.
+            if ($item.PSIsContainer) {
+                $itemAcl = New-Object System.Security.AccessControl.DirectorySecurity
+                $inherit = 'ContainerInherit, ObjectInherit'
+            }
+            else {
+                $itemAcl = New-Object System.Security.AccessControl.FileSecurity
+                $inherit = 'None'
+            }
             $itemAcl.SetOwner($administrators)
-            $itemAcl.SetAccessRuleProtection($false, $false)   # no explicit ACEs; inherit from the parent
+            $itemAcl.SetAccessRuleProtection($false, $false)
+            foreach ($sid in 'S-1-5-18', 'S-1-5-32-544') {   # SYSTEM, Administrators
+                $itemAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule (
+                    (New-Object System.Security.Principal.SecurityIdentifier $sid),
+                    'FullControl', $inherit, 'None', 'Allow')))
+            }
             Set-Acl -LiteralPath $item.FullName -AclObject $itemAcl
 
             if ($item.PSIsContainer) { Reset-WinDiagContents $item.FullName }

@@ -237,12 +237,33 @@ public static class ServiceInstaller
 
         // Installs made before the key was restricted are still out there, and this is the one command
         // an operator runs on a target to ask how it is set up.
+        // Restricted here rather than left to the service: status runs elevated, while a service running as
+        // NetworkService or LocalService cannot change its own key's DACL, so "restart it" would leave the
+        // token readable for those accounts.
         var exposed = ProtectedAcl.ServiceKeyExposures(serviceName);
-        Console.Error.WriteLine(exposed.Count == 0
-            ? "  key ACL   SYSTEM and Administrators only"
-            : $"  key ACL   WARNING: {string.Join("; ", exposed)}. Any local user may have the token: "
-              + "restart the service, which restricts its own key if --install-service registered it, "
-              + "and change the token.");
+        if (exposed.Count == 0)
+        {
+            Console.Error.WriteLine("  key ACL   SYSTEM and Administrators only");
+        }
+        else
+        {
+            string outcome;
+            try
+            {
+                ProtectedAcl.ProtectServiceKey(serviceName);
+                outcome = ProtectedAcl.ServiceKeyExposures(serviceName).Count == 0
+                    ? "Restricted it to SYSTEM and Administrators now"
+                    : "Tried to restrict it, but it is still exposed";
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+            {
+                outcome = $"Could not restrict it ({ex.Message})";
+            }
+
+            Console.Error.WriteLine(
+                $"  key ACL   WARNING: {string.Join("; ", exposed)}. {outcome}. Any local user may already have "
+                + "the token: change it - --uninstall-service, then --install-service --token-stdin with a new one.");
+        }
 
         foreach (var value in environment.Where(v => !v.StartsWith("WINDIAG_TOKEN=", StringComparison.OrdinalIgnoreCase)))
         {
@@ -266,6 +287,16 @@ public static class ServiceInstaller
         var exposures = Directory.Exists(path) ? ProtectedAcl.DirectoryExposures(path, account) : [];
         if (Directory.Exists(path) && exposures.Count == 0)
         {
+            // Already restricted -- by the bootstrap scripts, or an earlier LocalSystem install -- but a service
+            // running as another account still needs its own ACE, or the SCM cannot start the image and the
+            // service cannot write its artifacts. Added to the ACL as it is: nothing else needs rewriting.
+            if (account is not null && account != ProtectedAcl.LocalSystem
+                && !ProtectedAcl.GrantsServiceAccount(new DirectoryInfo(path).GetAccessControl(System.Security.AccessControl.AccessControlSections.Access), account))
+            {
+                ProtectedAcl.GrantServiceAccount(path, account);
+                Console.Error.WriteLine($"[windiag] gave {account.Translate(typeof(System.Security.Principal.NTAccount))} access to the {what} {path}.");
+            }
+
             return;
         }
 

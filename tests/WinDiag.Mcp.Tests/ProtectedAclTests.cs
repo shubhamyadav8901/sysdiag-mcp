@@ -150,4 +150,19 @@ public sealed class ProtectedAclTests
 
         Assert.Contains("root of a drive", ex.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void An_admin_only_directory_does_not_yet_grant_a_network_service_account_and_its_own_acl_does()
+    {
+        // The case the installer must not skip: the bootstrap scripts leave C:\WinDiag restricted to SYSTEM and
+        // Administrators, which reads as "not exposed", yet a NetworkService service could not start from it.
+        var networkService = new SecurityIdentifier(WellKnownSidType.NetworkServiceSid, null);
+        var adminOnly = ProtectedAcl.DirectoryAcl(serviceAccount: null, ownedByAdministrators: true);
+
+        Assert.False(ProtectedAcl.GrantsServiceAccount(adminOnly, networkService));
+        Assert.True(ProtectedAcl.GrantsServiceAccount(ProtectedAcl.DirectoryAcl(networkService, ownedByAdministrators: true), networkService));
+
+        adminOnly.AddAccessRule(ProtectedAcl.ServiceAccountRule(networkService));
+        Assert.True(ProtectedAcl.GrantsServiceAccount(adminOnly, networkService));
+    }
 }
