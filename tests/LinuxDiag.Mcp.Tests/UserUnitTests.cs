@@ -312,6 +312,22 @@ public sealed class UserUnitTests : IDisposable
         Assert.False(LinuxAutostartInspector.Hidden(verified, new AutostartQuery(UnpackagedOnly: true)));
     }
 
+    [UnixTheory]
+    [InlineData("[x]\nLD_PRELOAD=/home/u/e.so\n")]
+    [InlineData("X\\\nLD_PRELOAD=/home/u/e.so\n")]
+    [InlineData("# a comment that ends in a backslash \\\nLD_PRELOAD=/home/u/e.so\n")]
+    public void An_environment_d_file_is_read_as_systemd_reads_it_so_no_line_before_a_variable_hides_it(string text)
+    {
+        // Re-check: environment.d was read as a unit file, so one "[x]" line made everything after it a section's
+        // and the file no entry at all -- while systemd's env-file parser, which has no sections, set LD_PRELOAD in
+        // every unit. A line ending in a backslash hid the next line the same way.
+        Write(Path.Combine(Home, ".config/environment.d/k.conf"), text);
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Contains("sets LD_PRELOAD for every unit", entry.Description, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public void An_environment_file_that_sets_nothing_or_is_masked_is_not_an_entry()
     {
@@ -485,5 +501,23 @@ public sealed class UserUnitTests : IDisposable
         Assert.Equal(["/c", "/d\\\\"], UnitFile.Values(texts, "Service", "ExecStart"));
         Assert.Equal(["/a", "/b    two"], UnitFile.Values(texts.Take(1), "Service", "ExecStart"));
         Assert.Null(UnitFile.Last([], "Timer", "Unit"));
+    }
+
+    [Fact]
+    public void Environment_file_names_are_the_ones_systemds_env_file_parser_sets()
+    {
+        // Each file was handed to a live systemd 252's environment.d generator; it set exactly A1, A2, A4, A6, A8, A9,
+        // A11, A12 and B12. A3 follows a comment ending in a backslash, which 252 still continued onto the next line
+        // and 254 and later do not: it is reported, as the newer systemd sets it. "export A7" is pushed by the parser
+        // and then refused as a name -- that filter is the caller's. An empty value sets nothing.
+        string[] files =
+        [
+            "[x]\nA1=1\n", "X\\\nA2=1\n", "# c \\\nA3=1\n", "A4=\"x\nB4=y\"\n", "A5=\nA5b=\"\"\n", "  A6 = v\n",
+            "export A7=1\n", "A8='a'b\nA9=a\\\nB9=c\n", "A10", "A11=1", "A12=1\r\nB12=2\r\n",
+        ];
+
+        Assert.Equal(
+            ["A1", "A2", "A3", "A4", "A6", "export A7", "A8", "A9", "A11", "A12", "B12"],
+            files.SelectMany(UnitFile.EnvironmentFileKeys));
     }
 }

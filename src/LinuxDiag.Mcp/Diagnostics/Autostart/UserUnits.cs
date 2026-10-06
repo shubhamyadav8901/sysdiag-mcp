@@ -173,7 +173,7 @@ internal sealed class UserUnits(
             var reaches = new List<string>();
             if (name.StartsWith("environment.d/", StringComparison.Ordinal))
             {
-                Reach(reaches, UnitFile.Keys(text, null), "for every unit this user's systemd manager starts");
+                Reach(reaches, UnitFile.EnvironmentFileKeys(text), "for every unit this user's systemd manager starts");
             }
             else
             {

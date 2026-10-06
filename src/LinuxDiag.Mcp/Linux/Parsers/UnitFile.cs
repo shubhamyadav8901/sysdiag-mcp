@@ -42,11 +42,195 @@ public static class UnitFile
     }
 
     /// <summary>
-    /// The names a file assigns in a section -- or, for a null section, before any section header, which is how an
-    /// environment.d file assigns them -- each once, in the order first assigned.
+    /// The names an environment file -- environment.d/*.conf -- assigns a value, in file order, as systemd's
+    /// env-file parser (parse_env_file_internal) reads them. Names are as written; whether systemd accepts one as a
+    /// variable name is the caller's check.
     /// </summary>
-    public static IReadOnlyList<string> Keys(string text, string? section) =>
-        Assignments(text ?? string.Empty).Where(a => a.Section == section).Select(a => a.Key).Distinct(StringComparer.Ordinal).ToList();
+    /// <remarks>
+    /// <para>Not <see cref="Values"/>' unit-file reader: this format has no sections and no line continuations
+    /// outside a value. Read as a unit file, one "[x]" line put everything after it in a section and hid it, while
+    /// systemd -- which drops a line without '=' -- set every variable below it; and "X" continued onto the next
+    /// line, joining a real assignment to a name systemd threw away.</para>
+    /// <para>A quoted value may span lines, so a line inside one is not an assignment. An empty value sets nothing
+    /// ("invalid syntax, ignoring"). A comment ending in a backslash is followed by an ordinary line, as in systemd
+    /// 254 and later; 252 still continued the comment, so on older systems a name may be reported that is not set,
+    /// never the reverse. Values are not kept: these files hold tokens as often as paths.</para>
+    /// </remarks>
+    public static IReadOnlyList<string> EnvironmentFileKeys(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        const string whitespace = " \t\n\r";
+        var keys = new List<string>();
+        var key = new System.Text.StringBuilder();
+        var keyTrailingWhitespace = -1;
+        var hasValue = false;
+        var state = EnvState.PreKey;
+
+        foreach (var c in text)
+        {
+            var newline = c is '\n' or '\r';
+            switch (state)
+            {
+                case EnvState.PreKey:
+                    if (c is '#' or ';')
+                    {
+                        state = EnvState.Comment;
+                    }
+                    else if (!whitespace.Contains(c, StringComparison.Ordinal))
+                    {
+                        state = EnvState.Key;
+                        keyTrailingWhitespace = -1;
+                        key.Append(c);
+                    }
+
+                    break;
+
+                case EnvState.Key:
+                    if (newline)
+                    {
+                        state = EnvState.PreKey;
+                        key.Clear();
+                    }
+                    else if (c == '=')
+                    {
+                        state = EnvState.PreValue;
+                    }
+                    else
+                    {
+                        if (!whitespace.Contains(c, StringComparison.Ordinal))
+                        {
+                            keyTrailingWhitespace = -1;
+                        }
+                        else if (keyTrailingWhitespace < 0)
+                        {
+                            keyTrailingWhitespace = key.Length;
+                        }
+
+                        key.Append(c);
+                    }
+
+                    break;
+
+                case EnvState.PreValue:
+                    if (newline)
+                    {
+                        state = EnvState.PreKey;
+                        Push();
+                    }
+                    else if (c == '\'')
+                    {
+                        state = EnvState.SingleQuoted;
+                    }
+                    else if (c == '"')
+                    {
+                        state = EnvState.DoubleQuoted;
+                    }
+                    else if (c == '\\')
+                    {
+                        state = EnvState.ValueEscape;
+                    }
+                    else if (!whitespace.Contains(c, StringComparison.Ordinal))
+                    {
+                        state = EnvState.Value;
+                        hasValue = true;
+                    }
+
+                    break;
+
+                case EnvState.Value:
+                    if (newline)
+                    {
+                        state = EnvState.PreKey;
+                        Push();
+                    }
+                    else if (c == '\\')
+                    {
+                        state = EnvState.ValueEscape;
+                    }
+
+                    break;
+
+                case EnvState.ValueEscape:
+                    // An escaped newline joins the next line to the value, adding nothing.
+                    state = EnvState.Value;
+                    hasValue |= !newline;
+                    break;
+
+                case EnvState.SingleQuoted:
+                    if (c == '\'')
+                    {
+                        state = EnvState.PreValue;
+                    }
+                    else
+                    {
+                        hasValue = true;
+                    }
+
+                    break;
+
+                case EnvState.DoubleQuoted:
+                    if (c == '"')
+                    {
+                        state = EnvState.PreValue;
+                    }
+                    else if (c == '\\')
+                    {
+                        state = EnvState.DoubleQuotedEscape;
+                    }
+                    else
+                    {
+                        hasValue = true;
+                    }
+
+                    break;
+
+                case EnvState.DoubleQuotedEscape:
+                    state = EnvState.DoubleQuoted;
+                    hasValue |= c != '\n';
+                    break;
+
+                case EnvState.Comment:
+                    if (c == '\\')
+                    {
+                        state = EnvState.CommentEscape;
+                    }
+                    else if (newline)
+                    {
+                        state = EnvState.PreKey;
+                    }
+
+                    break;
+
+                case EnvState.CommentEscape:
+                    state = newline ? EnvState.PreKey : EnvState.Comment;
+                    break;
+            }
+        }
+
+        if (state is not (EnvState.PreKey or EnvState.Key or EnvState.Comment or EnvState.CommentEscape))
+        {
+            Push();
+        }
+
+        return keys;
+
+        void Push()
+        {
+            if (hasValue)
+            {
+                keys.Add(keyTrailingWhitespace < 0 ? key.ToString() : key.ToString(0, keyTrailingWhitespace));
+            }
+
+            key.Clear();
+            hasValue = false;
+        }
+    }
+
+    private enum EnvState
+    {
+        PreKey, Key, PreValue, Value, ValueEscape, SingleQuoted, DoubleQuoted, DoubleQuotedEscape, Comment, CommentEscape,
+    }
 
     /// <summary>The variable names in a systemd environment list: <c>A=1 "B=two words" 'C=3'</c> gives A, B, C.</summary>
     public static IEnumerable<string> EnvironmentNames(string value)
