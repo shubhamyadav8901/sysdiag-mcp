@@ -114,6 +114,11 @@ public sealed class ActivityQueryTools
         ArgumentException.ThrowIfNullOrWhiteSpace(capturePath);
         LocalPathGuard.RequireLocal(capturePath, nameof(capturePath), _files);
 
+        // get_file's rule, not a looser one of its own: this reads a file's contents as SYSTEM and is
+        // registered on a read-only server. A capture is written to the artifact directory, so a real
+        // one is always inside it.
+        var (fullPath, _) = ReadScope.Require(capturePath, "capture path", _files);
+
         var filter = new ActivityFilter(
             ProcessName: processName,
             ProcessId: processId,
@@ -123,7 +128,7 @@ public sealed class ActivityQueryTools
             MaxEvents: Math.Clamp(maxEvents, 1, _options.MaxResults),
             DetailContains: detailContains);
 
-        var result = _activity.Query(capturePath, filter, cancellationToken);
+        var result = _activity.Query(fullPath, filter, cancellationToken);
 
         // Pass the server's own ceiling and the caller's raw request so the summary can say when
         // maxEvents was clamped and stop advising "raise maxEvents" when it would change nothing.
