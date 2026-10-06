@@ -93,7 +93,8 @@ public static class ServerBuilder
                                                   always available on a writable server, scoped to the
                                                   artifact directory)
           WINDIAG_ALLOW_ARBITRARY_READ            1/true to let the read tools open files outside those
-                                                  directories (default: false). WINDIAG_READ_ONLY does
+                                                  directories, and any tool open a network share or
+                                                  device path (default: false). WINDIAG_READ_ONLY does
                                                   NOT override this one -- reading is what a read-only
                                                   server is for, so --read-only --allow-arbitrary-read
                                                   is the deliberate combination for a look-but-do-not-

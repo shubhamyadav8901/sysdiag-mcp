@@ -62,6 +62,13 @@ internal static class FileScope
     internal static (WriteScope Scope, bool InServerDirectory) Classify(
         string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch)
     {
+        // A share or a device is never owned, and walking it to find out is itself the SMB connection
+        // that hands the machine account's credentials to whoever named the host.
+        if (NetworkPath.IsNetworkOrDevice(fullPath))
+        {
+            return (WriteScope.Arbitrary, false);
+        }
+
         var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink);
         if (crossesMagicLink)
         {

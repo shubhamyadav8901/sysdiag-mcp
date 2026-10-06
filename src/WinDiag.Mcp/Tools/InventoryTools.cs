@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Files;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics.Network;
 using WinDiag.Mcp.Diagnostics.Signatures;
@@ -28,11 +29,13 @@ public sealed class InventoryTools
 {
     private readonly INetworkInspector _network;
     private readonly ISignatureInspector _signatures;
+    private readonly FileTransferOptions _files;
 
-    public InventoryTools(INetworkInspector network, ISignatureInspector signatures)
+    public InventoryTools(INetworkInspector network, ISignatureInspector signatures, FileTransferOptions files)
     {
         _network = network;
         _signatures = signatures;
+        _files = files;
     }
 
     [McpServerTool(
@@ -90,6 +93,12 @@ public sealed class InventoryTools
         if (paths.Length == 0)
         {
             throw new ArgumentException("Provide at least one file path.", nameof(paths));
+        }
+
+        // Every path is checked before any is inspected, so a refused call has opened nothing at all.
+        foreach (var path in paths)
+        {
+            LocalPathGuard.RequireLocal(path, nameof(paths), _files);
         }
 
         var result = _signatures.Inspect(paths, cancellationToken);

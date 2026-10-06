@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Files;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Activity;
@@ -65,11 +66,13 @@ public sealed class ActivityQueryTools
 {
     private readonly IActivityInspector _activity;
     private readonly WinDiagOptions _options;
+    private readonly FileTransferOptions _files;
 
-    public ActivityQueryTools(IActivityInspector activity, WinDiagOptions options)
+    public ActivityQueryTools(IActivityInspector activity, WinDiagOptions options, FileTransferOptions files)
     {
         _activity = activity;
         _options = options;
+        _files = files;
     }
 
     [McpServerTool(
@@ -109,6 +112,7 @@ public sealed class ActivityQueryTools
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(capturePath);
+        LocalPathGuard.RequireLocal(capturePath, nameof(capturePath), _files);
 
         var filter = new ActivityFilter(
             ProcessName: processName,
