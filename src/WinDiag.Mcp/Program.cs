@@ -26,23 +26,39 @@ if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--servic
 {
     try
     {
+        // Before elevation, so a typo is reported here rather than in a UAC window that closes on exit.
+        ServiceInstallOptions.CheckArguments(args);
+
         // The SCM refuses an unelevated caller, so ask Windows rather than failing at the first
         // sc.exe call with an access-denied nobody can act on.
         if (!ServiceInstaller.IsElevated())
         {
+            // The elevated copy is started through ShellExecute, which cannot hand it this process's
+            // standard input: it would read an empty stdin and refuse, after the operator had already
+            // approved the prompt.
+            if (args.Any(a => string.Equals(a, "--token-stdin", StringComparison.OrdinalIgnoreCase)))
+            {
+                Console.Error.WriteLine(
+                    "[windiag] --token-stdin needs an already-elevated terminal: standard input cannot be "
+                    + "passed through the UAC prompt. Nothing was changed.");
+                return 3;
+            }
+
             Console.Error.WriteLine("[windiag] this needs administrator rights; requesting elevation...");
             return ServiceInstaller.RelaunchElevated(args);
         }
 
         if (args.Any(a => a is "--service-status"))
         {
-            return ServiceInstaller.Status(ServiceName(args));
+            return ServiceInstaller.Status(ServiceInstallOptions.ManagedServiceName(args));
         }
 
         if (args.Any(a => a is "--uninstall-service"))
         {
-            return ServiceInstaller.Uninstall(
-                new ServiceInstallOptions { Name = ServiceName(args), Bind = "http://unused", Token = "unused" });
+            return ServiceInstaller.Uninstall(new ServiceInstallOptions
+            {
+                Name = ServiceInstallOptions.ManagedServiceName(args), Bind = "http://unused", Token = "unused"
+            });
         }
 
         return ServiceInstaller.Install(ServiceInstallOptions.Parse(args));
@@ -73,23 +89,11 @@ if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--servic
     }
 }
 
-static string ServiceName(string[] arguments)
-{
-    for (var i = 0; i < arguments.Length - 1; i++)
-    {
-        if (string.Equals(arguments[i], "--service-name", StringComparison.OrdinalIgnoreCase))
-        {
-            return arguments[i + 1];
-        }
-    }
-
-    return "windiag";
-}
-
 WinDiagOptions options;
 string? bind;
 try
 {
+    CommandLine.RejectUnknownServerArguments(args);
     options = WinDiagOptions.FromEnvironment();
     bind = CommandLine.ResolveHttpBind(args, options);
 }

@@ -717,7 +717,8 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--start auto\|delayed\|demand` | Default `auto` |
 | `--account <spec>` | `LocalSystem` (default), `NetworkService`, `LocalService`, or `DOMAIN\user` with `--password` |
 | `--password <value>` | Required for an account that is not built in |
-| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
+| `--token-stdin` | Reads the token from standard input, so it never appears on the target's command line. Needs an already-elevated shell: stdin cannot cross the UAC prompt. The bootstrap scripts use this |
+| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call. Prefer `--token-stdin`: a value here is in the installer's command line, which process auditing records |
 | `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it |
 | `--allow-self-update` | Registers `update_self` |
 | `--allow-command-execution` | Registers `run_command` |
@@ -726,6 +727,10 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--read-only` | Drops every state-changing tool |
 | `--firewall-from <address>` | Opens the bind port inbound from one address, removed on uninstall. An address, never a subnet |
 | `--no-restart-on-failure` | Default is to let the SCM restart it if the process dies |
+
+An option not in this table is refused and nothing is installed, so a misspelt `--readonly` cannot
+quietly register a writable service. A server started by hand likewise takes only `--http`: its grants
+are the `WINDIAG_*` variables, and `--read-only` on that command line is refused rather than ignored.
 
 **Flags and environment variables are two spellings of one setting.** Each grant flag becomes its
 `WINDIAG_*` variable (see [Configuration](#configuration)) in the service's own registry key —
@@ -871,9 +876,11 @@ level through an ordinary tool call. The token is the whole boundary.
   management segment you already trust, and do not route it across one you do not. If you need
   confidentiality on the wire today, tunnel it — WireGuard, SSH, an mTLS proxy — rather than assuming
   the port being scoped is enough.
-- **The token is never accepted as a command-line argument.** This server's own `process_list` shows
-  command lines to every local user, so a `--token` switch would publish the credential to precisely
-  the audience it excludes. Environment variable only.
+- **The running server never takes the token as a command-line argument.** This server's own
+  `process_list` shows command lines to every local user, so a `--token` switch would publish the
+  credential to precisely the audience it excludes. Environment variable only. The installer's
+  `--token` is the one exception and is visible while the installer runs; `--token-stdin` is not, and
+  is what the bootstrap scripts use.
 - **There is no default bind address.** `--http` with no address and no `WINDIAG_HTTP_BIND` is a
   startup failure, not a guess.
 - **A hostname is a wildcard bind, and is warned about as one.** Kestrel's binder falls back to

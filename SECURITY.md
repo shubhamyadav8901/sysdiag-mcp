@@ -41,9 +41,11 @@ intended, documented, and the reason both are off unless a deployment explicitly
 The server runs elevated, so a local unprivileged user is inside the threat model too. Things that
 follow from that, and which are deliberate rather than oversights:
 
-- **The token is read from the environment only, never a command-line argument.** Each server's own
-  `process_list` shows command lines to every local user on the machine; a token passed as an
-  argument would be readable by the people it is meant to exclude.
+- **A running server reads the token from the environment only, never a command-line argument.** Each
+  server's own `process_list` shows command lines to every local user on the machine; a token passed as
+  an argument would be readable by the people it is meant to exclude. The installers accept `--token`
+  for convenience, which is visible while the installer runs; `--token-stdin` is not, and is what every
+  bootstrap script uses.
 - **As a Windows service, the token belongs in the service's own registry `Environment` value**, which
   is ACL'd to SYSTEM and Administrators. A machine-wide environment variable is readable by every local
   user and is *not* an acceptable substitute. LinuxDiag and MacDiag keep it in a root-owned `0600` env
