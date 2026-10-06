@@ -322,12 +322,16 @@ public sealed record ServiceInstallOptions
             : token;
     }
 
-    // What a directory windiag was deployed into holds: the server and its staged successor, the
-    // Sysinternals tools found beside it, deploy-target's manifest, the Procmon filter override an
-    // operator may put there, and bootstrap-target's two files that exist only while the installer runs.
+    // What a directory windiag was deployed into holds: the server and its staged successor, what the
+    // release zip packs beside it (its hash and the licence notices -- extracting the zip into C:\WinDiag
+    // is the documented install, and was refused while these were missing here), the Sysinternals tools
+    // found beside it, deploy-target's manifest, the Procmon filter override an operator may put there,
+    // and bootstrap-target's two files that exist only while the installer runs. A test reads the release
+    // workflow, so a file added to the zip without being added here fails the suite.
     private static readonly string[] ServerDirectoryFiles =
     [
-        "WinDiag.Mcp*", "handle*.exe", "Procmon*.exe", "autorunsc*.exe", "windiag-staged.json",
+        "WinDiag.Mcp*", "SHA256.txt", "LICENSE", "THIRD-PARTY-NOTICES.md",
+        "handle*.exe", "Procmon*.exe", "autorunsc*.exe", "windiag-staged.json",
         "windiag.pmc", "install-token.tmp", "install-windiag.cmd"
     ];
 
