@@ -20,7 +20,7 @@ of them behind one MCP registration. Most of this README is about WinDiag, the W
 
 Download the zip for each machine from the [latest release](https://github.com/shubhamyadav8901/sysdiag-mcp/releases/latest):
 `windiag-win-x64` or `windiag-win-x86`, `linuxdiag-linux-x64`, `macdiag-osx-arm64` or `macdiag-osx-x64`, and `diagrelay-<platform>` for the
-relay. Each carries a `SHA256.txt`. Every binary is self-contained, so no .NET install is needed.
+relay. Each carries a `SHA256.txt`, the licence and `THIRD-PARTY-NOTICES.md`. Every binary is self-contained, so no .NET install is needed.
 
 To diagnose the machine you are on, register its server with Claude Code over stdio:
 

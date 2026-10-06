@@ -249,13 +249,23 @@ jobs:
 
       # Artifacts lose the executable bit on the way through, and zip keeps whatever mode it finds: without
       # this, every Linux and macOS binary would arrive unable to run.
+      #
+      # Every zip carries LICENSE and THIRD-PARTY-NOTICES.md: each binary is self-contained, so it
+      # redistributes the .NET runtime and the MCP SDK, whose licences require their notices to travel with
+      # it. Copied in after the chmod so they stay plain files, and checked for in each zip afterwards,
+      # since a zip missing them looks no different from one that has them.
       - name: Package
         run: |
           cd dist
           find . -type f ! -name '*.txt' ! -name '*.exe' -exec chmod 755 {} +
           for dir in */; do
             name=${dir%/}
-            (cd "$name" && zip -q "../${name}-v${{ steps.version.outputs.version }}.zip" *)
+            zipfile="${name}-v${{ steps.version.outputs.version }}.zip"
+            install -m 644 ../LICENSE ../THIRD-PARTY-NOTICES.md "$name"/
+            (cd "$name" && zip -q "../${zipfile}" *)
+            for notice in LICENSE THIRD-PARTY-NOTICES.md; do
+              unzip -Z1 "$zipfile" | grep -qx "$notice" || { echo "::error::$zipfile has no $notice"; exit 1; }
+            done
           done
           sha256sum *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
