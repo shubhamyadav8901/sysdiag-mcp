@@ -72,7 +72,7 @@ public sealed class HandleExeInspector : IHandleInspector
         arguments.Add(ToolArgument.Caller(nameFragment));
 
         return await RunAndParseAsync(
-                arguments, nameFragment, includeAllObjectTypes, processScoped: false, cancellationToken)
+                arguments, nameFragment, includeAllObjectTypes, scopedTo: null, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -106,7 +106,7 @@ public sealed class HandleExeInspector : IHandleInspector
                 arguments,
                 $"PID {processId}",
                 includeAllObjectTypes,
-                processScoped: true,
+                scopedTo: processId,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -115,9 +115,11 @@ public sealed class HandleExeInspector : IHandleInspector
         IReadOnlyList<ToolArgument> arguments,
         string query,
         bool includeAllObjectTypes,
-        bool processScoped,
+        int? scopedTo,
         CancellationToken cancellationToken)
     {
+        var processScoped = scopedTo is not null;
+
         var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
 
         var result = await _runner
@@ -139,7 +141,8 @@ public sealed class HandleExeInspector : IHandleInspector
                 query, [], _privileges.IsElevated, false, 0, includeAllObjectTypes, processScoped);
         }
 
-        var entries = HandleCsvParser.Parse(result.StandardOutput);
+        var parsed = HandleCsvParser.Parse(result.StandardOutput, scopedTo);
+        var entries = parsed.Entries;
         var truncated = entries.Count > _options.MaxResults;
 
         return new HandleSearchResult(
@@ -149,6 +152,7 @@ public sealed class HandleExeInspector : IHandleInspector
             Truncated: truncated,
             TotalMatched: entries.Count,
             IncludedAllObjectTypes: includeAllObjectTypes,
-            ProcessScoped: processScoped);
+            ProcessScoped: processScoped,
+            UnparsedRows: parsed.UnparsedRows);
     }
 }

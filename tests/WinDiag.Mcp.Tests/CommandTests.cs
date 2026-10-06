@@ -31,6 +31,44 @@ public sealed class CommandShellParsingTests
     }
 }
 
+/// <summary>
+/// The command line each shell is handed, checked without starting anything.
+/// </summary>
+/// <remarks>
+/// Pinned exactly because the bug was in the encoding, not in what reached the runner: ArgumentList
+/// escaped every quote as <c>\"</c>, which is how the C runtime unescapes, and cmd.exe is not a C
+/// runtime program -- it saw the backslashes.
+/// </remarks>
+public sealed class WindowsShellSetTests
+{
+    [Fact]
+    public void Hands_cmd_the_command_verbatim_inside_one_outer_pair_of_quotes()
+    {
+        var start = new System.Diagnostics.ProcessStartInfo();
+
+        new WindowsShellSet().Apply(start, WindowsShellSet.Cmd, "\"C:\\Program Files\\App\\app.exe\" --version");
+
+        Assert.Equal("cmd.exe", start.FileName);
+        Assert.Equal("/d /s /c \"\"C:\\Program Files\\App\\app.exe\" --version\"", start.Arguments);
+
+        // Both may not be set at once, and ArgumentList is the one that re-escapes.
+        Assert.Empty(start.ArgumentList);
+    }
+
+    [Fact]
+    public void Leaves_powershell_on_the_argument_list_whose_escaping_it_does_understand()
+    {
+        // powershell.exe parses its command line the C runtime's way, so ArgumentList's \" is correct
+        // for it -- this pins that the cmd fix did not drag PowerShell onto a raw string as well.
+        var start = new System.Diagnostics.ProcessStartInfo();
+
+        new WindowsShellSet().Apply(start, WindowsShellSet.PowerShell, "Write-Output \"a b\"");
+
+        Assert.Equal(["-NoProfile", "-NonInteractive", "-Command", "Write-Output \"a b\""], start.ArgumentList);
+        Assert.Equal(string.Empty, start.Arguments);
+    }
+}
+
 public sealed class CommandRenderingTests
 {
     private static CommandResult Result(
@@ -125,6 +163,71 @@ public sealed class CommandRunnerTests
 
         Assert.Contains("one", r.StandardOutput);
         Assert.Contains("two", r.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Passes_cmd_a_quoted_argument_unchanged()
+    {
+        // Every quote used to reach cmd as \" -- ArgumentList's C-runtime escaping, which cmd does not
+        // understand -- so `echo "a b"` printed \"a b\" and a quoted path was "not recognized".
+        var r = await Runner().RunAsync(
+            new CommandRequest("echo \"a b\"", WindowsShellSet.Cmd), CancellationToken.None);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal("\"a b\"", r.StandardOutput.Trim());
+    }
+
+    [Fact]
+    public async Task Runs_a_quoted_program_path_containing_spaces_with_its_own_quoted_argument()
+    {
+        // The everyday Windows case, and the one cmd's quote stripping mangles without /s: the line
+        // both starts with a quote and holds more than two, so cmd would strip the first and the last
+        // and run `C:\...\print args.cmd" "x y` instead.
+        var directory = Path.Combine(Path.GetTempPath(), $"windiag cmd {Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var script = Path.Combine(directory, "print args.cmd");
+        File.WriteAllText(script, "@echo windiag-marker %1\r\n");
+
+        try
+        {
+            var r = await Runner().RunAsync(
+                new CommandRequest($"\"{script}\" \"x y\"", WindowsShellSet.Cmd), CancellationToken.None);
+
+            Assert.Equal(0, r.ExitCode);
+            Assert.Contains("windiag-marker \"x y\"", r.StandardOutput);
+
+            var listing = await Runner().RunAsync(
+                new CommandRequest($"dir \"{directory}\"", WindowsShellSet.Cmd), CancellationToken.None);
+
+            Assert.Equal(0, listing.ExitCode);
+            Assert.Contains("print args.cmd", listing.StandardOutput);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Runs_a_quoted_comspec_at_the_start_of_the_line()
+    {
+        var r = await Runner().RunAsync(
+            new CommandRequest("\"%ComSpec%\" /c echo windiag-ok", WindowsShellSet.Cmd), CancellationToken.None);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.Contains("windiag-ok", r.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Passes_powershell_a_double_quoted_string_unchanged()
+    {
+        var r = await Runner().RunAsync(
+            new CommandRequest("Write-Output \"a b\"; Write-Output 'say \"hi\"'", WindowsShellSet.PowerShell),
+            CancellationToken.None);
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.Contains("a b", r.StandardOutput);
+        Assert.Contains("say \"hi\"", r.StandardOutput);
     }
 
     [Fact]

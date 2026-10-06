@@ -24,6 +24,13 @@ namespace WinDiag.Mcp.Diagnostics.Handles;
 /// The name-search indices were applied to a <c>-p</c> capture whose 7-field rows comfortably passed
 /// a "long enough" check, and every field would have been attributed one column out -- user name
 /// reported as the object type, handle value as the user -- with nothing in the result to show it.</para>
+/// <para><strong>Within a layout, fields are found by shape, not by position.</strong> handle.exe
+/// quotes nothing, and a comma is legal in an image name as well as in an object name. Read by fixed
+/// position, <c>a,b.exe</c> put "b.exe" in the PID column and the row was skipped, so an elevated
+/// search answered "nothing matched"; an image named <c>x,668,File,SYSTEM,0x4,svc.exe</c> pinned the
+/// holder on PID 668. Rows are now anchored on the run of fields a real row must have -- a decimal PID
+/// (the one asked for, under <c>-p</c>), an object type, and a <c>0x</c> handle value -- and a row that
+/// fits no reading, or more than one, is counted rather than dropped or guessed at.</para>
 /// </remarks>
 internal static class HandleCsvParser
 {
@@ -52,15 +59,21 @@ internal static class HandleCsvParser
     private static readonly Layout ProcessScoped =
         new("process scope", Process: 0, Pid: 1, Type: 4, User: 2, Handle: 3, ObjectName: 6, MinimumFields: 7);
 
-    public static IReadOnlyList<HandleEntry> Parse(string csv)
+    /// <param name="processId">
+    /// The PID handle.exe was scoped to with <c>-p</c>, when it was. It anchors each row, so a PID spelled
+    /// out inside an image name can never be taken for it.
+    /// </param>
+    public static HandleParseResult Parse(string csv, int? processId = null)
     {
         if (string.IsNullOrWhiteSpace(csv))
         {
-            return [];
+            return new HandleParseResult([], 0);
         }
 
         var entries = new List<HandleEntry>();
+        var unparsed = 0;
         Layout? layout = null;
+        var expectedPid = processId?.ToString(CultureInfo.InvariantCulture);
 
         using var reader = new StringReader(csv);
         string? line;
@@ -87,26 +100,96 @@ internal static class HandleCsvParser
                 continue;
             }
 
-            if (!int.TryParse(
-                    fields[layout.Pid].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid))
+            // Long enough to be a row, so a row that cannot be read is a holder this result would
+            // otherwise silently omit -- counted, so the caller is never told "nothing matched" over it.
+            if (Anchor(fields, layout, expectedPid) is not { } pidIndex)
             {
+                unparsed++;
                 continue;
             }
 
+            int Column(int offset) => pidIndex + offset - layout.Pid;
+
             entries.Add(new HandleEntry(
-                ProcessName: fields[layout.Process].Trim(),
-                ProcessId: pid,
-                Type: fields[layout.Type].Trim(),
-                User: NullIfEmpty(fields[layout.User]),
-                HandleValue: fields[layout.Handle].Trim(),
+                ProcessName: string.Join(',', fields.Take(pidIndex)).Trim(),
+                ProcessId: int.Parse(fields[pidIndex].Trim(), NumberStyles.None, CultureInfo.InvariantCulture),
+                Type: fields[Column(layout.Type)].Trim(),
+                User: NullIfEmpty(fields[Column(layout.User)]),
+                HandleValue: fields[Column(layout.Handle)].Trim(),
 
                 // Paths carry a trailing space in the captured output, and a path may itself contain
                 // commas that handle.exe does not quote, so everything from the name column onwards
                 // belongs to the name. The name is last in both layouts, so this is safe in both.
-                Name: string.Join(',', fields.Skip(layout.ObjectName)).TrimEnd()));
+                Name: string.Join(',', fields.Skip(Column(layout.ObjectName))).TrimEnd()));
         }
 
-        return entries;
+        return new HandleParseResult(entries, unparsed);
+    }
+
+    /// <summary>
+    /// Finds the PID column of a row whose image name may have pushed it right, or null when the row
+    /// fits no reading or more than one.
+    /// </summary>
+    /// <remarks>
+    /// Every position is tried and every fit kept, because the first fit is the attacker's: a name built
+    /// as <c>x,668,File,SYSTEM,0x4,svc.exe</c> fits at its own fake PID before the real one. Nothing in the
+    /// row can settle two fits -- the forged reading's name column always contains the real one, so not
+    /// even the search term separates them -- and an unreadable row is a better answer than a wrong PID.
+    /// </remarks>
+    private static int? Anchor(List<string> fields, Layout layout, string? expectedPid)
+    {
+        int? found = null;
+
+        // The name is last and may be empty, but its column must exist.
+        var lastStart = fields.Count - (layout.MinimumFields - layout.Pid);
+
+        for (var pid = layout.Pid; pid <= lastStart; pid++)
+        {
+            var offset = pid - layout.Pid;
+
+            var fits = (expectedPid is null
+                           ? IsPid(fields[pid])
+                           : string.Equals(fields[pid].Trim(), expectedPid, StringComparison.Ordinal))
+                       && IsObjectType(fields[layout.Type + offset])
+                       && IsHandleValue(fields[layout.Handle + offset]);
+
+            if (!fits)
+            {
+                continue;
+            }
+
+            if (found is not null)
+            {
+                return null;
+            }
+
+            found = pid;
+        }
+
+        return found;
+    }
+
+    private static bool IsPid(string field)
+    {
+        var value = field.Trim();
+        return value.Length is > 0 and <= 10 && value.All(char.IsAsciiDigit)
+               && int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out _);
+    }
+
+    /// <summary>File, Key, Section, ALPC Port, WindowStation...: letters, digits and the odd space.</summary>
+    private static bool IsObjectType(string field)
+    {
+        var value = field.Trim();
+        return value.Length > 0 && char.IsAsciiLetter(value[0])
+               && value.All(c => char.IsAsciiLetterOrDigit(c) || c == ' ');
+    }
+
+    /// <summary>handle.exe prints handle values as <c>0x</c> and hex digits: <c>0x0000068C</c>.</summary>
+    private static bool IsHandleValue(string field)
+    {
+        var value = field.Trim();
+        return value.Length > 2 && value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+               && !value.AsSpan(2).ContainsAnyExcept("0123456789abcdefABCDEF");
     }
 
     private static bool IsHeader(IReadOnlyList<string> fields) =>
@@ -153,3 +236,10 @@ internal static class HandleCsvParser
         return trimmed.Length == 0 ? null : trimmed;
     }
 }
+
+/// <summary>What one run of handle.exe parsed to.</summary>
+/// <param name="UnparsedRows">
+/// Rows long enough to be data that could not be attributed to one process. Each is a handle that
+/// exists and is not in <see cref="Entries"/>.
+/// </param>
+internal sealed record HandleParseResult(IReadOnlyList<HandleEntry> Entries, int UnparsedRows);

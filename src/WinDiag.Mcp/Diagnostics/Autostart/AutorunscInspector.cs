@@ -14,6 +14,9 @@ public sealed class AutorunscInspector : IAutostartInspector
 {
     internal const string BaseName = "autorunsc";
 
+    /// <summary>autorunsc's <c>[user]</c> argument meaning every profile on the machine.</summary>
+    internal const string AllUserProfiles = "*";
+
     private const string WrongArchitectureSymptom =
         "it enumerates the WOW64 view of the registry, so 64-bit services, drivers and Run keys are " +
         "simply absent from the report rather than reported as unreadable.";
@@ -66,7 +69,12 @@ public sealed class AutorunscInspector : IAutostartInspector
         //   -s  verify signatures, which also adds the Signer column
         //   -m  hide entries that are signed AND Microsoft's
         //   -u  show only the unsigned ones
-        var arguments = new List<ToolArgument>(8)
+        //   *   the trailing user argument: every user profile, not only the account autorunsc runs
+        //       as. Without it a LocalSystem service -- the normal deployment -- reported SYSTEM's own
+        //       HKCU Run keys and Startup folder and nobody else's, while the summary called the list
+        //       complete because the server was elevated. Elevation is what lets autorunsc load the
+        //       hives of users who are logged off; unelevated it still reads the ones it can.
+        var arguments = new List<ToolArgument>(9)
         {
             ToolArgument.Flag("-c"),
             ToolArgument.Flag("-t"),
@@ -89,6 +97,9 @@ public sealed class AutorunscInspector : IAutostartInspector
             arguments.Add(ToolArgument.Flag("-u"));
         }
 
+        // Last, after every switch: autorunsc reads it positionally, as [user].
+        arguments.Add(ToolArgument.Flag(AllUserProfiles));
+
         var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
 
         var policy = ExternalToolPolicy.UnicodeConsoleTool;
@@ -101,7 +112,8 @@ public sealed class AutorunscInspector : IAutostartInspector
             .RunAsync(executable, arguments, policy, cancellationToken)
             .ConfigureAwait(false);
 
-        var entries = AutorunscCsvParser.Parse(result.StandardOutput);
+        var parsed = AutorunscCsvParser.Parse(result.StandardOutput);
+        var entries = parsed.Entries;
 
         if (!string.IsNullOrWhiteSpace(query.NameFilter))
         {
@@ -130,7 +142,11 @@ public sealed class AutorunscInspector : IAutostartInspector
             // Also counted over the whole match: an entry pointing at a file that is gone is a finding
             // in its own right, and it is invisible to the signature count because there is nothing
             // there to verify.
-            MissingImageCount: ordered.Count(e => e.ImageMissing));
+            MissingImageCount: ordered.Count(e => e.ImageMissing),
+
+            // Not narrowed by the name filter: a broken record has no trustworthy name to filter on,
+            // and the entry it hid may be exactly the one the filter was looking for.
+            MalformedRowCount: parsed.MalformedRows);
     }
 
     /// <summary>

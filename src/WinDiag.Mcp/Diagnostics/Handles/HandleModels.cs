@@ -31,6 +31,11 @@ public sealed record HandleEntry(
 /// it was empty over -- "no files matched" and "nothing of any kind matched" are different answers,
 /// and conflating them sends the caller down the wrong path.
 /// </param>
+/// <param name="UnparsedRows">
+/// Rows handle.exe printed that could not be attributed to one process -- a comma in an image name
+/// can make a row ambiguous, since handle.exe quotes nothing. Each is a handle that exists and is not in
+/// <see cref="Entries"/>, so a non-zero count forbids reading an empty list as "nothing holds it".
+/// </param>
 public sealed record HandleSearchResult(
     string Query,
     IReadOnlyList<HandleEntry> Entries,
@@ -38,4 +43,5 @@ public sealed record HandleSearchResult(
     bool Truncated,
     int TotalMatched,
     bool IncludedAllObjectTypes,
-    bool ProcessScoped = false);
+    bool ProcessScoped = false,
+    int UnparsedRows = 0);

@@ -2,7 +2,7 @@
   {
     "name": "autostart_audit",
     "title": "What starts on its own",
-    "description": "List what is configured to run without anybody starting it - services, drivers, logon items, scheduled tasks, Explorer and Office add-ins, image hijacks - with the file each one points at and who signed it. Use it when something runs that should not, when an uninstall left a hook behind, or when an add-in loads a build you did not ship. categories takes one or more of: all, boot, codecs, appinit, explorer, gadgets, imagehijacks, internetexplorer, knowndlls, logon, wmi, winsock, office, printmonitors, lsaproviders, services, scheduledtasks, winlogon, storeapps. Signature verification is off by default because it costs an Authenticode check per entry and there are hundreds; unsignedOnly turns it on and returns only what failed, which is usually the fastest route to an answer - measured at 59s for every category on a lab VM. Entries whose target file is missing are marked [FILE NOT FOUND]: usually an uninstall that left its hook behind, but also what a hijack looks like before the replacement is dropped in.",
+    "description": "List what is configured to run without anybody starting it - services, drivers, logon items, scheduled tasks, Explorer and Office add-ins, image hijacks - with the file each one points at and who signed it. Every user\u0027s profile is scanned, and a per-user entry names whose it is. Use it when something runs that should not, when an uninstall left a hook behind, or when an add-in loads a build you did not ship. categories takes one or more of: all, boot, codecs, appinit, explorer, gadgets, imagehijacks, internetexplorer, knowndlls, logon, wmi, winsock, office, printmonitors, lsaproviders, services, scheduledtasks, winlogon, storeapps. Signature verification is off by default because it costs an Authenticode check per entry and there are hundreds; unsignedOnly turns it on and returns only what failed, which is usually the fastest route to an answer - measured at 59s for every category on a lab VM. Entries whose target file is missing are marked [FILE NOT FOUND]: usually an uninstall that left its hook behind, but also what a hijack looks like before the replacement is dropped in.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -148,6 +148,10 @@
               "type": "integer"
             },
             "missingImageCount": {
+              "type": "integer",
+              "default": 0
+            },
+            "malformedRowCount": {
               "type": "integer",
               "default": 0
             }
@@ -824,6 +828,13 @@
               },
               "sha256": {
                 "type": "string"
+              },
+              "signerSubject": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
               }
             },
             "required": [
@@ -968,8 +979,8 @@
   },
   {
     "name": "named_pipes",
-    "title": "Named pipes and instance usage",
-    "description": "List named pipes with how many instances are currently in use against how many the server allows. Use it when a client cannot connect to a local service, or hangs connecting, while the service itself looks healthy - a pipe at its instance limit produces exactly that, and is invisible from every other angle. Pipes at their limit are listed first.",
+    "title": "Named pipes and whether a client can connect",
+    "description": "List named pipes with how many server instances exist against how many the server allows, and, for a pipe whose every instance is created, whether one is listening for a client right now. Use it when a client cannot connect to a local service, or hangs connecting, while the service itself looks healthy - a pipe with every instance taken and none listening produces exactly that, and is invisible from every other angle. Those are marked BUSY and listed first. Every instance created is not busy on its own: an instance listens from the moment it is created until a client takes it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -997,13 +1008,23 @@
               "name": {
                 "type": "string"
               },
-              "activeInstances": {
+              "instancesCreated": {
                 "type": "integer"
               },
               "maximumInstances": {
                 "type": "integer"
               },
-              "exhausted": {
+              "listening": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "default": null
+              },
+              "allInstancesCreated": {
+                "type": "boolean"
+              },
+              "busy": {
                 "type": "boolean"
               },
               "unlimited": {
@@ -1012,7 +1033,7 @@
             },
             "required": [
               "name",
-              "activeInstances",
+              "instancesCreated",
               "maximumInstances"
             ]
           }
@@ -1032,7 +1053,7 @@
       ]
     },
     "annotations": {
-      "title": "Named pipes and instance usage",
+      "title": "Named pipes and whether a client can connect",
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true,
@@ -1230,6 +1251,10 @@
         },
         "totalMatched": {
           "type": "integer"
+        },
+        "unparsedRows": {
+          "type": "integer",
+          "default": 0
         }
       },
       "required": [
@@ -1406,6 +1431,10 @@
         },
         "totalMatched": {
           "type": "integer"
+        },
+        "unparsedRows": {
+          "type": "integer",
+          "default": 0
         }
       },
       "required": [
@@ -1554,7 +1583,7 @@
   {
     "name": "process_modules",
     "title": "DLLs loaded in a process",
-    "description": "List the DLLs a process has actually loaded, with the full path, version and load address of each. Use it when the version on disk and the version in use might differ - a stale copy beside the executable, a shell extension loaded from somewhere unexpected, or an add-in that is not the build you shipped. Set verifySignatures to check each one\u0027s Authenticode signature, which finds unsigned or tampered modules loaded into a signed process. That is slower, so it applies only to the modules actually returned - filter by name first if you know what you are looking for. Each module also reports the base address it asked for against the one it got, and flags a module that was built for a fixed address and got moved anyway - a base collision, which costs it its shared pages.",
+    "description": "List the DLLs a process has actually loaded, with the full path, version and load address of each. Use it when the version on disk and the version in use might differ - a stale copy beside the executable, a shell extension loaded from somewhere unexpected, or an add-in that is not the build you shipped. Version and signature are read from the file now at each module\u0027s path, so each module\u0027s loaded PE header is compared with that file\u0027s: one that no longer matches - renamed away and replaced while loaded, or updated under the running process - is marked [REPLACED ON DISK] and its signature is not checked. Set verifySignatures to check each one\u0027s Authenticode signature, which finds unsigned modules loaded into a signed process; it is not tamper detection against a process that is already compromised, which can rewrite its own module list and headers. That is slower, so it applies only to the modules actually returned - filter by name first if you know what you are looking for. Each module also reports the base address it asked for against the one it got, and flags a module that was built for a fixed address and got moved anyway - a base collision, which costs it its shared pages.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1653,6 +1682,13 @@
                   "baseCollision": {
                     "type": "boolean",
                     "default": false
+                  },
+                  "replacedOnDisk": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -1683,6 +1719,10 @@
               ]
             },
             "collisionCount": {
+              "type": "integer",
+              "default": 0
+            },
+            "replacedCount": {
               "type": "integer",
               "default": 0
             }

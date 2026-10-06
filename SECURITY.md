@@ -54,9 +54,10 @@ follow from that, and which are deliberate rather than oversights:
   one shared check rather than two copies. Widening it is opt-in
   (`WINDIAG_ALLOW_ARBITRARY_WRITE`, `WINDIAG_ALLOW_ARBITRARY_READ`) because reading anywhere the
   elevated account can reach is exfiltration.
-- **A signed server refuses an unsigned replacement.** The self-update signature check is a ratchet,
-  not a setting: unsigned development builds keep working, but a target already running a signed
-  build cannot be downgraded to an unsigned one through that path.
+- **A signed server refuses an unsigned replacement, or one from another publisher.** On Windows the
+  self-update signature check is a ratchet, not a setting: unsigned development builds keep working,
+  but a target already running a signed build accepts only a validly signed replacement whose signer
+  matches its own, and cannot be downgraded to an unsigned one through that path.
 
 ## Traffic is not encrypted
 

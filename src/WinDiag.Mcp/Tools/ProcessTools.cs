@@ -77,7 +77,8 @@ public sealed class ProcessTools
             result.Entries,
             result.Elevated,
             result.Truncated,
-            result.TotalMatched);
+            result.TotalMatched,
+            result.UnparsedRows);
     }
 
     [McpServerTool(
@@ -114,17 +115,20 @@ public sealed class ProcessTools
 
     [McpServerTool(
         Name = "named_pipes",
-        Title = "Named pipes and instance usage",
+        Title = "Named pipes and whether a client can connect",
         ReadOnly = true,
         Destructive = false,
         Idempotent = true,
         OpenWorld = true,
         UseStructuredContent = true)]
     [Description(
-        "List named pipes with how many instances are currently in use against how many the server " +
-        "allows. Use it when a client cannot connect to a local service, or hangs connecting, while " +
-        "the service itself looks healthy - a pipe at its instance limit produces exactly that, and is " +
-        "invisible from every other angle. Pipes at their limit are listed first.")]
+        "List named pipes with how many server instances exist against how many the server allows, " +
+        "and, for a pipe whose every instance is created, whether one is listening for a client right " +
+        "now. Use it when a client cannot connect to a local service, or hangs connecting, while the " +
+        "service itself looks healthy - a pipe with every instance taken and none listening produces " +
+        "exactly that, and is invisible from every other angle. Those are marked BUSY and listed first. " +
+        "Every instance created is not busy on its own: an instance listens from the moment it is " +
+        "created until a client takes it.")]
     public NamedPipesResult NamedPipes(
         [Description("Match this text anywhere in the pipe name, for example a product or service name")]
         string? nameFilter = null,
@@ -225,13 +229,17 @@ public sealed class ProcessTools
             return builder.ToString();
         }
 
-        var exhausted = result.Pipes.Count(p => p.Exhausted);
-        if (exhausted > 0)
+        var busy = result.Pipes.Count(p => p.Busy);
+        if (busy > 0)
         {
-            builder.Append("ATTENTION: ").Append(exhausted)
-                .Append(exhausted == 1 ? " pipe is" : " pipes are")
-                .AppendLine(" at their instance limit. A client connecting to one of these will block " +
-                            "or fail even though the server process is healthy.");
+            // Only for a probe that found nothing listening. Every instance merely being created is
+            // the normal state of a single-instance pipe waiting for its first client, and calling that
+            // a blocked client sent the investigation the wrong way.
+            builder.Append("ATTENTION: ").Append(busy)
+                .Append(busy == 1 ? " pipe has" : " pipes have")
+                .AppendLine(" every instance created and none listening. A client connecting now waits, " +
+                            "or gets ERROR_PIPE_BUSY, until the server frees one - normal for a moment " +
+                            "between clients, a finding if it persists across calls.");
         }
 
         builder.Append(result.TotalMatched)
@@ -240,12 +248,19 @@ public sealed class ProcessTools
 
         foreach (var pipe in result.Pipes.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(pipe.Name).Append(": ").Append(pipe.ActiveInstances)
-                .Append(pipe.Unlimited ? " active (unlimited)" : $" of {pipe.MaximumInstances} instances");
+            builder.Append("- ").Append(pipe.Name).Append(": ").Append(pipe.InstancesCreated)
+                .Append(pipe.Unlimited
+                    ? " instances created (no limit)"
+                    : $" of {pipe.MaximumInstances} instances created");
 
-            if (pipe.Exhausted)
+            if (pipe.AllInstancesCreated)
             {
-                builder.Append(" - AT LIMIT");
+                builder.Append(pipe.Listening switch
+                {
+                    true => ", one listening",
+                    false => ", none listening - BUSY",
+                    null => ", could not tell whether one is listening"
+                });
             }
 
             builder.AppendLine();
