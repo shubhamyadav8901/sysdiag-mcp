@@ -283,7 +283,8 @@ public static class ServiceInstaller
                 + "and install from there. Nothing was installed.");
         }
 
-        ProtectedAcl.ProtectDirectory(path, account);
+        // Elevated, so it can make Administrators the owner, which takes the directory from whoever made it.
+        ProtectedAcl.ProtectDirectory(path, account, ownedByAdministrators: true);
         Console.Error.WriteLine($"[windiag] restricted the {what} {path} to SYSTEM and Administrators.");
     }
 

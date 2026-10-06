@@ -82,7 +82,7 @@ public sealed class ProtectedAclTests
     [Fact]
     public void The_acl_written_to_a_directory_exposes_nothing_inherits_nothing_and_is_owned_by_administrators()
     {
-        var acl = ProtectedAcl.DirectoryAcl(serviceAccount: null);
+        var acl = ProtectedAcl.DirectoryAcl(serviceAccount: null, ownedByAdministrators: true);
 
         Assert.Empty(DirectoryExposures(acl));
 
@@ -99,7 +99,7 @@ public sealed class ProtectedAclTests
     public void Puts_a_service_account_other_than_system_on_its_own_directories_and_trusts_only_that_one()
     {
         // Left off, a NetworkService install could not start its own executable or write a dump.
-        var acl = ProtectedAcl.DirectoryAcl(NetworkService);
+        var acl = ProtectedAcl.DirectoryAcl(NetworkService, ownedByAdministrators: true);
 
         Assert.Contains(
             acl.GetAccessRules(true, false, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>(),
@@ -107,6 +107,19 @@ public sealed class ProtectedAclTests
 
         Assert.Empty(DirectoryExposures(acl, NetworkService));
         Assert.NotEmpty(DirectoryExposures(acl, account: null));
+    }
+
+    [Fact]
+    public void The_acl_a_service_account_other_than_system_writes_leaves_the_owner_alone_since_it_cannot_assign_administrators()
+    {
+        // A NetworkService token has neither the Administrators group nor SeRestorePrivilege, so writing
+        // Administrators as the owner fails -- and on the default artifact directory, made on the first
+        // start, that refused every start of a NetworkService or LocalService install.
+        var acl = ProtectedAcl.DirectoryAcl(NetworkService, ownedByAdministrators: false);
+
+        Assert.Null(acl.GetOwner(typeof(SecurityIdentifier)));
+        Assert.True(acl.AreAccessRulesProtected);
+        Assert.Empty(DirectoryExposures(acl, NetworkService));
     }
 
     [Fact]
@@ -133,7 +146,7 @@ public sealed class ProtectedAclTests
     {
         // WinDiag.Mcp.exe dropped straight into C:\ makes C:\ its server directory, and C:\ always reads as
         // writable by users -- it is meant to be.
-        var ex = Assert.Throws<ConfigurationException>(() => ProtectedAcl.ProtectDirectory(@"C:\", serviceAccount: null));
+        var ex = Assert.Throws<ConfigurationException>(() => ProtectedAcl.ProtectDirectory(@"C:\", serviceAccount: null, ownedByAdministrators: true));
 
         Assert.Contains("root of a drive", ex.Message, StringComparison.Ordinal);
     }

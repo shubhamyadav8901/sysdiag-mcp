@@ -26,7 +26,7 @@ public sealed class ProtectedAclTests(ITestOutputHelper output)
             before.ToList().ForEach(output.WriteLine);
             Assert.NotEmpty(before);
 
-            ProtectedAcl.ProtectDirectory(path, serviceAccount: null);
+            ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
 
             Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
 

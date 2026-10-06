@@ -26,22 +26,25 @@ public static class ServiceHardening
         var account = identity.User is { } user && user != ProtectedAcl.LocalSystem ? user : null;
         var serverDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
 
+        // Only SYSTEM may hand a directory to Administrators. A NetworkService or LocalService token holds
+        // neither the Administrators group nor SeRestorePrivilege, so setting that owner fails -- and on the
+        // default artifact directory, which does not exist until the first start, that failure refused
+        // every start of such a service. Left alone, the owner is the service account, which is trusted.
+        void Protect(string path) => ProtectedAcl.ProtectDirectory(path, account, ownedByAdministrators: account is null);
+
         try
         {
             // Made here, protected, rather than left for the first dump to create: Directory.CreateDirectory
             // inherits whatever the parent hands down, and under C:\ that is "Authenticated Users: Modify".
             if (!Directory.Exists(artifactDirectory))
             {
-                ProtectedAcl.ProtectDirectory(artifactDirectory, account);
+                Protect(artifactDirectory);
             }
 
             foreach (var (what, path) in new[] { ("server directory", serverDirectory), ("artifact directory", artifactDirectory) })
             {
                 StartupPermissions.RequireProtected(
-                    what, path,
-                    p => ProtectedAcl.DirectoryExposures(p, account),
-                    p => ProtectedAcl.ProtectDirectory(p, account),
-                    Warn);
+                    what, path, p => ProtectedAcl.DirectoryExposures(p, account), Protect, Warn);
             }
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or InvalidOperationException)

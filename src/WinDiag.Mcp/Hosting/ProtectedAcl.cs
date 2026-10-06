@@ -135,11 +135,19 @@ public static class ProtectedAcl
     /// <para>Owned by Administrators rather than whoever made the directory: <c>C:\</c> lets any user
     /// create a folder, so <c>C:\WinDiag</c> may have been made by somebody waiting for an administrator
     /// to copy a server into it, and an owner can put back any ACE this removes.</para>
+    /// <para>Except when <paramref name="ownedByAdministrators"/> is false: a service running as
+    /// NetworkService or LocalService cannot assign that owner, so the owner is left as it is. The
+    /// exposure check still names an owner who is not trusted, so this cannot pass one off as safe.</para>
     /// </remarks>
-    internal static DirectorySecurity DirectoryAcl(SecurityIdentifier? serviceAccount)
+    internal static DirectorySecurity DirectoryAcl(SecurityIdentifier? serviceAccount, bool ownedByAdministrators)
     {
         var acl = new DirectorySecurity();
-        acl.SetOwner(Administrators);
+        if (ownedByAdministrators)
+        {
+            // Only a modified section is written, so without this call the owner is not touched at all.
+            acl.SetOwner(Administrators);
+        }
+
         acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
 
         const InheritanceFlags everything = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
@@ -170,7 +178,7 @@ public static class ProtectedAcl
     /// exposed, and protecting it would lock every user out of the whole drive. A server belongs in a
     /// directory of its own.
     /// </remarks>
-    public static void ProtectDirectory(string path, SecurityIdentifier? serviceAccount)
+    public static void ProtectDirectory(string path, SecurityIdentifier? serviceAccount, bool ownedByAdministrators)
     {
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         if (string.Equals(full, Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? string.Empty), StringComparison.OrdinalIgnoreCase))
@@ -182,7 +190,7 @@ public static class ProtectedAcl
         }
 
         Directory.CreateDirectory(full);
-        new DirectoryInfo(full).SetAccessControl(DirectoryAcl(serviceAccount));
+        new DirectoryInfo(full).SetAccessControl(DirectoryAcl(serviceAccount, ownedByAdministrators));
     }
 
     /// <summary>Gives the service's key <see cref="ServiceKeyAcl"/>, before the token is written to it.</summary>
