@@ -1,3 +1,4 @@
+using Diag.Mcp.Core;
 using DiagRelay.Mcp.Tests;
 using LinuxDiag.Mcp.Diagnostics.Autostart;
 using LinuxDiag.Mcp.Linux.Packages;
@@ -17,7 +18,11 @@ namespace LinuxDiag.Mcp.Tests;
 /// </remarks>
 public sealed class UserUnitTests : IDisposable
 {
-    private readonly string _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-uu-{Guid.NewGuid():N}")).FullName;
+    // Spelled with no link on the way, as /tmp is on Linux. macOS's temp directory is under the /var link, which the
+    // name map's chase of a link target goes through, while the fake realpath below resolves only a path's last
+    // component: the search path and the targets in it came out spelled two ways and no alias matched.
+    private readonly string _root = PathScope.RealPath(
+        Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-uu-{Guid.NewGuid():N}")).FullName);
 
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
@@ -406,6 +411,110 @@ public sealed class UserUnitTests : IDisposable
 
         Assert.Equal(link, entry.Location);
         Assert.Null(entry.ImagePath);
+    }
+
+    /// <summary>
+    /// A packaged x.service and w@.service enabled by the user, and two of the user's own links into /usr/lib's
+    /// directory: ~/lnk to it, and ~/dangling to a directory under it that does not exist.
+    /// </summary>
+    private (string Vendor, string Template) PackagedUnitsAndLinksIntoTheirDirectory()
+    {
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, "lnk"), Path.Combine(_root, "usr/lib/systemd/user"));
+        Link(Path.Combine(Home, "dangling"), Path.Combine(_root, "usr/lib/systemd/user/nope"));
+        return (vendor, template);
+    }
+
+    [UnixTheory]
+    [InlineData("~/lnk/nope/x.service")]
+    [InlineData("../../../lnk/nope/x.service")]
+    [InlineData("~/lnk/./nope/./x.service")]
+    [InlineData("~/dangling/x.service")]
+    public void A_link_through_the_users_own_link_into_the_search_path_to_a_missing_directory_is_still_an_alias(string target)
+    {
+        // Re-review: the link's directory was folded with realpath(3), and where any part of it was missing, as text.
+        // systemd's chase(CHASE_NOFOLLOW|CHASE_NONEXISTENT) resolves the part that exists, ~/lnk included, and appends
+        // the rest as written: zz.service -> ~/lnk/nope/x.service is /usr/lib/systemd/user/nope/x.service to it, in the
+        // search path ("Suspicious symlink ..., treating as alias"), so zz.service.d replaced x.service's ExecStart.
+        // The audit saw ~/lnk/nope/x.service, outside the search path, and reported the packaged /usr/bin/x.
+        // ~/dangling leads nowhere, so realpath(3) gives up on it; chase follows it all the same.
+        var (vendor, _) = PackagedUnitsAndLinksIntoTheirDirectory();
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), target.Replace("~", Home, StringComparison.Ordinal));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+
+        var entry = Assert.Single(Audit(), e => e.Entry == "x.service");
+
+        Assert.Equal(vendor, entry.Location);
+        Assert.Equal("/home/u/A", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void An_instance_linked_through_the_users_own_link_to_a_template_in_a_missing_directory_is_an_alias_of_that_instance()
+    {
+        // zz@one.service -> ~/lnk/nope/w@.service is chased to /usr/lib/systemd/user/nope/w@.service: an alias of
+        // w@one.service, which zz@one.service.d then changes.
+        var (_, template) = PackagedUnitsAndLinksIntoTheirDirectory();
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), Path.Combine(Home, "lnk/nope/w@.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entry = Assert.Single(Audit(), e => e.Entry == "w@one.service");
+
+        Assert.Equal(template, entry.Location);
+        Assert.Equal("/home/u/B", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixTheory]
+    [InlineData("/usr/lib/systemd/user/nope/../x.service")]
+    [InlineData("/usr/lib/systemd/user/w@.service/x.service")]
+    [InlineData("/usr/lib/systemd/user/w@.service/../x.service")]
+    [InlineData("~/loop/x.service")]
+    public void A_link_target_systemd_cannot_chase_is_ignored_so_a_lower_file_of_the_name_loads(string target)
+    {
+        // chase fails on ".." after a component that does not exist, on anything after a file, ".." too (ENOTDIR),
+        // and on a link loop; systemd then warns, enters nothing for the name and loads the next directory's zz.service. Folded as
+        // text, the first two read as aliases of x.service, which zz.service.d then reached; the loop as the user's own
+        // zz.service, hiding the packaged one.
+        var (vendor, _) = PackagedUnitsAndLinksIntoTheirDirectory();
+        var packaged = Write(Path.Combine(_root, "usr/lib/systemd/user/zz.service"), "[Service]\nExecStart=/usr/bin/zz\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/zz.service"), packaged);
+        Link(Path.Combine(Home, "loop"), Path.Combine(Home, "loop"));
+        var spelled = target.StartsWith('~') ? target.Replace("~", Home, StringComparison.Ordinal) : _root + target;
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), spelled);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+
+        var entries = Audit();
+
+        var x = Assert.Single(entries, e => e.Entry == "x.service");
+        Assert.Equal(vendor, x.Location);
+        Assert.Equal("/usr/bin/x", x.ImagePath);
+        Assert.Empty(x.DropIns);
+        var zz = Assert.Single(entries, e => e.Entry == "zz.service");
+        Assert.Equal(packaged, zz.Location);
+        Assert.Equal([dropIn], zz.DropIns);
+    }
+
+    [LinuxFact]
+    public void Links_through_the_users_own_link_into_the_search_path_are_aliases_through_the_servers_own_readers()
+    {
+        var (vendor, template) = PackagedUnitsAndLinksIntoTheirDirectory();
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(Home, "lnk/nope/x.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/A\n");
+        Link(Path.Combine(Home, ".config/systemd/user/zz@one.service"), "../../../dangling/w@.service");
+        var instanceDropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/B\n");
+
+        var entries = Audit(UserUnits.Reading(_root));
+
+        Assert.Equal(vendor, entries.Single(e => e.Entry == "x.service").Location);
+        Assert.Equal([dropIn], entries.Single(e => e.Entry == "x.service").DropIns);
+        Assert.Equal("/home/u/A", entries.Single(e => e.Entry == "x.service").ImagePath);
+        Assert.Equal(template, entries.Single(e => e.Entry == "w@one.service").Location);
+        Assert.Equal([instanceDropIn], entries.Single(e => e.Entry == "w@one.service").DropIns);
+        Assert.Equal("/home/u/B", entries.Single(e => e.Entry == "w@one.service").ImagePath);
     }
 
     [UnixTheory]

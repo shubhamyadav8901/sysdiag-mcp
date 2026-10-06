@@ -6,10 +6,10 @@ namespace LinuxDiag.Mcp.Diagnostics.Autostart;
 /// </summary>
 /// <remarks>
 /// <para>By name, not by where a link leads. A link directly in a search-path directory whose target, made absolute
-/// and with "." and ".." folded, is also in the search path is an alias: its name stands for the target's name, which
-/// is then looked up like any other -- so the target need not exist where the link points. Any other link is a
-/// "linked unit file", loaded by the link's own name and nothing else. The first directory holding a name decides
-/// it, link or not, dangling or not.</para>
+/// and chased as systemd chases it (see <see cref="Chase"/>), is also in the search path is an alias: its name stands
+/// for the target's name, which is then looked up like any other -- so the target need not exist where the link
+/// points. A target chase fails on is ignored. Any other link is a "linked unit file", loaded by the link's own name
+/// and nothing else. The first directory holding a name decides it, link or not, dangling or not.</para>
 /// <para>Matching links by the file they lead to, as this audit first did, missed what systemd does with each case:
 /// zz.service -> /etc/systemd/user/x.service, with x.service only in /usr/lib, dangles but is still x.service's
 /// alias; zz@one.service -> w@.service names one instance; and /opt/real.service linked in as ll.service gives
@@ -20,6 +20,12 @@ internal sealed class UnitNameMap
 {
     /// <summary>systemd's FOLLOW_MAX: an alias chain longer than this loads nothing, as a loop does.</summary>
     private const int FollowMax = 8;
+
+    /// <summary>
+    /// systemd's CHASE_MAX. chase counts it down before each link it follows and fails at zero, so a link target that
+    /// passes through this many links is a loop, and ignored.
+    /// </summary>
+    private const int ChaseMax = 32;
 
     private static readonly HashSet<string> Types = new(StringComparer.Ordinal)
     {
@@ -84,7 +90,13 @@ internal sealed class UnitNameMap
                 var info = new FileInfo(entry);
                 if (info.LinkTarget is { } target)
                 {
-                    var simplified = Simplify(Path.IsPathRooted(target) ? target : Path.Combine(directory, target), realPath);
+                    // A target chase cannot resolve -- ".." past a missing directory, a loop -- is warned about and
+                    // the link ignored, so a lower directory's file of the name loads.
+                    if (Chase(Path.IsPathRooted(target) ? target : Path.Combine(directory, target)) is not { } simplified)
+                    {
+                        continue;
+                    }
+
                     if (expanded.Any(d => simplified.StartsWith(d.TrimEnd('/') + "/", StringComparison.Ordinal)))
                     {
                         // An alias systemd refuses is not entered at all, so a lower directory's file of the name loads.
@@ -221,18 +233,93 @@ internal sealed class UnitNameMap
     }
 
     /// <summary>
-    /// A link target with "." and ".." folded the way chase(CHASE_NOFOLLOW|CHASE_NONEXISTENT) folds them: the
-    /// directories on the way resolved where they exist, the last component -- the unit's name -- never followed.
+    /// chase(CHASE_NOFOLLOW|CHASE_NONEXISTENT) on an absolute link target, as unit_file_resolve_symlink calls it: null
+    /// where that fails and systemd ignores the link.
     /// </summary>
-    private static string Simplify(string target, Func<string, string?> realPath)
+    /// <remarks>
+    /// <para>Walked a component at a time: each one that exists is resolved where it is, a link on the way followed
+    /// and a ".." taken from the directory reached, never from the spelling; the last component, the unit's own name,
+    /// is never followed. At the first component that does not exist the rest is appended as written, unless it holds
+    /// a "..", which chase refuses.</para>
+    /// <para>Not realpath(3) of the target's directory, falling back to folding it as text where that is null, as this
+    /// first did. realpath gives up on the whole directory when any part of it is missing, while chase still goes
+    /// through the part that exists: with ~/lnk -> /usr/lib/systemd/user, zz.service -> ~/lnk/nope/x.service is
+    /// /usr/lib/systemd/user/nope/x.service to systemd -- in the search path, so an alias of x.service, whose
+    /// ExecStart zz.service.d then replaced -- while the text, ~/lnk/nope/x.service, lay outside it. A link that
+    /// itself leads nowhere is followed the same way, where realpath gives up on it too.</para>
+    /// <para>So it reads each link itself rather than asking the injected realPath for the longest prefix that
+    /// resolves: that prefix stops before a dangling link on the way, which chase opens without following, reads
+    /// and goes through.</para>
+    /// </remarks>
+    private static string? Chase(string target)
     {
-        var name = Path.GetFileName(target);
-        if (name is "" or "." or ".." || Path.GetDirectoryName(target) is not { } directory)
+        var done = "/";
+        var todo = new Stack<string>();
+        Push(target);
+        var hops = 0;
+        try
         {
-            return Path.GetFullPath(target);
+            while (todo.TryPop(out var part))
+            {
+                if (part == "..")
+                {
+                    // done holds no link, so its parent is where the kernel's ".." goes; above "/" is "/".
+                    done = Path.GetDirectoryName(done) ?? done;
+                    continue;
+                }
+
+                var next = Path.Combine(done, part);
+                var last = todo.Count == 0;
+                var link = new FileInfo(next).LinkTarget;
+                if (link is not null && !last)
+                {
+                    if (++hops >= ChaseMax)
+                    {
+                        return null;
+                    }
+
+                    // An absolute target starts again from "/"; a relative one from the directory holding the link.
+                    if (link.StartsWith('/'))
+                    {
+                        done = "/";
+                    }
+
+                    Push(link);
+                }
+                else if (link is not null || Directory.Exists(next) || (last && File.Exists(next)))
+                {
+                    done = next;
+                }
+                else if (File.Exists(next))
+                {
+                    // A file with more to come is ENOTDIR, which chase fails on; only ENOENT is let through.
+                    return null;
+                }
+                else
+                {
+                    return todo.Contains("..") ? null : Path.Join([next, .. todo]);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
 
-        return Path.Combine(realPath(directory) ?? Path.GetFullPath(directory), name);
+        return done;
+
+        // "." is skipped wherever it stands, and comparing against the search path skips it too, so it is dropped here.
+        void Push(string path)
+        {
+            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            for (var i = parts.Length - 1; i >= 0; i--)
+            {
+                if (parts[i] != ".")
+                {
+                    todo.Push(parts[i]);
+                }
+            }
+        }
     }
 
     /// <summary>null_or_empty_path(): a file that is missing, a device such as /dev/null, or empty.</summary>
