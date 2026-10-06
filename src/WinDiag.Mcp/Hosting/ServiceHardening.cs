@@ -57,17 +57,15 @@ public static class ServiceHardening
                 + "Re-run --install-service from an elevated prompt, which sets them up.");
         }
 
-        ProtectOwnKey();
+        ProtectOwnKey(runsAsLocalSystem: account is null);
     }
 
-    /// <summary>Restricts the service key if it is still readable, and says the token must be changed.</summary>
+    /// <summary>Restricts the service key if it is still readable; see <see cref="StartupPermissions.ProtectServiceKey"/>.</summary>
     /// <remarks>
-    /// Best-effort, and never a reason to stop: the token was already readable, refusing to start does
-    /// not make it less so, and a server that will not start cannot be reached to rotate it. Named by
-    /// WINDIAG_SERVICE_NAME, which --install-service writes; a hand-registered service without it is
-    /// not looked for.
+    /// Named by WINDIAG_SERVICE_NAME, which --install-service writes; a hand-registered service without it
+    /// is not looked for.
     /// </remarks>
-    private static void ProtectOwnKey()
+    private static void ProtectOwnKey(bool runsAsLocalSystem)
     {
         var name = Environment.GetEnvironmentVariable("WINDIAG_SERVICE_NAME");
         if (string.IsNullOrWhiteSpace(name))
@@ -75,27 +73,8 @@ public static class ServiceHardening
             return;
         }
 
-        try
-        {
-            var exposed = ProtectedAcl.ServiceKeyExposures(name);
-            if (exposed.Count == 0)
-            {
-                return;
-            }
-
-            ProtectedAcl.ProtectServiceKey(name);
-            Warn(
-                $"The registry key of service '{name}', which holds its bearer token, was readable by accounts "
-                + $"other than SYSTEM and Administrators ({string.Join("; ", exposed)}). It is now restricted to "
-                + "them, but any local user may already have the token: change it (--uninstall-service, then "
-                + "--install-service --token-stdin with a new one) and update the relay's targets file.");
-        }
-        catch (Exception ex)
-        {
-            // Every exception, deliberately: this is a repair on the way to serving, and a failure to make
-            // it must be reported rather than become the reason the server never comes up.
-            Warn($"Could not check who can read the registry key of service '{name}': {ex.Message}");
-        }
+        StartupPermissions.ProtectServiceKey(
+            name, runsAsLocalSystem, ProtectedAcl.ServiceKeyExposures, ProtectedAcl.ProtectServiceKey, Warn);
     }
 
     /// <summary>To stderr and, because a service has no stderr anyone sees, to the event log.</summary>
