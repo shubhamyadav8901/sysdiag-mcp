@@ -72,4 +72,41 @@ public sealed class SystemInspectorTests
 
         Assert.Contains(overview.Limitations, l => l.Contains("vm_stat failed", StringComparison.Ordinal) && l.Contains("boom", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Each_mount_is_probed_on_a_thread_of_its_own_so_a_starved_pool_cannot_make_a_healthy_mount_time_out()
+    {
+        // A probe stuck on a dead network mount keeps its thread for good; on a small, busy pool the next mount's probe
+        // then waited for a thread past its whole budget, and a healthy volume read as not answering (LinuxDiag, CI).
+        var mounts = new[] { new Mac.Parsers.MacMount("/dev/disk3s1", "/", "apfs", false, []) };
+        bool? onPool = null;
+        var limitations = new List<string>();
+
+        var sizes = MacSystemInspector.Filesystems(
+            mounts, _ => { onPool = Thread.CurrentThread.IsThreadPoolThread; return (100, 40); }, TimeSpan.FromSeconds(5), limitations);
+
+        Assert.False(onPool);
+        Assert.Equal((100L, 40L), (sizes.Single().TotalBytes, sizes.Single().FreeBytes));
+        Assert.Empty(limitations);
+    }
+
+    [Fact]
+    public void A_mount_whose_size_never_comes_back_is_reported_unknown_instead_of_hanging_the_call()
+    {
+        var mounts = new[] { new Mac.Parsers.MacMount("server:/share", "/Volumes/share", "nfs", false, []) };
+        using var never = new ManualResetEventSlim();
+        var limitations = new List<string>();
+
+        try
+        {
+            var sizes = MacSystemInspector.Filesystems(mounts, _ => { never.Wait(); return (1, 1); }, TimeSpan.FromMilliseconds(100), limitations);
+
+            Assert.Equal(0, sizes.Single().TotalBytes);
+            Assert.Contains(limitations, l => l.Contains("/Volumes/share did not answer", StringComparison.Ordinal));
+        }
+        finally
+        {
+            never.Set();
+        }
+    }
 }
