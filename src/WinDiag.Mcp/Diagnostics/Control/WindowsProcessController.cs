@@ -103,8 +103,10 @@ public sealed class WindowsProcessController : IProcessController
     /// anything Windows itself has marked critical.</para>
     /// <para>Fails closed: a process whose services or critical flag cannot be read is refused, because "could
     /// not tell" is not "safe".</para>
+    /// <para>Internal so a test can ask it about the real RpcSs host with the real probe: through Control, a
+    /// probe that wrongly answered "nothing" would let the test end that host and take the machine's RPC down.</para>
     /// </remarks>
-    private void RequireUnprotected(Process process, string name, int processId, ProcessAction action)
+    internal void RequireUnprotected(Process process, string name, int processId, ProcessAction action)
     {
         var verb = action.ToString().ToLowerInvariant();
 

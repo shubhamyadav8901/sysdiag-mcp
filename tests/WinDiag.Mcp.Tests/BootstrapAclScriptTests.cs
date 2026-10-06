@@ -10,6 +10,13 @@ public sealed class ElevatedFactAttribute : FactAttribute
 {
     public ElevatedFactAttribute()
     {
+        // WindowsIdentity throws off Windows, which fails every test carrying this instead of skipping it.
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip = "Windows only.";
+            return;
+        }
+
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
         {
