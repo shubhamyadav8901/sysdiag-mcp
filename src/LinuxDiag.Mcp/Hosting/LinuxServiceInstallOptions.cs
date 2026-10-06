@@ -42,6 +42,7 @@ public sealed record LinuxServiceInstallOptions
     public static LinuxServiceInstallOptions Parse(IReadOnlyList<string> args, TextReader? stdin)
     {
         ArgumentNullException.ThrowIfNull(args);
+        LinuxCommandLine.Require(args, LinuxCommandLine.Mode.Install);
 
         string? Value(string name)
         {
@@ -166,6 +167,15 @@ public sealed record LinuxServiceInstallOptions
         }
 
         return env.ToString();
+    }
+
+    /// <summary>The grants written to the env file, every one named, so a flag that did not take is seen at install.</summary>
+    public string Grants()
+    {
+        static string YesNo(bool value) => value ? "yes" : "no";
+        return $"read-only: {YesNo(ReadOnly)}; allow-self-update: {YesNo(AllowSelfUpdate)}; " +
+               $"allow-command-execution: {YesNo(AllowCommandExecution)}; allow-arbitrary-write: {YesNo(AllowArbitraryWrite)}; " +
+               $"allow-arbitrary-read: {YesNo(AllowArbitraryRead)}";
     }
 
     /// <summary>The unit. Deliberately not sandboxed: a diagnostics server must see every process's /proc.</summary>

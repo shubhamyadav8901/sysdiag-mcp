@@ -36,6 +36,8 @@ public static class ServerBuilder
           LinuxDiag.Mcp                          serve MCP over stdio
           LinuxDiag.Mcp --http <url>             serve MCP over HTTP, e.g. --http http://0.0.0.0:4024
           LinuxDiag.Mcp --help                   this text
+        Any other argument is refused. A server started by hand takes its grants from the LINUXDIAG_*
+        variables below, never from the install switches.
 
         Service management (root; systemd):
           LinuxDiag.Mcp --install-service --http <url> [--token-stdin | --token <t>] [--service-name <n>] [--artifacts <dir>]

@@ -49,6 +49,7 @@ public static class LinuxServiceInstaller
         }
 
         Console.Error.WriteLine($"[linuxdiag] installed and started '{options.Name}' on {options.Bind}");
+        Console.Error.WriteLine($"[linuxdiag] grants: {options.Grants()}");
         if (!options.TokenWasSupplied)
         {
             // Printed once, here. It is in the root-only env file from now on and never logged.
