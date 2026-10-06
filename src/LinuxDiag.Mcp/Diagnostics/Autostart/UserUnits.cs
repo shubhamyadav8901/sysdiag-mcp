@@ -41,11 +41,12 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
             globalUnits = [];
         }
 
-        var globalFiles = new Dictionary<string, UnitFiles>(StringComparer.Ordinal);
+        var globalEntries = new Dictionary<string, AutostartEntry>(StringComparer.Ordinal);
         foreach (var (name, link) in globalUnits)
         {
-            globalFiles[name] = Resolve(name, global);
-            yield return Entry(name, link, global, null, "starts at every user's login");
+            var entry = Entry(name, link, global, null, "starts at every user's login");
+            globalEntries[name] = entry;
+            yield return entry;
         }
 
         var unreadable = 0;
@@ -94,11 +95,16 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
 
             // A user needs no enable to change a unit enabled for everyone: their own unit file or drop-in -- even a
             // type-wide one such as ~/.config/systemd/user/service.d/x.conf -- replaces what it runs at their login.
+            // The whole entry is resolved for the user and its files compared, not just the enabled unit's: for a
+            // socket or timer the files that decide the program are the started service's, and pipewire.socket,
+            // enabled for everyone, would otherwise hide a user's pipewire.service.d override behind /usr/bin/pipewire.
             foreach (var (name, link) in globalUnits.Where(g => own.All(o => o.Name != g.Name)))
             {
-                if (!Same(Resolve(name, path), globalFiles[name]))
+                var mine = Entry(name, link, path, account.Name, when + " - this user's own files change what it runs");
+                var everyone = globalEntries[name];
+                if (mine.Location != everyone.Location || !mine.DropIns.SequenceEqual(everyone.DropIns))
                 {
-                    yield return Entry(name, link, path, account.Name, when + " - this user's own files change what it runs");
+                    yield return mine;
                 }
             }
         }
@@ -286,8 +292,6 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
         var dot = name.LastIndexOf('.');
         return at > 0 && at + 1 < dot ? name[..(at + 1)] + name[dot..] : null;
     }
-
-    private static bool Same(UnitFiles a, UnitFiles b) => a.Fragment == b.Fragment && a.DropIns.SequenceEqual(b.DropIns);
 
     private string RealOr(string path) => realPath(path) ?? path;
 

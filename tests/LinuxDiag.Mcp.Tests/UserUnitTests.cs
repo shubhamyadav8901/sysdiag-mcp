@@ -159,6 +159,51 @@ public sealed class UserUnitTests : IDisposable
         Assert.Contains("this user's own", mine.Description, StringComparison.Ordinal);
     }
 
+    /// <summary>pipewire.socket as a desktop ships it: enabled for every user by a vendor link, starting pipewire.service.</summary>
+    private (string Socket, string Service) PackagedSocketEnabledForEveryone()
+    {
+        var socket = Write(Path.Combine(_root, "usr/lib/systemd/user/pipewire.socket"), "[Socket]\nListenStream=%t/pipewire-0\n");
+        Link(Path.Combine(_root, "usr/lib/systemd/user/sockets.target.wants/pipewire.socket"), socket);
+        var service = Write(Path.Combine(_root, "usr/lib/systemd/user/pipewire.service"), "[Service]\nExecStart=/usr/bin/pipewire\n");
+        return (socket, service);
+    }
+
+    [Theory]
+    [InlineData(".config/systemd/user/pipewire.service.d/o.conf", "[Service]\nExecStart=\nExecStart=/home/u/.p\n", false)]
+    [InlineData(".config/systemd/user/service.d/x.conf", "[Service]\nExecStart=\nExecStart=/home/u/.p\n", false)]
+    [InlineData(".config/systemd/user/pipewire.service", "[Service]\nExecStart=/home/u/.p\n", true)]
+    public void A_user_who_changes_the_service_a_socket_enabled_for_everyone_starts_is_reported_with_their_program(
+        string relative, string text, bool replacesTheUnitFile)
+    {
+        // Review: only the socket's own files were compared with everyone's, so a user's drop-in or unit file for
+        // the service it starts left one '(every user)' entry naming /usr/bin/pipewire -- packaged, and hidden by
+        // unpackagedOnly -- while the user's payload ran at their login.
+        var (_, service) = PackagedSocketEnabledForEveryone();
+        var own = Write(Path.Combine(Home, relative), text);
+
+        var entries = Audit();
+
+        var global = entries.Single(e => e.Profile == "(every user)");
+        Assert.Equal("/usr/bin/pipewire", global.ImagePath);
+        var mine = entries.Single(e => e.Profile == "u");
+        Assert.Equal("pipewire.socket", mine.Entry);
+        Assert.Equal("/home/u/.p", mine.ImagePath);
+        Assert.Contains(own, mine.DropIns);
+        Assert.Equal(!replacesTheUnitFile, mine.DropIns.Contains(service));
+        Assert.Contains("this user's own", mine.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_socket_enabled_for_everyone_is_not_repeated_for_a_user_whose_files_leave_it_alone()
+    {
+        PackagedSocketEnabledForEveryone();
+        Write(Path.Combine(Home, ".config/systemd/user/other.service.d/o.conf"), "[Service]\nNice=5\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("(every user)", entry.Profile);
+    }
+
     [Fact]
     public void A_same_named_drop_in_in_the_users_directory_replaces_the_systems_and_drop_ins_apply_in_name_order()
     {
