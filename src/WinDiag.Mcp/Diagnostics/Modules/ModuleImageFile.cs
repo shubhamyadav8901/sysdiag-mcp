@@ -197,9 +197,9 @@ internal static class ModuleImageIdentity
         "directory on it away with the loaded file inside, and the kernel goes on naming the old path, " +
         "where another file can then be put";
 
-    private const string SystemSid = "S-1-5-18";
-    private const string AdministratorsSid = "S-1-5-32-544";
-    private const string TrustedInstallerSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+    // The same three the installer trusts, from one list: a hand-copied TrustedInstaller SID was wrong once, and
+    // every directory below C:\ then read as changeable by someone else.
+    private static readonly IReadOnlyList<string> Trusted = WinDiag.Mcp.Hosting.AclJudgement.AlwaysTrusted;
 
     private const byte AccessAllowedAce = 0x0;
     private const byte AccessDeniedAce = 0x1;
@@ -345,9 +345,7 @@ internal static class ModuleImageIdentity
     }
 
     private static bool IsAdminOnly(string sid) =>
-        sid.Equals(SystemSid, StringComparison.OrdinalIgnoreCase)
-        || sid.Equals(AdministratorsSid, StringComparison.OrdinalIgnoreCase)
-        || sid.Equals(TrustedInstallerSid, StringComparison.OrdinalIgnoreCase);
+        Trusted.Contains(sid, StringComparer.OrdinalIgnoreCase);
 
     private static string Describe(uint granted)
     {
