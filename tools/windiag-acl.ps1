@@ -173,8 +173,9 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
     # SYSTEM, Administrators and TrustedInstaller -- the OS's own servicing account, which owns C:\ and
     # System32 and can replace the OS already. The same accounts the server trusts, less the service's own:
     # the scripts install as LocalSystem, and a directory another account can write is not one to stage a
-    # binary into that PsExec then runs as SYSTEM.
-    $trusted = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3425522526-1101993487-2163447651-1013034063'
+    # binary into that PsExec then runs as SYSTEM. TrustedInstaller's SID is the SHA-1 of its name, the same
+    # on every machine: the server's AclJudgement.TrustedInstallerSid, which a test holds this one to.
+    $trusted = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
 
     # For the directories above $full, which these scripts never change, the group's direct members count as
     # well -- the server's ProtectedAcl.TrustedAbove. A D:\Ops locked to administrators by hand but made by
@@ -199,7 +200,12 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
     $removeChildRights = 0x100C0040      # GENERIC_ALL | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER
 
     # Who other than $trusted owns the descriptor's object, or holds any of $Rights on it through an allow
-    # ACE that applies to it -- the server's ProtectedAcl.Exposures, in the same words.
+    # ACE that applies to it -- the server's AclJudgement.Holders, named in ProtectedAcl.Exposures' words.
+    # An inherit-only ACE grants nothing on the object itself: C:\'s "Authenticated Users: Modify" for
+    # subfolders and files carries DELETE, and counting it would read C:\ as anybody's to rename.
+    # Each -band here and in Get-Problem is between plain integers. On AceFlags itself, Windows PowerShell's
+    # failed with "Specified cast is not valid" where PowerShell 7's did not: 5.1 cannot apply it to an enum
+    # whose underlying type is not Int32, and AceFlags is a byte, so every refusal there was that message.
     function Get-Exposure($Descriptor, [int] $Rights, [string] $Verb, [string[]] $Trust = $trusted) {
         $found = @()
         if ($Descriptor.Owner -and $Trust -notcontains $Descriptor.Owner.Value) {
@@ -211,12 +217,12 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
             return $found
         }
         foreach ($ace in $Descriptor.DiscretionaryAcl) {
-            if ($ace -isnot [System.Security.AccessControl.CommonAce] -or
+            if ($ace -isnot [System.Security.AccessControl.QualifiedAce] -or
                 $ace.AceQualifier -ne [System.Security.AccessControl.AceQualifier]::AccessAllowed -or
-                ($ace.AceFlags -band [System.Security.AccessControl.AceFlags]::InheritOnly) -or
+                ([int] $ace.AceFlags -band [int] [System.Security.AccessControl.AceFlags]::InheritOnly) -or
                 $ace.SecurityIdentifier.Value -eq 'S-1-3-0' -or       # CREATOR OWNER: only ever about a future child
                 $Trust -contains $ace.SecurityIdentifier.Value) { continue }
-            if ($ace.AccessMask -band $Rights) { $found += "$(Get-AccountName $ace.SecurityIdentifier) can $Verb it" }
+            if ([int] $ace.AccessMask -band $Rights) { $found += "$(Get-AccountName $ace.SecurityIdentifier) can $Verb it" }
         }
         $found | Select-Object -Unique
     }
@@ -240,8 +246,8 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
                 $problems += "$component cannot be read ($((New-Object System.ComponentModel.Win32Exception $code).Message)), so who can change it is unknown"
                 break
             }
-            if ($attributes -band [uint32][System.IO.FileAttributes]::ReparsePoint) { throw (Get-LinkRefusal $component) }
-            if (-not ($attributes -band [uint32][System.IO.FileAttributes]::Directory)) { throw "$component is a file, not a directory. Nothing was changed." }
+            if ([int64] $attributes -band [int64] [System.IO.FileAttributes]::ReparsePoint) { throw (Get-LinkRefusal $component) }
+            if (-not ([int64] $attributes -band [int64] [System.IO.FileAttributes]::Directory)) { throw "$component is a file, not a directory. Nothing was changed." }
 
             $descriptor = New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList $bytes, 0
             if ($component -ne "$root\") {

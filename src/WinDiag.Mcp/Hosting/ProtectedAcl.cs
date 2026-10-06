@@ -27,15 +27,6 @@ public static class ProtectedAcl
 
     internal static readonly SecurityIdentifier Administrators = new(WellKnownSidType.BuiltinAdministratorsSid, null);
 
-    // NT SERVICE\TrustedInstaller owns Program Files and System32: the OS's own servicing account, which
-    // can already replace the OS itself, so it adds nothing to what an administrator could do.
-    internal static readonly SecurityIdentifier TrustedInstaller =
-        new("S-1-5-80-956008885-3425522526-1101993487-2163447651-1013034063");
-
-    // CREATOR OWNER only ever describes what a future child's creator gets; Windows ignores it on the
-    // object itself, and that creator needed write access here to make the child in the first place.
-    private static readonly SecurityIdentifier CreatorOwner = new(WellKnownSidType.CreatorOwnerSid, null);
-
     private const int GenericAll = 0x10000000;
     private const int GenericWrite = 0x40000000;
     private const int GenericRead = unchecked((int)0x80000000);
@@ -61,9 +52,8 @@ public static class ProtectedAcl
     /// object, or owns it -- an owner can rewrite the DACL whatever it says.
     /// </summary>
     /// <remarks>
-    /// Allow ACEs only. A deny ACE could narrow an allow in principle, but counting on one would make this
-    /// an access-check reimplementation, and the cost of being conservative is a refusal that names the
-    /// ACE, not a hole.
+    /// Decided by <see cref="AclJudgement.Holders"/> on the raw ACEs, as tools/windiag-acl.ps1 decides it, and
+    /// only named here: see there for which ACEs count.
     /// </remarks>
     internal static IReadOnlyList<string> Exposures(
         CommonObjectSecurity security, int rights, IReadOnlyCollection<SecurityIdentifier> trusted, string verb)
@@ -71,42 +61,24 @@ public static class ProtectedAcl
         ArgumentNullException.ThrowIfNull(security);
         ArgumentNullException.ThrowIfNull(trusted);
 
-        var found = new List<string>();
-        if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner && !trusted.Contains(owner))
-        {
-            found.Add($"{Name(owner)} owns it, so can change who has access");
-        }
+        // The raw form, not GetAccessRules: that folds inheritance flags into InheritanceFlags and
+        // PropagationFlags, and the script, which has only the raw form, must reach the same answer.
+        var raw = new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0);
+        var dacl = raw.DiscretionaryAcl?.OfType<QualifiedAce>()
+            .Select(ace => new AclJudgement.Ace(
+                ace.SecurityIdentifier.Value, ace.AccessMask, ace.AceFlags, ace.AceQualifier == AceQualifier.AccessAllowed))
+            .ToList();
 
-        foreach (AccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
-        {
-            if (rule.AccessControlType != AccessControlType.Allow
-                || rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly)
-                || rule.IdentityReference is not SecurityIdentifier sid
-                || sid == CreatorOwner
-                || trusted.Contains(sid))
-            {
-                continue;
-            }
-
-            var mask = rule switch
-            {
-                FileSystemAccessRule file => (int)file.FileSystemRights,
-                RegistryAccessRule key => (int)key.RegistryRights,
-                _ => 0
-            };
-
-            if ((mask & rights) != 0)
-            {
-                found.Add($"{Name(sid)} can {verb} it");
-            }
-        }
-
-        return found.Distinct(StringComparer.Ordinal).ToList();
+        return AclJudgement.Holders(raw.Owner?.Value, dacl, rights, AclJudgement.Sids(trusted.Select(sid => sid.Value)))
+            .Select(holder => holder.Owns
+                ? $"{Name(new SecurityIdentifier(holder.Sid))} owns it, so can change who has access"
+                : $"{Name(new SecurityIdentifier(holder.Sid))} can {verb} it")
+            .ToList();
     }
 
     /// <summary>SYSTEM, Administrators, TrustedInstaller, and the service's own account when it is another.</summary>
     internal static IReadOnlyCollection<SecurityIdentifier> Trusted(SecurityIdentifier? serviceAccount) =>
-        serviceAccount is null ? [LocalSystem, Administrators, TrustedInstaller] : [LocalSystem, Administrators, TrustedInstaller, serviceAccount];
+        [.. AclJudgement.AlwaysTrusted.Select(sid => new SecurityIdentifier(sid)), .. serviceAccount is null ? [] : new[] { serviceAccount }];
 
     /// <summary>
     /// <see cref="Trusted"/>, and every direct member of the local Administrators group: who may own or change
