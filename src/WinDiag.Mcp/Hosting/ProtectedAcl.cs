@@ -707,10 +707,7 @@ public static class ProtectedAcl
             }
             catch (UnauthorizedAccessException ex)
             {
-                throw new ConfigurationException(
-                    $"{itemPath} cannot be taken over by this account ({ex.Message}): its ACL shuts out even "
-                    + "administrators, which nothing windiag makes does. Take it over and remove it as an administrator "
-                    + $"(takeown /a /r /d y /f \"{itemPath}\", then delete it), and run this again.");
+                throw new ConfigurationException(TakeOverRefusal(itemPath, ex.Message, ownedByAdministrators));
             }
 
             if (item is null)
@@ -752,6 +749,23 @@ public static class ProtectedAcl
             }
         }
     }
+
+    /// <summary>Why an item could not be opened to be taken over, and what the operator does about it.</summary>
+    /// <remarks>
+    /// The same denial means two different things. To SYSTEM or an elevated installer, which may always
+    /// change an ACL as an administrator, it means the item's ACL shuts out even administrators. To a
+    /// NetworkService or LocalService service it is the ordinary state of any file an administrator
+    /// deployed: the account may modify it but not change its ACL, which only its owner may -- and telling
+    /// that operator to delete the item, perhaps WinDiag.Mcp.exe itself, blamed a hostile ACL that was not
+    /// there.
+    /// </remarks>
+    internal static string TakeOverRefusal(string itemPath, string reason, bool ownedByAdministrators) => ownedByAdministrators
+        ? $"{itemPath} cannot be taken over by this account ({reason}): its ACL shuts out even administrators, "
+          + "which nothing windiag makes does. Take it over and remove it as an administrator "
+          + $"(takeown /a /r /d y /f \"{itemPath}\", then delete it), and run this again."
+        : $"{itemPath} cannot be taken over by this service's account ({reason}): a service that does not run as "
+          + "SYSTEM may not change the ACL of an item it does not own, as anything an administrator put there is. "
+          + "Re-run --install-service from an elevated prompt, which takes the directory over, or run the service as LocalSystem.";
 
     /// <summary>Refuses a link or hard link anywhere the listed directory holds, changing nothing.</summary>
     /// <remarks>

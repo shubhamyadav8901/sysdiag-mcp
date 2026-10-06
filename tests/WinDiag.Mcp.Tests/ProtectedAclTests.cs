@@ -167,6 +167,24 @@ public sealed class ProtectedAclTests
     }
 
     [Fact]
+    public void A_takeover_a_service_account_may_not_do_is_not_blamed_on_an_acl_that_shuts_out_administrators()
+    {
+        // A NetworkService service is denied WRITE_DAC on every file an administrator deployed: the account may
+        // modify it but only its owner may change its ACL. Told the item's ACL shuts out administrators, and to
+        // take it over and delete it, the operator would have been sent to remove WinDiag.Mcp.exe itself.
+        var item = @"C:\WinDiag\WinDiag.Mcp.exe";
+
+        var asService = ProtectedAcl.TakeOverRefusal(item, "Access is denied.", ownedByAdministrators: false);
+        var asAdministrator = ProtectedAcl.TakeOverRefusal(item, "Access is denied.", ownedByAdministrators: true);
+
+        Assert.DoesNotContain("shuts out even administrators", asService, StringComparison.Ordinal);
+        Assert.DoesNotContain("takeown", asService, StringComparison.Ordinal);
+        Assert.Contains("--install-service", asService, StringComparison.Ordinal);
+        Assert.Contains("shuts out even administrators", asAdministrator, StringComparison.Ordinal);
+        Assert.Contains($"takeown /a /r /d y /f \"{item}\"", asAdministrator, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_directory_above_that_others_can_change_is_refused_with_how_to_hand_its_ownership_to_administrators()
     {
         // Already restricted by hand but owned by an account outside the group, it was refused with "restrict
