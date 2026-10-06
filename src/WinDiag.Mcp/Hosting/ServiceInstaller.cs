@@ -241,7 +241,8 @@ public static class ServiceInstaller
         Console.Error.WriteLine(exposed.Count == 0
             ? "  key ACL   SYSTEM and Administrators only"
             : $"  key ACL   WARNING: {string.Join("; ", exposed)}. Any local user may have the token: "
-              + "restart the service (it restricts its own key) and change the token.");
+              + "restart the service, which restricts its own key if --install-service registered it, "
+              + "and change the token.");
 
         foreach (var value in environment.Where(v => !v.StartsWith("WINDIAG_TOKEN=", StringComparison.OrdinalIgnoreCase)))
         {

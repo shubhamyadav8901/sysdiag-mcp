@@ -26,20 +26,32 @@ public static class ServiceHardening
         var account = identity.User is { } user && user != ProtectedAcl.LocalSystem ? user : null;
         var serverDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
 
-        // Made here, protected, rather than left for the first dump to create: Directory.CreateDirectory
-        // inherits whatever the parent hands down, and under C:\ that is "Authenticated Users: Modify".
-        if (!Directory.Exists(artifactDirectory))
+        try
         {
-            ProtectedAcl.ProtectDirectory(artifactDirectory, account);
-        }
+            // Made here, protected, rather than left for the first dump to create: Directory.CreateDirectory
+            // inherits whatever the parent hands down, and under C:\ that is "Authenticated Users: Modify".
+            if (!Directory.Exists(artifactDirectory))
+            {
+                ProtectedAcl.ProtectDirectory(artifactDirectory, account);
+            }
 
-        foreach (var (what, path) in new[] { ("server directory", serverDirectory), ("artifact directory", artifactDirectory) })
+            foreach (var (what, path) in new[] { ("server directory", serverDirectory), ("artifact directory", artifactDirectory) })
+            {
+                StartupPermissions.RequireProtected(
+                    what, path,
+                    p => ProtectedAcl.DirectoryExposures(p, account),
+                    p => ProtectedAcl.ProtectDirectory(p, account),
+                    Warn);
+            }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or InvalidOperationException)
         {
-            StartupPermissions.RequireProtected(
-                what, path,
-                p => ProtectedAcl.DirectoryExposures(p, account),
-                p => ProtectedAcl.ProtectDirectory(p, account),
-                Warn);
+            // A service account that cannot even read who may write its own directories -- a
+            // NetworkService install pointed somewhere it was never given -- cannot vouch for them either.
+            // Refused with the reason, rather than left to escape as an unhandled crash.
+            throw new ConfigurationException(
+                $"Refusing to start as a service: could not check or create its directories ({ex.Message}). "
+                + "Re-run --install-service from an elevated prompt, which sets them up.");
         }
 
         ProtectOwnKey();
