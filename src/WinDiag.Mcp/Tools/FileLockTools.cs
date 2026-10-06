@@ -212,9 +212,22 @@ public sealed class FileLockTools
                 .Append(result.UnparsedRows == 1 ? " row" : " rows")
                 .AppendLine(" of handle.exe's output could not be attributed to a process and are not " +
                             "listed. handle.exe does not quote its fields, so a process image name " +
-                            "containing commas can make a row ambiguous -- and such a name can be chosen " +
-                            "to hide a holder or to blame another PID. This list is incomplete; do not " +
-                            "act on an absence from it.");
+                            "containing commas, or a line break inside an object name, can make a row " +
+                            "ambiguous -- and such a name can be chosen to hide a holder or to blame another " +
+                            "PID. This list is incomplete; do not act on an absence from it. For one process, " +
+                            "process_handles lists what it holds.");
+        }
+
+        if (result.Entries.FirstOrDefault(e => e.Unproven) is { } firstUnproven)
+        {
+            // Once, naming where it starts, rather than on every row: under process_handles with all object
+            // types that is nearly every row, and a mark on each would bury the rows it does not apply to.
+            builder.Append("NOTE: from handle ").Append(RenderLimits.Printable(firstUnproven.HandleValue))
+                .Append(" of ").Append(RenderLimits.Printable(firstUnproven.ProcessName))
+                .Append(" (PID ").Append(firstUnproven.ProcessId)
+                .AppendLine(") on, rows follow an object name that can contain a line break, so any of them " +
+                            "may be text from inside that name. The process is certain -- it holds that " +
+                            "object -- but those rows' type, handle and name are not proven.");
         }
 
         if (result.Entries.Count == 0 && result.UnparsedRows > 0)

@@ -287,3 +287,147 @@ public sealed class ProcessScopedHandleLayoutTests
         Assert.Contains("Two layouts are known", ex.Message);
     }
 }
+
+/// <summary>A line break inside an object name must not be able to start a row of its own.</summary>
+/// <remarks>
+/// <para>handle.exe ends each row with a line break and quotes nothing, and the name of an event, a
+/// mutant, a section, a pipe or a registry key may itself hold a CR or an LF: the native APIs take any
+/// character but a backslash in a leaf name, and an unprivileged user names their own objects. Read line
+/// by line, the text after the break became a row of its own -- <c>victim.exe,668,File,...,C:\shared\x.docx</c>
+/// -- with exactly one fit, so it was accepted and PID 668 was reported holding a file it never opened.
+/// Whatever handle.exe writes for a record end, a name can contain the same characters, so no line can be
+/// proven to start a record once a name that can hold a break has been printed.</para>
+/// <para>The rule pinned here: a name that cannot hold a line break -- none, or a path on a drive letter,
+/// whose file systems forbid control characters -- leaves the next line provably a row. After any other
+/// name, a line is attributed only to the process holding that object, and marked unproven; a line
+/// claiming any other process is counted as unattributable, never listed.</para>
+/// </remarks>
+public sealed class HandleLineBreakTests
+{
+    private const string NameSearchHeader = "Process,PID,User,Handle,Type,Share Flags,Name,Access";
+    private const string ProcessHeader = "Process,PID,User,Handle,Type,Share Flags,Name";
+
+    // How the -p capture ends a row: a space, then CRLF. The name-search capture ends with a bare LF;
+    // either way, a name can hold the same characters, which is the point of these tests.
+    private const string RowEnd = " \r\n";
+
+    public static TheoryData<string> LineBreaks => new() { "\n", "\r", "\r\n" };
+
+    [Theory]
+    [MemberData(nameof(LineBreaks))]
+    public void A_line_break_in_an_object_name_cannot_blame_another_pid_in_a_name_search(string lineBreak)
+    {
+        // evil.exe holds an event named "...\x.docx<break>victim.exe,668,File,..." -- the search term
+        // matches the full name, so handle.exe prints it, and the text after the break reads as a row.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"evil.exe,4242,Event,CONTOSO\mallory,0x00000010,\Sessions\1\BaseNamedObjects\x.docx" + lineBreak +
+                  @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + RowEnd +
+                  @"word.exe,5150,File,CONTOSO\jdoe,0x00000460,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
+        var evil = Assert.Single(parsed.Entries);
+        Assert.Equal(4242, evil.ProcessId);
+        Assert.False(evil.Unproven);
+
+        // word.exe's row is real, but nothing tells it from more of the event's name: it is counted, so the
+        // result is never read as complete -- not listed, and not silently dropped.
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_forged_row_with_a_drive_path_does_not_vouch_for_the_line_after_it()
+    {
+        // The first forged line ends in a drive path, a name that cannot hold a break -- but it is itself
+        // text from the event's name, which carries on to a second forged line.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"evil.exe,4242,Event,CONTOSO\mallory,0x00000010,\BaseNamedObjects\x.docx" + "\n" +
+                  @"svc.exe,700,File,NT AUTHORITY\SYSTEM,0x00000004,C:\decoy.txt" + "\n" +
+                  @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000008,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessId is 668 or 700);
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_line_after_a_breakable_name_that_claims_the_same_process_is_listed_but_unproven()
+    {
+        // Whatever it is, it can only be attributed to the process that holds the object whose name it
+        // may come from -- the residual this rule accepts, and says so.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"evil.exe,4242,Event,CONTOSO\mallory,0x00000010,\BaseNamedObjects\x.docx" + RowEnd +
+                  @"evil.exe,4242,File,CONTOSO\mallory,0x00000014,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.Equal(2, parsed.Entries.Count);
+        Assert.False(parsed.Entries[0].Unproven);
+        Assert.True(parsed.Entries[1].Unproven);
+        Assert.Equal(0, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_search_whose_names_are_all_drive_paths_is_proven_throughout()
+    {
+        // The default path_handle_search: file handles to paths on drive letters, none of which can hold
+        // a line break. The rule must cost this case nothing.
+        var parsed = HandleCsvParser.Parse(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-u-v-fonts.csv")));
+
+        Assert.Equal(7, parsed.Entries.Count);
+        Assert.All(parsed.Entries, e => Assert.False(e.Unproven));
+        Assert.Equal(0, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void An_unreadable_row_leaves_every_later_row_unattributable_in_a_name_search()
+    {
+        // Its name could not be told from its image name, so whether it holds a break cannot be either.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"x,668,File,SYSTEM,0x4,svc.exe,1234,File,CONTOSO\jdoe,0x00000460,\BaseNamedObjects\x.docx" + "\n" +
+                  @"victim.exe,669,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.Empty(parsed.Entries);
+        Assert.Equal(2, parsed.UnparsedRows);
+    }
+
+    [Theory]
+    [MemberData(nameof(LineBreaks))]
+    public void A_line_break_in_an_object_name_in_process_scope_is_held_to_the_scoped_pid_and_marked(string lineBreak)
+    {
+        // Under -p every row must carry the PID asked for, so a forged line naming another process is not
+        // attributed at all; one naming the scoped process is listed, marked unproven.
+        var csv = ProcessHeader + "\r\n" +
+                  @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x00000004,File,,C:\Windows\System32" + RowEnd +
+                  @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x0000000C,Key,,HKCU\Software\Contoso" + lineBreak +
+                  @"victim.exe,668,NT AUTHORITY\SYSTEM,0x00000004,File,,C:\shared\x.docx" + lineBreak +
+                  @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x00000010,File,,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv, processId: 1234);
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
+        Assert.Equal(3, parsed.Entries.Count);
+        Assert.False(parsed.Entries[0].Unproven);
+        Assert.False(parsed.Entries[1].Unproven);
+        Assert.True(parsed.Entries[2].Unproven);
+        Assert.Equal(@"C:\shared\x.docx", parsed.Entries[2].Name);
+        Assert.Equal(1, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void The_captured_process_scope_marks_every_row_after_its_first_named_registry_key()
+    {
+        // The real capture opens on a Key, whose name can hold a break: from there on nothing is proven.
+        var parsed = HandleCsvParser.Parse(File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv")), processId: 14032);
+
+        Assert.Equal(7, parsed.Entries.Count);
+        Assert.False(parsed.Entries[0].Unproven);
+        Assert.All(parsed.Entries.Skip(1), e => Assert.True(e.Unproven));
+    }
+}

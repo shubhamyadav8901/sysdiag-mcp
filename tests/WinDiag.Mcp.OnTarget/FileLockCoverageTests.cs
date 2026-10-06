@@ -115,6 +115,32 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
         }
     }
 
+    [RequiresElevatedHandleExeFact]
+    public async Task A_line_break_in_an_object_name_never_puts_a_row_on_another_pid()
+    {
+        // The parser cannot see whether handle.exe escapes a line break in a name; this asks the real
+        // tool. The event's name carries, after an LF, a whole row naming PID 4 (System). A backslash after
+        // the break would be read as a namespace separator, so the forged row avoids one.
+        var marker = $"sysdiag-break-{Guid.NewGuid():N}";
+        var forged = $"forged.exe,4,File,SYSTEM,0x00000004,{marker}-victim";
+        using var named = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\{marker}\n{forged}");
+
+        var search = await Handles().SearchAsync(marker, includeAllObjectTypes: true, CancellationToken.None);
+        var scoped = await Handles().ListForProcessAsync(Environment.ProcessId, includeAllObjectTypes: true, CancellationToken.None);
+
+        foreach (var entry in search.Entries)
+        {
+            output.WriteLine($"search: {entry.ProcessName}/{entry.ProcessId} {entry.Type} {entry.HandleValue} unproven={entry.Unproven} {entry.Name}");
+        }
+
+        // Recorded rather than asserted: whether handle.exe escapes the break decides these, and either is safe.
+        output.WriteLine($"search unattributable rows: {search.UnparsedRows}; scoped unproven rows: {scoped.Entries.Count(e => e.Unproven)}");
+
+        Assert.DoesNotContain(search.Entries, e => e.ProcessId == 4);
+        Assert.Contains(search.Entries, e => e.ProcessId == Environment.ProcessId && e.Type == "Event");
+        Assert.DoesNotContain(scoped.Entries, e => e.ProcessId != Environment.ProcessId);
+    }
+
     /// <summary>Spawns a process that opens the file exclusively and holds it.</summary>
     private static Process StartFileHolder(string path)
     {

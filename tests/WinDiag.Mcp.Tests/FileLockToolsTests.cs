@@ -160,6 +160,34 @@ public sealed class FileLockToolsTests
         Assert.DoesNotContain("holds no open file references", summary);
     }
 
+    [Fact]
+    public void Says_where_rows_stop_being_proven_and_that_only_the_process_is_certain()
+    {
+        // The structured list carries the mark per row; the text says it once, at the row it starts from.
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "PID 1234",
+            [
+                new HandleEntry("svc.exe", 1234, "Key", null, "0x0000000C", @"HKCU\Software\Contoso"),
+                new HandleEntry("svc.exe", 1234, "File", null, "0x00000010", @"C:\shared\x.docx", Unproven: true)
+            ],
+            true, false, 2, IncludedAllObjectTypes: true, ProcessScoped: true));
+
+        Assert.Contains("from handle 0x00000010 of svc.exe (PID 1234) on", summary);
+        Assert.Contains("line break", summary);
+        Assert.Contains("not proven", summary);
+    }
+
+    [Fact]
+    public void A_fully_proven_list_carries_no_note()
+    {
+        var summary = FileLockTools.RenderHandleSummary(new HandleSearchResult(
+            "x.docx", [new HandleEntry("word.exe", 5150, "File", null, "0x00000460", @"C:\shared\x.docx")],
+            true, false, 1, IncludedAllObjectTypes: false));
+
+        Assert.DoesNotContain("NOTE", summary);
+        Assert.DoesNotContain("WARNING", summary);
+    }
+
     private const string SampleCsv =
         "Process,PID,User,Handle,Type,Share Flags,Name,Access\r\napp.exe,7,File,CONTOSO\\u,0x9,C:\\t\r\n";
 

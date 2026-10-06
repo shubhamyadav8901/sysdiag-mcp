@@ -31,6 +31,19 @@ namespace WinDiag.Mcp.Diagnostics.Handles;
 /// holder on PID 668. Rows are now anchored on the run of fields a real row must have -- a decimal PID
 /// (the one asked for, under <c>-p</c>), an object type, and a <c>0x</c> handle value -- and a row that
 /// fits no reading, or more than one, is counted rather than dropped or guessed at.</para>
+/// <para><strong>Nor can a line be proven to start a row once a name that can hold a line break has
+/// been printed.</strong> A row ends with a line break, and the name of an event, a mutant, a section, a
+/// pipe or a registry key can contain one: the native APIs take any character but a backslash in a leaf
+/// name, and an unprivileged user names their own objects. The text after the break read as a row of its
+/// own, and <c>victim.exe,668,File,...,C:\shared\x.docx</c> inside an event's name pinned a file on PID
+/// 668. Whatever handle.exe writes for a record end, a name can hold the same characters -- splitting on
+/// "\r\n" only, or on a trailing space, is defeated by putting those in the name -- so the parser does
+/// not try to find where the name stops. From the first such name on, a line is listed only if it claims
+/// the process holding that object, and is marked <see cref="HandleEntry.Unproven"/>; any other line is
+/// counted as unattributable. That is what can be proven: the process. Under <c>-p</c> every row is that
+/// process, so the rows stay listed, marked. A name that cannot hold a break -- none, or a path on a drive
+/// letter, since NTFS, ReFS and FAT refuse control characters in a name -- leaves the next line a row,
+/// which keeps the common search, file handles on drive paths, fully proven.</para>
 /// </remarks>
 internal static class HandleCsvParser
 {
@@ -75,6 +88,10 @@ internal static class HandleCsvParser
         Layout? layout = null;
         var expectedPid = processId?.ToString(CultureInfo.InvariantCulture);
 
+        // The process every later line must claim, once a name that can hold a line break has been
+        // printed; null until then. NoProcess when that name's row could not be read at all.
+        int? doubtFrom = null;
+
         using var reader = new StringReader(csv);
         string? line;
         while ((line = reader.ReadLine()) is not null)
@@ -104,13 +121,16 @@ internal static class HandleCsvParser
             // otherwise silently omit -- counted, so the caller is never told "nothing matched" over it.
             if (Anchor(fields, layout, expectedPid) is not { } pidIndex)
             {
+                // Its name cannot be told from its image name, so whether it holds a line break cannot
+                // be either. Under -p it is still the scoped process's row.
                 unparsed++;
+                doubtFrom ??= processId ?? NoProcess;
                 continue;
             }
 
             int Column(int offset) => pidIndex + offset - layout.Pid;
 
-            entries.Add(new HandleEntry(
+            var entry = new HandleEntry(
                 ProcessName: string.Join(',', fields.Take(pidIndex)).Trim(),
                 ProcessId: int.Parse(fields[pidIndex].Trim(), NumberStyles.None, CultureInfo.InvariantCulture),
                 Type: fields[Column(layout.Type)].Trim(),
@@ -120,7 +140,22 @@ internal static class HandleCsvParser
                 // Paths carry a trailing space in the captured output, and a path may itself contain
                 // commas that handle.exe does not quote, so everything from the name column onwards
                 // belongs to the name. The name is last in both layouts, so this is safe in both.
-                Name: string.Join(',', fields.Skip(Column(layout.ObjectName))).TrimEnd()));
+                Name: string.Join(',', fields.Skip(Column(layout.ObjectName))).TrimEnd(),
+                Unproven: doubtFrom is not null);
+
+            if (doubtFrom is { } holder && entry.ProcessId != holder)
+            {
+                // Maybe the next process's row, maybe more of that name naming a victim: nothing in the
+                // line can say which, so it is counted and never listed against the PID it claims.
+                unparsed++;
+                continue;
+            }
+
+            entries.Add(entry);
+            if (doubtFrom is null && CanHoldLineBreak(entry.Name))
+            {
+                doubtFrom = entry.ProcessId;
+            }
         }
 
         return new HandleParseResult(entries, unparsed);
@@ -168,6 +203,20 @@ internal static class HandleCsvParser
 
         return found;
     }
+
+    /// <summary>A PID no row can carry, for doubt that began at a row whose process could not be read.</summary>
+    private const int NoProcess = -1;
+
+    /// <summary>Whether a printed object name could contain a line break, and so run on into the next line.</summary>
+    /// <remarks>
+    /// Only two kinds of name are known not to: none, and a path on a drive letter. handle.exe prints a
+    /// file on a local volume that way, and NTFS, ReFS and FAT refuse control characters in a name. An
+    /// object-manager name starts with a backslash and a registry key with its hive, so neither can be
+    /// mistaken for one. Everything else -- named objects, keys, pipes, devices -- is assumed to.
+    /// </remarks>
+    private static bool CanHoldLineBreak(string name) =>
+        name.Length > 0 &&
+        !(name.Length >= 3 && char.IsAsciiLetter(name[0]) && name[1] == ':' && name[2] == '\\');
 
     private static bool IsPid(string field)
     {
@@ -239,7 +288,8 @@ internal static class HandleCsvParser
 
 /// <summary>What one run of handle.exe parsed to.</summary>
 /// <param name="UnparsedRows">
-/// Rows long enough to be data that could not be attributed to one process. Each is a handle that
-/// exists and is not in <see cref="Entries"/>.
+/// Rows long enough to be data that could not be attributed to one process: an ambiguous image name, or a
+/// line after an object name that can hold a line break that claims another process. Each may be a handle
+/// that exists and is not in <see cref="Entries"/>.
 /// </param>
 internal sealed record HandleParseResult(IReadOnlyList<HandleEntry> Entries, int UnparsedRows);

@@ -1231,6 +1231,10 @@
               },
               "name": {
                 "type": "string"
+              },
+              "unproven": {
+                "type": "boolean",
+                "default": false
               }
             },
             "required": [
@@ -1411,6 +1415,10 @@
               },
               "name": {
                 "type": "string"
+              },
+              "unproven": {
+                "type": "boolean",
+                "default": false
               }
             },
             "required": [

@@ -6,13 +6,19 @@ namespace WinDiag.Mcp.Diagnostics.Handles;
 /// include share flags or granted access, despite handle.exe printing both in its CSV header --
 /// see <see cref="HandleCsvParser"/>.
 /// </remarks>
+/// <param name="Unproven">
+/// The row came after an object name that can contain a line break, so it may be text from inside that
+/// name rather than a row of its own. Its process is certain -- the parser lists such a row only under the
+/// process that holds that object -- but its type, handle value and name are not.
+/// </param>
 public sealed record HandleEntry(
     string ProcessName,
     int ProcessId,
     string Type,
     string? User,
     string HandleValue,
-    string Name);
+    string Name,
+    bool Unproven = false);
 
 /// <summary>Result of an exhaustive handle search.</summary>
 /// <param name="Elevated">
@@ -32,8 +38,9 @@ public sealed record HandleEntry(
 /// and conflating them sends the caller down the wrong path.
 /// </param>
 /// <param name="UnparsedRows">
-/// Rows handle.exe printed that could not be attributed to one process -- a comma in an image name
-/// can make a row ambiguous, since handle.exe quotes nothing. Each is a handle that exists and is not in
+/// Rows handle.exe printed that could not be attributed to one process -- a comma in an image name can
+/// make a row ambiguous, since handle.exe quotes nothing, and after an object name that can hold a line
+/// break a line claiming another process may be more of that name. Each may be a handle that exists and is not in
 /// <see cref="Entries"/>, so a non-zero count forbids reading an empty list as "nothing holds it".
 /// </param>
 public sealed record HandleSearchResult(
