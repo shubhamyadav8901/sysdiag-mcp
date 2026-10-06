@@ -17,8 +17,10 @@
     a strange thing to need for a tool whose whole point is that you have rights on the target rather
     than on your own workstation. PsExec needs nothing configured locally.
 
-    Credentials are used once, to open an authenticated IPC$ session. PsExec then rides that session
-    and runs the installer as SYSTEM (-s), so the password never reaches any command line.
+    Credentials are used once, in this process, to open an authenticated IPC$ session through
+    WNetAddConnection2 -- not `net use`, whose command line would carry the password into process
+    auditing and EDR on this machine. PsExec then rides that session and runs the installer as SYSTEM
+    (-s), so the password never reaches any command line.
 
 .PARAMETER Target
     Target IP or host name. Needs 445 and 135 reachable, and 4024 free.
@@ -85,7 +87,28 @@ if (-not $Credential) {
 }
 
 $user = $Credential.UserName
-$password = $Credential.GetNetworkCredential().Password
+
+# WNetAddConnection2 is what `net use` calls; calling it here keeps the password inside this process.
+# Guarded because Add-Type refuses to redefine a type, and the fleet example runs this script in a loop.
+if (-not ('WinDiagBootstrap.Net' -as [type])) {
+    Add-Type -Namespace WinDiagBootstrap -Name Net -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public class NetResource
+{
+    public int Scope; public int Type; public int DisplayType; public int Usage;
+    public string LocalName; public string RemoteName; public string Comment; public string Provider;
+}
+
+[DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+public static extern int WNetAddConnection2(NetResource resource, string password, string user, int flags);
+
+[DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+public static extern int WNetCancelConnection2(string name, int flags, bool force);
+'@
+}
+
+# Forced, which is what `net use /delete /y` did: the cancel otherwise fails while handles are open.
+function Close-IpcSession { param([string] $Server) [void][WinDiagBootstrap.Net]::WNetCancelConnection2("\\$Server\IPC$", 0, $true) }
 
 # Resolved once, and everything downstream uses the address rather than the name. Find-NetRoute takes
 # only an IP literal, and binding the listener to a name that resolves differently on the target than
@@ -128,10 +151,15 @@ Step "authenticating to $targetIp"
 
 # Dropped first because Windows allows only one set of credentials per server: a session left over
 # from earlier work fails the new one with error 1219 rather than replacing it.
-Invoke-Native { net use "\\$targetIp\IPC$" /delete /y } | Out-Null
+Close-IpcSession $targetIp
 
-Invoke-Native { net use "\\$targetIp\IPC$" $password /user:$user } | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Could not authenticate to $targetIp as $user (net use exited $LASTEXITCODE)." }
+$ipc = New-Object 'WinDiagBootstrap.Net+NetResource'
+$ipc.RemoteName = "\\$targetIp\IPC$"
+$result = [WinDiagBootstrap.Net]::WNetAddConnection2($ipc, $Credential.GetNetworkCredential().Password, $user, 0)
+if ($result -ne 0) {
+    throw ("Could not authenticate to $targetIp as ${user}: " +
+           "$((New-Object System.ComponentModel.Win32Exception $result).Message) (error $result).")
+}
 
 try {
     # --- architecture ------------------------------------------------------------------------------
@@ -260,9 +288,7 @@ try {
     Write-Host "Later builds go through update_self; this script is not needed for it again."
 }
 finally {
-    # Guarded and /y for the same reason as every other native call here: an unguarded stderr line
-    # raised in a finally block REPLACES the exception on its way out, so a real install failure would
-    # be reported as an obscure net use error instead. /y because the delete prompts on stdin when
-    # handles are still open, which in an unattended loop is a hang rather than a failure.
-    Invoke-Native { net use "\\$targetIp\IPC$" /delete /y } | Out-Null
+    # Its result is ignored, and it cannot throw: anything raised in a finally block REPLACES the
+    # exception on its way out, so a real install failure would be reported as a cleanup error instead.
+    Close-IpcSession $targetIp
 }
