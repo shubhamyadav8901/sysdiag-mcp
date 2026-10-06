@@ -20,7 +20,7 @@ of them behind one MCP registration. Most of this README is about WinDiag, the W
 
 Download the zip for each machine from the [latest release](https://github.com/shubhamyadav8901/sysdiag-mcp/releases/latest):
 `windiag-win-x64` or `windiag-win-x86`, `linuxdiag-linux-x64`, `macdiag-osx-arm64` or `macdiag-osx-x64`, and `diagrelay-<platform>` for the
-relay. Each carries a `SHA256.txt`. Every binary is self-contained, so no .NET install is needed.
+relay. Each carries a `SHA256.txt`, the licence and `THIRD-PARTY-NOTICES.md`. Every binary is self-contained, so no .NET install is needed.
 
 To diagnose the machine you are on, register its server with Claude Code over stdio:
 
@@ -233,14 +233,17 @@ because an unverified copy is a different artifact from a verified one.
 **These are the first thing the relay does that touches local disk**, so the local side is confined the
 way the target side already confines `put_file` and `get_file` — reusing `FileScope`, not a second copy
 of it. `SYSDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of the
-build tree the relay sits in plus the local artifact directory; a `..` is judged by where it lands.
+per-user artifact folder plus, in a build tree, the tree the relay sits in; a `..` is judged by where it lands,
+and a link by where it leads.
 
-That first default is the directory *above* the relay executable's own, which is what makes
-`push_file` work out of the box: the relay ships in `artifacts/diagrelay` and the builds it exists to send
-sit beside it in `artifacts/win-x64`. The climb is one level and stops short of a drive root, so a relay
-unpacked somewhere odd cannot quietly default to an entire disk. Both defaults resolve against the
-running executable, so under `dotnet run` they point into dotnet's install directory — set the variable
-when developing.
+The per-user folder is `%TEMP%\sysdiag` on Windows and `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag`
+elsewhere. The build tree is added only when the relay runs from `artifacts/diagrelay` (or
+`artifacts/diagrelay-<rid>`): there the root is `artifacts`, so `push_file` can send the builds that sit
+beside it in `artifacts/win-x64` out of the box. Anywhere else — `~/bin`, an unpacked release zip, under
+`dotnet run` — the per-user folder is the only default, because the folder above an ordinary install is
+the home directory or `Downloads`, and one `push_file` from there could send `~/.ssh` or the targets file
+to a target. So with a release zip, copy what you push into the per-user folder, or set the variable to
+a folder that holds only builds.
 
 Use these instead of calling a target's `put_file`/`get_file` yourself for anything but a small file.
 `fetch-from-target.ps1` still works and needs no relay, which is what makes it the right tool from a
@@ -921,7 +924,7 @@ same meanings, except:
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
-| `SYSDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/diagrelay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
+| `SYSDIAG_RELAY_FILE_ROOT` | a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp`; plus the `artifacts` directory when the relay runs from `artifacts/diagrelay` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The `artifacts` default exists because a relay published to `artifacts/diagrelay` sends the builds beside it in `artifacts/win-x64`; anywhere else — `~/bin`, an unpacked release zip, `dotnet run` — it does not apply, so set this to push builds from another folder |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
 silently defaulting, because the flag removes capability.
