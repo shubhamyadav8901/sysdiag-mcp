@@ -75,6 +75,11 @@ public sealed class BootstrapAclScriptTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+
+        // Windows PowerShell builds its module path from this when it is set. Started from PowerShell 7 --
+        // CI's default shell -- it inherits 7's, then fails to load 7's Microsoft.PowerShell.Security and has
+        // no Set-Acl at all. An operator running the script in either shell does not hit this.
+        start.Environment.Remove("PSModulePath");
         foreach (var arg in new[]
                  {
                      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
