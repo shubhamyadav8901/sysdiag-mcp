@@ -523,6 +523,16 @@ if ($script:UseHttp) {
     # per-file hash check in the staging loop below (file_signatures on the target's own copy) is a
     # stronger drift signal than the manifest anyway: it compares the file that is actually there
     # against the one about to be sent, rather than a record of what was sent last time.
+    #
+    # put_file writes into the server's own folder only with the self-update grant -- a file planted
+    # there is run or loaded as the service's account -- so without it every chunk below would be
+    # refused. Said once, up front, with the two ways forward.
+    $preflight = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool capabilities -Raw
+    if ($preflight -and -not (@(($preflight | ConvertFrom-Json).tools.tool) -contains 'update_self')) {
+        throw "$Target was started without WINDIAG_ALLOW_SELF_UPDATE, so put_file cannot stage into " +
+              "$RemotePath. Re-run with -Smb to stage over the admin share, or restart the server with " +
+              "WINDIAG_ALLOW_SELF_UPDATE=1 (--allow-self-update on --install-service)."
+    }
     Write-Step "Staging to $RemotePath on $Target over the server's own channel (no SMB)"
 }
 else {

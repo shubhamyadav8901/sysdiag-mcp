@@ -146,10 +146,10 @@ public sealed class ToolRegistrationTests
     [Fact]
     public void Offers_put_file_on_a_writable_server_with_no_flag()
     {
-        // Unlike run_command and update_self, put_file needs no opt-in: confined to windiag's own
-        // directories it grants nothing new, and its point is to remove SMB from staging. The
-        // arbitrary-write flag only widens where it may write, which is a call-time decision, not a
-        // registration one.
+        // Unlike run_command and update_self, put_file needs no opt-in: confined to the artifact
+        // directory it grants nothing new, and its point is to remove SMB from staging. The
+        // arbitrary-write and self-update flags only widen where it may write, which is a call-time
+        // decision, not a registration one.
         Assert.Contains("put_file", ToolNames(Options()));
     }
 
@@ -164,15 +164,22 @@ public sealed class ToolRegistrationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void Put_file_may_write_into_the_server_directory_whatever_the_self_update_grant(bool selfUpdate)
+    public void Put_file_may_write_into_the_server_directory_only_with_the_self_update_grant(bool selfUpdate)
     {
-        // windiag has always let put_file stage into its own folder -- that is how a build reaches
-        // update_self without SMB -- and the Linux server's gate on it must not reach this one.
+        // The server runs Sysinternals binaries it finds beside itself and is loaded from that folder,
+        // so a file planted there with put_file ran as SYSTEM on a server granted neither run_command
+        // nor update_self: the token alone was code execution. Staging a build for update_self is the
+        // only reason to write there, so it follows that grant -- and the refusal names the variable as
+        // --help spells it.
         var services = new ServiceCollection();
         services.AddLogging(builder => builder.ClearProviders());
         ServerBuilder.ConfigureServices(services, Options(allowSelfUpdate: selfUpdate));
         using var provider = services.BuildServiceProvider();
 
-        Assert.True(provider.GetRequiredService<Diag.Mcp.Server.Files.FileTransferOptions>().ServerDirectoryWritable);
+        var files = provider.GetRequiredService<Diag.Mcp.Server.Files.FileTransferOptions>();
+
+        Assert.Equal(selfUpdate, files.ServerDirectoryWritable);
+        Assert.Equal("WINDIAG_ALLOW_SELF_UPDATE=1", files.ServerDirectorySetting);
+        Assert.Contains(files.ServerDirectorySetting!, ServerBuilder.HelpText, StringComparison.Ordinal);
     }
 }

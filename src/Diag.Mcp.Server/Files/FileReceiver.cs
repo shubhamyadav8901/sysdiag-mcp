@@ -18,7 +18,7 @@ namespace Diag.Mcp.Server.Files;
 /// SMB-to-those-folders plus <c>update_self</c> did not already allow. Anywhere else is arbitrary write
 /// as the server's account, one step from code execution, and is refused unless explicitly enabled.
 /// A server may also close its own folder unless its self-update grant is on
-/// (<see cref="FileTransferOptions.ServerDirectoryWritable"/>): LinuxDiag does, windiag does not.
+/// (<see cref="FileTransferOptions.ServerDirectoryWritable"/>), and every server does.
 /// The path is canonicalised with <see cref="Path.GetFullPath(string)"/> first, and its links resolved,
 /// so a <c>..</c> or a link that climbs out of an owned directory is judged by where the write actually
 /// lands, not by how it was spelled -- including a link at the last component, which a Unix write
@@ -70,10 +70,10 @@ public sealed class FileReceiver : IFileReceiver
                 $"{alternative}. (run_command can also place a file anywhere if it is enabled.)");
         }
 
-        // Staging a build for update_self is the only reason to write beside the server's binary, and on
-        // Linux that binary is a root service's: a planted file there is loaded or run as root. So a
-        // server that says so ties the write to the self-update grant; windiag leaves it open, as it
-        // always has. Checked before any disk write, so an append chunk is refused the same way.
+        // Staging a build for update_self is the only reason to write beside the server's binary, and that
+        // binary is an elevated service's: a planted file there is loaded or run as root or SYSTEM. So a
+        // server that says so ties the write to the self-update grant. Checked before any disk write, so
+        // an append chunk is refused the same way.
         if (inServerDirectory && !_options.ServerDirectoryWritable && !_options.AllowArbitraryWrite)
         {
             throw new FileTransferException(

@@ -79,7 +79,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off. It is also the one tool a draining server still accepts, so calling it again with `force` stops the wait |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
-| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
+| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to the artifact directory unless arbitrary write is enabled, and to the server's own folder only with the self-update grant |
 | `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
 
 ## Requirements
@@ -399,7 +399,7 @@ Add it to the relay's `~/.sysdiag-targets.json` like any target:
 ```
 
 Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `update_self`, so both
-need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). Unlike windiag,
+need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). As on windiag,
 `put_file` does not write into the server's own directory without it: that directory holds a root
 service's binary, and staging a build is the only reason to write there. The artifact directory stays
 writable either way -- unless it is placed inside the server's own directory, which gets no exemption:
@@ -719,9 +719,9 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--password <value>` | Required for an account that is not built in |
 | `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
 | `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it |
-| `--allow-self-update` | Registers `update_self` |
+| `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
-| `--allow-arbitrary-write` | Lets `put_file` write outside the server's own directories |
+| `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
 | `--allow-arbitrary-read` | Lets the read tools open files outside them |
 | `--read-only` | Drops every state-changing tool |
 | `--firewall-from <address>` | Opens the bind port inbound from one address, removed on uninstall. An address, never a subnet |
@@ -896,8 +896,8 @@ level through an ordinary tool call. The token is the whole boundary.
 
 ## Configuration
 
-The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`
-and `put_file` writes into the server's own directory only with `LINUXDIAG_ALLOW_SELF_UPDATE`. `LinuxDiag.Mcp --help` lists them.
+The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`.
+`LinuxDiag.Mcp --help` lists them.
 
 The macOS server reads them as `MACDIAG_*`, from its `--env-file` laid over the environment. They have the
 same meanings, except:
@@ -911,9 +911,9 @@ same meanings, except:
 | Variable | Default | Meaning |
 |---|---|---|
 | `WINDIAG_READ_ONLY` | `false` | `1`/`true` drops all state-changing tools from registration |
-| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`. Gated separately because it lets the bearer token replace an elevated binary; `WINDIAG_READ_ONLY` still overrides it |
+| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`, and lets `put_file` write into the server's own directory to stage a build. Gated separately because it lets the bearer token replace an elevated binary -- or plant a Sysinternals tool or DLL beside it, which the server would run; `WINDIAG_READ_ONLY` still overrides it |
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
-| `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write outside the server's own directories. `put_file` itself is always available on a writable server, scoped to those dirs; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
+| `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write anywhere, the server's own directory included. `put_file` itself is always available on a writable server, scoped to the artifact directory; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
 | `WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS` | `1800` | How long `update_self` waits for running tool calls to finish before restarting anyway (1–86400). A backstop, not a schedule: on an idle target the wait is milliseconds. 30 minutes clears `capture_activity`'s ~21-minute worst case, which is the call most likely to be running when you update. A full-length `run_command` can exceed it — raise this, or pass `force` |
 | `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |

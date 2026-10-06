@@ -31,7 +31,7 @@ because they are far more than diagnostics. Settings are named here with the Win
 | Grant | Default | What it really is |
 |---|---|---|
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | off | Arbitrary code execution as the server's account |
-| `WINDIAG_ALLOW_SELF_UPDATE` | off | Replacing the server's own elevated binary, and running it |
+| `WINDIAG_ALLOW_SELF_UPDATE` | off | Replacing the server's own elevated binary, and running it; `put_file` into the server's own folder, whose binaries and DLLs it runs |
 
 With either enabled, **the bearer token is equivalent to code execution on that host.** That is
 intended, documented, and the reason both are off unless a deployment explicitly turns them on.

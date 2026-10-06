@@ -88,9 +88,10 @@ public static class ServerBuilder
           WINDIAG_READ_ONLY                       1/true to drop all state-changing tools (default: false)
           WINDIAG_ALLOW_COMMAND_EXECUTION         1/true to register run_command, an arbitrary shell
                                                   as the server's account (default: false; read-only wins)
-          WINDIAG_ALLOW_ARBITRARY_WRITE           1/true to let put_file write outside the server's own
-                                                  directories (default: false; put_file itself is always
-                                                  available on a writable server, scoped to those dirs)
+          WINDIAG_ALLOW_ARBITRARY_WRITE           1/true to let put_file write anywhere, the server's own
+                                                  directory included (default: false; put_file itself is
+                                                  always available on a writable server, scoped to the
+                                                  artifact directory)
           WINDIAG_ALLOW_ARBITRARY_READ            1/true to let the read tools open files outside those
                                                   directories (default: false). WINDIAG_READ_ONLY does
                                                   NOT override this one -- reading is what a read-only
@@ -98,7 +99,8 @@ public static class ServerBuilder
                                                   is the deliberate combination for a look-but-do-not-
                                                   touch target
           WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
-                                                  executable and restarts (default: false)
+                                                  executable and restarts, and to let put_file write into
+                                                  the server's own directory to stage it (default: false)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
           WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS    How long update_self waits for running calls before
                                                   restarting anyway, 1..86400 (default: 1800)
@@ -153,9 +155,17 @@ public static class ServerBuilder
         // The surface every server in the family shares -- the two call-tool filters, file transfer and
         // capabilities, the activity tracker and the shutdown window -- registered by the kit in one
         // call. This server's own tools follow, on the builder it returns.
+        //
+        // The server's own folder is writable only with the self-update grant. Left open, it made the
+        // token alone code execution as SYSTEM: put_file could plant handle64.exe there, which
+        // ToolLocator prefers to any installed copy, or a DLL the process loads from its own folder,
+        // and the next path_handle_search or capture_dump ran it -- with run_command and update_self
+        // both off. Staging a build for update_self is the only reason to write there.
         var files = new FileTransferOptions(
             options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
-            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1");
+            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1",
+            ServerDirectoryWritable: options.AllowSelfUpdate,
+            ServerDirectorySetting: "WINDIAG_ALLOW_SELF_UPDATE=1");
         var update = new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout);
 
         var mcp = services
