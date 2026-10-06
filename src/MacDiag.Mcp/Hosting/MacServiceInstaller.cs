@@ -44,6 +44,7 @@ public static partial class MacServiceInstaller
 
         OwnedDirectory(SettingsDirectory, OwnerOnlyDirectory);
         WriteFresh(options.EnvironmentFilePath, options.EnvironmentFile(), OwnerOnlyFile);
+        Console.Error.WriteLine($"[macdiag] {options.EnvironmentFilePath}: {options.GrantSummary()}");
         ArtifactDirectory(options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory, chosen: options.ArtifactDirectory is not null);
         OwnedDirectory(LogDirectory, OwnerOnlyDirectory);
 

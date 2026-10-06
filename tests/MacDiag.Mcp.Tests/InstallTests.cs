@@ -157,6 +157,14 @@ public sealed class InstallTests
     }
 
     [Fact]
+    public void The_grants_printed_at_install_name_every_grant_including_the_ones_not_given()
+    {
+        var options = Parse("--install-service", "--http", "http://0.0.0.0:4025", "--read-only", "--allow-arbitrary-read");
+
+        Assert.Equal("read-only: yes; self-update: no; command execution: no; arbitrary write: no; arbitrary read: yes", options.GrantSummary());
+    }
+
+    [Fact]
     public void Each_label_has_its_own_settings_file_so_a_second_install_never_touches_the_first()
     {
         var a = Parse("--install-service", "--http", "http://0.0.0.0:4025");

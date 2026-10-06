@@ -20,6 +20,16 @@ if (!OperatingSystem.IsMacOS())
     return 2;
 }
 
+try
+{
+    MacCommandLine.Check(args);
+}
+catch (ConfigurationException ex)
+{
+    Console.Error.WriteLine($"[macdiag] {ex.Message}");
+    return 2;
+}
+
 // Service management: sets this Mac up from the one file already on it, and never starts a server. Handled
 // before the options below because these switches configure the settings the daemon will get, not this process's.
 if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--service-status"))
