@@ -6,7 +6,8 @@ namespace WinDiag.Mcp.Hosting;
 
 /// <summary>
 /// What a server started by the SCM checks about itself before it serves anything: that nobody but an
-/// administrator can write its directories, and that nobody else can read its token.
+/// administrator can write its directories or anything in them, that neither is reached through a link,
+/// and that nobody else can read its token.
 /// </summary>
 /// <remarks>
 /// Run on every service start, not only at install, because a target installed by an older build, or

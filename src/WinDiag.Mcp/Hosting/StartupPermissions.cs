@@ -60,11 +60,14 @@ public static class StartupPermissions
                 + "restricts it, or move the server somewhere only administrators can write.");
         }
 
+        // What the repair cannot undo is said, not left to be assumed: a file planted while the directory
+        // was writable is restricted now but still there, and a handle opened then keeps its access.
         warn(
             $"The {what} {path} could be changed by accounts other than SYSTEM and Administrators "
-            + $"({string.Join("; ", found)}). It is now restricted to them. Anything placed there before "
-            + "this is still there: check the files against the deployment (windiag-staged.json), and "
-            + "redeploy if in doubt.");
+            + $"({string.Join("; ", found)}). It and everything in it are now restricted to them. Anything "
+            + "placed there before this is still there, and a handle opened on it before keeps the access it "
+            + "had until it is closed: check the files against the deployment (windiag-staged.json), restart "
+            + "the machine, which closes every such handle, and redeploy if in doubt.");
     }
 
     /// <summary>Restricts the service key if others can read the token in it, and says the token must change.</summary>

@@ -55,8 +55,11 @@ follow from that, and which are deliberate rather than oversights:
 - **The directories a Windows service runs code from are writable only by SYSTEM and Administrators.**
   The server runs Sysinternals binaries from beside itself and `self-update.cmd` from its artifact
   directory, and a folder made under `C:\` inherits *Authenticated Users: Modify*. The installer and the
-  bootstrap scripts give both directories a protected ACL, and a service checks again on every start and
-  refuses to run from one it cannot restrict.
+  bootstrap scripts give both directories a protected ACL and hand what they already hold to
+  Administrators, and refuse one that is, is reached through, or holds a link; a service checks again on
+  every start and refuses to run from one it cannot restrict. Restricting a directory a local user could
+  already write does not undo what they did meanwhile: a file they planted stays, and a handle they
+  opened keeps its access until it is closed, which a restart guarantees.
 - **There is no default bind address.** `--http` with nothing to bind to is refused rather than
   quietly listening on `0.0.0.0`.
 - **File access is confined** to directories the server owns, on both the read and write sides, through

@@ -25,15 +25,58 @@ function Protect-WinDiagDirectory {
         throw "$Path is the root of a drive. Give windiag a directory of its own, such as C:\WinDiag."
     }
 
-    $existed = Test-Path -LiteralPath $Path
-    if (-not $existed) {
-        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    # The same rule as ProtectedAcl.ProtectDirectory in the server, written twice because this runs before
+    # anything from this repository is on the target: bootstrap-winrm.ps1 sends this function alone.
+    # BootstrapAclScriptTests runs both on the same planted directory and compares what they leave.
+
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $root = [System.IO.Path]::GetPathRoot($full).TrimEnd('\')
+    $components = @()
+    for ($p = $full; $p -and $p.TrimEnd('\') -ne $root; $p = [System.IO.Path]::GetDirectoryName($p)) {
+        $components = @($p) + $components
     }
-    elseif ((Get-Item -LiteralPath $Path -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-        # Set-Acl follows a junction, so a C:\WinDiag that some user made a junction to C:\Windows would
-        # have that restricted and handed to Administrators instead.
-        throw "$Path is a link to somewhere else, not a directory of windiag's own. Remove it and run this again."
+
+    # Set-Acl follows a junction, so a C:\WinDiag that some user made a junction to C:\Windows would have
+    # that restricted and handed to Administrators instead -- and the junction stays theirs, to point
+    # somewhere else once the check is done. A link above the directory is the same thing a level up.
+    # Attributes read by path do not follow the last component, so each one is judged as itself.
+    function Assert-NoLinkOnTheWay {
+        foreach ($component in $components) {
+            if (-not ([System.IO.Directory]::Exists($component) -or [System.IO.File]::Exists($component))) { return }
+            if ([System.IO.File]::GetAttributes($component) -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw ("$component is a link -- a junction, a symbolic link or a mounted folder" +
+                       $(if ($component -ne $full) { ", and $full is reached through it" } else { '' }) +
+                       '. Whoever made it can point it somewhere else once it has been checked. Nothing was ' +
+                       'changed. Give windiag a directory of its own that no link leads to.')
+            }
+        }
     }
+
+    # A junction or symbolic link would carry the takeover below to wherever it points -- a user's profile,
+    # or System32. A hard link would too, less visibly: it is the same file as one elsewhere, and a user can
+    # give any file they can read a second name. Refused rather than skipped: a link nobody expected is
+    # itself the warning, and windiag never makes either.
+    function Assert-Ownable([System.IO.FileSystemInfo] $Item) {
+        if ($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw ("$($Item.FullName) is a link, which windiag never puts in its directories. " +
+                   "Nothing beneath it was changed; remove it and run this again.")
+        }
+        if (-not $Item.PSIsContainer -and $Item.LinkType -eq 'HardLink') {
+            throw ("$($Item.FullName) is a hard link: the same file as one elsewhere on the volume, so " +
+                   'restricting it would restrict that one too. Windiag never makes one. Remove it and run this again.')
+        }
+    }
+
+    # Before anything is changed, so a directory holding a link is refused untouched. Checked again item
+    # by item during the takeover, since until the directory is restricted its contents can still change.
+    function Assert-NothingLinked([string] $Directory) {
+        foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force)) {
+            Assert-Ownable $item
+            if ($item.PSIsContainer) { Assert-NothingLinked $item.FullName }
+        }
+    }
+
+    Assert-NoLinkOnTheWay
 
     $administrators = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'
 
@@ -50,7 +93,29 @@ function Protect-WinDiagDirectory {
             'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
     }
 
+    $existed = [System.IO.Directory]::Exists($Path)
+    if (-not $existed) {
+        # Created with the ACL already on it, not given it afterwards: in between it would inherit
+        # "Authenticated Users: Modify" from C:\, and a handle a user opened then keeps that access
+        # whatever the ACL later says. Windows PowerShell and PowerShell 7 spell this differently.
+        if ($PSVersionTable.PSEdition -eq 'Core') {
+            Add-Type -AssemblyName System.IO.FileSystem.AccessControl
+            [void][System.IO.FileSystemAclExtensions]::CreateDirectory($acl, $Path)
+        }
+        else {
+            [void][System.IO.Directory]::CreateDirectory($Path, $acl)
+        }
+    }
+    else {
+        Assert-NothingLinked $Path
+    }
+
     Set-Acl -LiteralPath $Path -AclObject $acl
+
+    # Again, now that only administrators can rename it: had it been swapped for a junction between the
+    # check above and Set-Acl, the takeover below must not follow it. The server's own copy closes that
+    # gap entirely by holding the directory open; a script sent bare to a target cannot.
+    Assert-NoLinkOnTheWay
 
     # What was already inside keeps its own owner and its explicit ACEs through the change above -- only
     # inherited ACEs are replaced -- and an owner can always grant itself write access again. A user who
@@ -61,12 +126,7 @@ function Protect-WinDiagDirectory {
     # and the reset.
     function Reset-WinDiagContents([string] $Directory) {
         foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force)) {
-            # A junction or symbolic link would carry the reset to wherever it points -- a user's profile,
-            # or System32. Refused rather than skipped: a link nobody expected is itself the warning.
-            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                throw ("$($item.FullName) is a link, which windiag never puts in its directories. " +
-                       "Nothing beneath it was changed; remove it and run this again.")
-            }
+            Assert-Ownable $item
 
             # Explicit SYSTEM and Administrators ACEs, and inheritance left on so a service account's ACE on
             # the directory still reaches the item. Never a security object with no rules added: a fresh one
@@ -99,8 +159,9 @@ function Protect-WinDiagDirectory {
         if ($held.Count -gt 0) {
             Write-Warning ("$Path already existed and held: $(($held | Select-Object -First 5) -join ', ')" +
                 $(if ($held.Count -gt 5) { ', ...' } else { '' }) + '. It is now owned by Administrators and ' +
-                'writable only by SYSTEM and Administrators, but whatever it holds was put there before: ' +
-                "staging replaces windiag's own files; remove anything else.")
+                'writable only by SYSTEM and Administrators, but whatever it holds was put there before, and a ' +
+                'handle opened on it before keeps its access until it is closed: staging replaces windiag''s ' +
+                'own files; remove anything else, and restart the target if in doubt.')
         }
     }
 }

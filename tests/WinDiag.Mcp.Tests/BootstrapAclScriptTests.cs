@@ -5,11 +5,19 @@ using WinDiag.Mcp.Hosting;
 
 namespace WinDiag.Mcp.Tests;
 
-/// <summary>Elevated sessions only: the script takes ownership, which an unelevated one cannot. CI's runner is elevated.</summary>
+/// <summary>Elevated Windows sessions only: these take ownership, which an unelevated one cannot. CI's runner is elevated.</summary>
 public sealed class ElevatedFactAttribute : FactAttribute
 {
     public ElevatedFactAttribute()
     {
+        // Asked first, because WindowsIdentity throws anywhere else, which reported these as failures
+        // rather than skips when the pure tests in this project were run on a Mac or Linux.
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip = "Requires Windows ACLs.";
+            return;
+        }
+
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
         {
@@ -34,11 +42,11 @@ public sealed class BootstrapAclScriptTests
         {
             var planted = Path.Combine(root, "handle64.exe");
             File.WriteAllText(planted, string.Empty);
-            GrantEveryoneFullControl(new FileInfo(planted));
+            PlantedTree.GrantEveryoneFullControl(new FileInfo(planted));
             var nested = Directory.CreateDirectory(Path.Combine(root, "nested")).FullName;
             var nestedFile = Path.Combine(nested, "self-update.cmd");
             File.WriteAllText(nestedFile, string.Empty);
-            GrantEveryoneFullControl(new FileInfo(nestedFile));
+            PlantedTree.GrantEveryoneFullControl(new FileInfo(nestedFile));
 
             RunProtectScript(root);
 
@@ -59,14 +67,138 @@ public sealed class BootstrapAclScriptTests
         }
     }
 
-    private static void GrantEveryoneFullControl(FileInfo file)
+    [ElevatedFact]
+    public void The_script_and_the_server_leave_the_same_owners_and_aces_on_a_directory_a_user_filled()
     {
-        var acl = file.GetAccessControl();
-        acl.AddAccessRule(new FileSystemAccessRule(Everyone, FileSystemRights.FullControl, AccessControlType.Allow));
-        file.SetAccessControl(acl);
+        // One rule in two places: the script runs before anything from this repository is on the target, so
+        // it cannot call the server's ProtectedAcl.ProtectDirectory. What each leaves behind must not differ.
+        var byScript = PlantedTree.UnderSystemDriveRoot();
+        var byServer = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            PlantedTree.Plant(byScript);
+            PlantedTree.Plant(byServer);
+
+            RunProtectScript(byScript);
+            ProtectedAcl.ProtectDirectory(byServer, serviceAccount: null, ownedByAdministrators: true);
+
+            Assert.Equal(Describe(byServer), Describe(byScript));
+            Assert.Empty(ProtectedAcl.DirectoryExposures(byScript, serviceAccount: null));
+        }
+        finally
+        {
+            PlantedTree.Remove(byScript);
+            PlantedTree.Remove(byServer);
+        }
     }
 
+    [ElevatedFact]
+    public void The_script_refuses_a_directory_reached_through_a_junction_and_changes_nothing_where_it_points()
+    {
+        // C:\WinDiag made by a user as a junction into a folder of theirs, with the build to be staged below it.
+        var target = PlantedTree.UnderSystemDriveRoot();
+        var link = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, $"windiag-test-{Guid.NewGuid():N}");
+        try
+        {
+            PlantedTree.LinkDirectory(link, target);
+            var before = Sddl(target);
+
+            foreach (var path in new[] { link, Path.Combine(link, "artifacts") })
+            {
+                var (exit, output) = RunScript(path);
+                Assert.True(exit != 0, $"the script accepted {path}: {output}");
+                Assert.Contains("is a link", output, StringComparison.Ordinal);
+            }
+
+            Assert.Equal(before, Sddl(target));
+            Assert.False(Directory.Exists(Path.Combine(target, "artifacts")));
+        }
+        finally
+        {
+            PlantedTree.Remove(link);
+            PlantedTree.Remove(target);
+        }
+    }
+
+    [ElevatedFact]
+    public void The_script_refuses_a_hard_link_and_leaves_the_file_it_shares_a_name_with_as_it_was()
+    {
+        var path = PlantedTree.UnderSystemDriveRoot();
+        var elsewhere = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            var original = Path.Combine(elsewhere, "original.dll");
+            File.WriteAllText(original, "not windiag's");
+            PlantedTree.HardLink(Path.Combine(path, "dbghelp.dll"), original);
+            var before = Sddl(original);
+
+            var (exit, output) = RunScript(path);
+
+            Assert.True(exit != 0, $"the script accepted a hard link: {output}");
+            Assert.Contains("hard link", output, StringComparison.Ordinal);
+            Assert.Equal(before, Sddl(original));
+        }
+        finally
+        {
+            PlantedTree.Remove(path);
+            PlantedTree.Remove(elsewhere);
+        }
+    }
+
+    [ElevatedFact]
+    public void The_script_creates_a_missing_directory_with_its_acl_already_on_it()
+    {
+        // Made by New-Item and restricted afterwards, it inherited "Authenticated Users: Modify" in between,
+        // long enough for a user to open a handle that keeps that access.
+        var parent = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            var path = Path.Combine(parent, "WinDiag");
+
+            RunProtectScript(path);
+
+            var acl = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+            Assert.True(acl.AreAccessRulesProtected);
+            Assert.Equal(ProtectedAcl.Administrators, acl.GetOwner(typeof(SecurityIdentifier)));
+            Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+        }
+        finally
+        {
+            PlantedTree.Remove(parent);
+        }
+    }
+
+    /// <summary>Each item's owner, whether it inherits, and its explicit and inherited ACEs, by path below <paramref name="root"/>.</summary>
+    private static string Describe(string root) =>
+        string.Join(
+            Environment.NewLine,
+            new[] { root }.Concat(Directory.EnumerateFileSystemEntries(root, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }))
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .Select(path =>
+                {
+                    FileSystemSecurity acl = Directory.Exists(path)
+                        ? new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner)
+                        : new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+                    var rules = acl.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+                        .Cast<FileSystemAccessRule>()
+                        .Select(r => $"{(r.IsInherited ? "inherited" : "explicit")} {r.AccessControlType} {r.IdentityReference} {r.FileSystemRights} {r.InheritanceFlags} {r.PropagationFlags}")
+                        .Order(StringComparer.Ordinal);
+                    return $"{Path.GetRelativePath(root, path)}: owner {acl.GetOwner(typeof(SecurityIdentifier))}, protected {acl.AreAccessRulesProtected}; {string.Join("; ", rules)}";
+                }));
+
+    private static string Sddl(string path) =>
+        (Directory.Exists(path)
+            ? (FileSystemSecurity)new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner)
+            : new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner))
+        .GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner);
+
     private static void RunProtectScript(string path)
+    {
+        var (exit, output) = RunScript(path);
+        Assert.True(exit == 0, $"exit {exit}: {output}");
+    }
+
+    private static (int Exit, string Output) RunScript(string path)
     {
         var script = ScriptPath();
         var start = new ProcessStartInfo("powershell.exe")
@@ -83,7 +215,9 @@ public sealed class BootstrapAclScriptTests
         foreach (var arg in new[]
                  {
                      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-                     $"$ErrorActionPreference = 'Stop'; . '{script.Replace("'", "''")}'; Protect-WinDiagDirectory -Path '{path.Replace("'", "''")}' 3>$null",
+                     // The refusal's own text, unwrapped: PowerShell's error view wraps at the console width,
+                     // which can split the very words a test looks for.
+                     $"$ErrorActionPreference = 'Stop'; try {{ . '{script.Replace("'", "''")}'; Protect-WinDiagDirectory -Path '{path.Replace("'", "''")}' 3>$null }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}",
                  })
         {
             start.ArgumentList.Add(arg);
@@ -93,7 +227,7 @@ public sealed class BootstrapAclScriptTests
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         Assert.True(process.WaitForExit(TimeSpan.FromMinutes(2)), "the script did not finish");
-        Assert.True(process.ExitCode == 0, $"exit {process.ExitCode}: {stdout.Result} {stderr.Result}");
+        return (process.ExitCode, $"{stdout.Result} {stderr.Result}");
     }
 
     private static string ScriptPath()

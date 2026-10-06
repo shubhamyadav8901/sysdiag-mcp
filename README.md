@@ -700,14 +700,21 @@ That registers the service, configures the SCM to restart it if the process dies
 address, and starts it. The token is printed once, because it exists nowhere else a human can read.
 
 It also restricts the executable's directory and the `--artifacts` directory to SYSTEM and
-Administrators whenever anyone else can write them. That is not tidiness: the service runs the
-Sysinternals binaries it finds beside itself and `self-update.cmd` from the artifact directory as
-SYSTEM, and a folder made under `C:\` inherits *Authenticated Users: Modify*. A service repeats the
-check on every start — so a target installed by an older build is fixed by its next `update_self` —
-writes what it changed to the Application event log, and refuses to start from a directory it cannot
-restrict. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
+Administrators whenever anyone else can write them or anything in them, and hands what they already
+hold to Administrators. That is not tidiness: the service runs the Sysinternals binaries it finds
+beside itself and `self-update.cmd` from the artifact directory as SYSTEM, and a folder made under
+`C:\` inherits *Authenticated Users: Modify*. A service repeats the check on every start, writes what
+it changed to the Application event log, and refuses to start from a directory it cannot restrict.
+Either directory being a link — a junction, a symbolic link, a mounted folder — or being reached
+through one, or holding one, is refused: whoever made the link could point it somewhere else after the
+check. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
 that also holds files that are not windiag's — a Downloads folder, a drive root — is refused rather
 than locked down under its owner.
+
+A target installed by an older build has these directories restricted by its next `update_self`, but
+restricting them does not undo what happened while they were open: a file a local user planted is
+still there, and a handle they opened then keeps its access until it is closed. On such a target,
+check the files against `windiag-staged.json` and restart the machine, which closes every such handle.
 
 ```
 WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?
@@ -824,7 +831,8 @@ rather than through `net use`, whose command line would carry the password. Both
 and `-ArtifactPath` (default `C:\WinDiag` and `C:\WinDiagArtifacts`) to SYSTEM and Administrators
 before anything is copied into them, since a folder made under `C:\` is writable by every user. A
 directory that already exists has everything in it handed to Administrators as well, with a warning
-naming what it held, and one that is, or contains, a link is refused.
+naming what it held, and one that is, is reached through, or contains a link (a hard link included) is
+refused.
 
 Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
