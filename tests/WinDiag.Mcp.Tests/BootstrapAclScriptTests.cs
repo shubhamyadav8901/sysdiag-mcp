@@ -32,9 +32,87 @@ public sealed class ElevatedTheoryAttribute : TheoryAttribute
     public ElevatedTheoryAttribute() => Skip = new ElevatedFactAttribute().Skip;
 }
 
+/// <summary>
+/// <see cref="ElevatedTheoryAttribute"/>, where this machine's own admin share answers too: how bootstrap-target.ps1
+/// and deploy-target.ps1 reach a target, here pointed back at this machine.
+/// </summary>
+public sealed class ElevatedAdminShareTheoryAttribute : TheoryAttribute
+{
+    public ElevatedAdminShareTheoryAttribute() =>
+        Skip = new ElevatedFactAttribute().Skip
+            ?? (Directory.Exists(BootstrapAclScriptTests.OverAdminShare(Path.GetPathRoot(Environment.SystemDirectory)!))
+                ? null
+                : "Requires this machine's admin share, which the Server service publishes.");
+}
+
 /// <summary>Runs tools/windiag-acl.ps1 itself, not a model of it: the scripts restrict the directories before any installer runs.</summary>
 public sealed class BootstrapAclScriptTests
 {
+    /// <summary><paramref name="localPath"/> as bootstrap-target.ps1 reaches it: <c>C:\x</c> as <c>\\localhost\C$\x</c>.</summary>
+    internal static string OverAdminShare(string localPath) => $@"\\localhost\{localPath[0]}${localPath[2..]}";
+
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void Only_a_path_on_this_machines_own_disk_is_judged_by_this_machines_administrators(string shell)
+    {
+        // The choice Protect-WinDiagDirectory makes before trusting the local Administrators group's members above
+        // a directory. Over the admin share, or anything else not plainly a local disk, the ACLs read are another
+        // machine's, and a member of this machine's group may be nobody there.
+        var local = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "WinDiag");
+        var paths = new[] { local, OverAdminShare(local), $@"\\{Environment.MachineName}\{local[0]}${local[2..]}", $@"\\?\{local}" };
+
+        var (exit, output) = RunPowerShell(
+            string.Join("; ", paths.Select(path => $"[Console]::Out.WriteLine('{Quote(path)} ' + (Test-WinDiagOwnDisk '{Quote(path)}'))")),
+            shell);
+
+        Assert.True(exit == 0, output);
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Contains($"{local} True", lines);
+        Assert.All(paths.Skip(1), path => Assert.Contains($"{path} False", lines));
+    }
+
+    [ElevatedAdminShareTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void Over_the_admin_share_the_script_refuses_a_path_below_a_directory_an_individual_administrator_owns(string shell)
+    {
+        // bootstrap-target -RemotePath D:\Ops\WinDiag, run from a workstation where CORP\bob is a direct member of
+        // the local Administrators group, against a target where he is an ordinary user who owns D:\Ops. Judged
+        // by the workstation's group, the path passed; bob renames D:\Ops after staging and puts his own build in
+        // its place for PsExec to run as SYSTEM. Here both machines are this one, so the owner really is an
+        // administrator -- which is the point: over the share the script cannot tell, and must not trust it.
+        using var admin = new TemporaryLocalUser(administrator: true);
+        var parent = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
+
+            // Owned by the group, the route itself works: the directory is created through the share.
+            var accepted = Path.Combine(parent, "WinDiag");
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(OverAdminShare(accepted))}'", shell);
+            Assert.True(exit == 0, output);
+            Assert.True(Directory.Exists(accepted));
+
+            PlantedTree.SetOwner(parent, admin.Sid);
+            var path = Path.Combine(parent, "WinDiagArtifacts");
+            var (refused, refusal) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(OverAdminShare(path))}'", shell);
+            Assert.True(refused != 0, $"over the admin share, the script took this machine's administrators for the target's: {refusal}");
+            Assert.Contains($"{OverAdminShare(parent)}, on the way to it: ", refusal, StringComparison.Ordinal);
+            Assert.Contains($"{admin.Name} owns it", refusal, StringComparison.Ordinal);
+            Assert.Contains("even an administrator of the target", refusal, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(path));
+
+            // And the same directory, judged where it is, passes: the refusal is the route's, not the owner's.
+            var (local, localOutput) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
+            Assert.True(local == 0, localOutput);
+        }
+        finally
+        {
+            PlantedTree.Remove(parent);
+        }
+    }
+
     [ElevatedTheory]
     [InlineData("powershell.exe")]
     [InlineData("pwsh.exe")]

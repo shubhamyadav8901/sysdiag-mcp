@@ -13,9 +13,31 @@
     first, because they put things there before any installer runs: the build, and for the PsExec route
     the short-lived file that carries the token to the installer.
 
-    Self-contained on purpose: bootstrap-winrm.ps1 sends the function body to the target through
+    Self-contained on purpose: bootstrap-winrm.ps1 sends this whole file to the target through
     Invoke-Command, where nothing else from this repo exists.
 #>
+
+function Test-WinDiagOwnDisk {
+    <#
+    .SYNOPSIS
+        Whether Path is on one of this machine's own disks -- a drive letter that is fixed or removable --
+        and not reached over the network.
+    #>
+    param([Parameter(Mandatory)] [string] $Path)
+
+    # Who this machine's Administrators group holds says something only about ACLs this machine enforces.
+    # bootstrap-target.ps1 and deploy-target.ps1 run Protect-WinDiagDirectory on the operator's workstation
+    # against \\host\C$\...: the owners and ACEs read over SMB are the target's SIDs, and a direct member of
+    # the workstation's group may be an ordinary user there, free to rename the folder and stage their own
+    # build for PsExec to run as SYSTEM. A mapped drive is the same thing behind a letter. Anything not
+    # recognisably local -- a UNC or \\?\ path, a drive this session cannot see -- counts as not, so the
+    # doubt costs a refusal, never the target.
+    try { $full = [System.IO.Path]::GetFullPath($Path) } catch { return $false }
+    if ($full -notmatch '^[A-Za-z]:\\') { return $false }
+    try { $type = (New-Object System.IO.DriveInfo $full.Substring(0, 1)).DriveType }
+    catch { return $false }
+    $type -eq [System.IO.DriveType]::Fixed -or $type -eq [System.IO.DriveType]::Removable
+}
 
 function Protect-WinDiagDirectory {
     param([Parameter(Mandatory)] [string] $Path)
@@ -31,7 +53,7 @@ function Protect-WinDiagDirectory {
     # one handle, and listed and opened relative to its parent's. A path is resolved again on every call,
     # so done by path -- Set-Acl, Get-ChildItem -- each step can be made to land somewhere else after the
     # check before it, by whoever can still write the directory, which is why it needs restricting. This
-    # runs before anything from this repository is on the target -- bootstrap-winrm.ps1 sends this function
+    # runs before anything from this repository is on the target -- bootstrap-winrm.ps1 sends this file
     # alone -- so it does not try: it creates a missing directory restricted from the start, and uses one
     # that exists only if it already is, refusing the rest with nothing changed. BootstrapAclScriptTests
     # runs it against what the server leaves.
@@ -159,13 +181,19 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
     # the built-in Administrator is owned by that account, not the group; refused, nothing short of changing
     # its owner would let it be used. Looked up by name, which is localised, from the group's SID. Members
     # reached only through a domain group are not counted: expanding one needs a domain controller.
+    # Only on this machine's own disks: see Test-WinDiagOwnDisk. Over the admin share the target's group is
+    # not asked either -- NetLocalGroupGetMembers against it would answer, but a second account database to
+    # read and fall back from is more to get wrong than the refusal costs, which names the same owner fix.
+    $ownDisk = Test-WinDiagOwnDisk $full
     $trustedAbove = $trusted
-    try {
-        $groupName = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544').Translate(
-            [System.Security.Principal.NTAccount]).Value.Split('\')[-1]
-        $trustedAbove = @($trusted) + @([WinDiagAcl.Handle]::Members($groupName))
+    if ($ownDisk) {
+        try {
+            $groupName = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544').Translate(
+                [System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+            $trustedAbove = @($trusted) + @([WinDiagAcl.Handle]::Members($groupName))
+        }
+        catch { }
     }
-    catch { }
     $directoryWriteRights = 0x500D0046   # GENERIC_ALL | GENERIC_WRITE | write, append, delete child, delete, WRITE_DAC, WRITE_OWNER
     $renameRights = 0x100D0000           # GENERIC_ALL | DELETE | WRITE_DAC | WRITE_OWNER
     $removeChildRights = 0x100C0040      # GENERIC_ALL | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER
@@ -241,8 +269,12 @@ public static int Read(string path, out uint attributes, out byte[] descriptor)
                 'installer and the service have. If windiag runs from it, let update_self bring the target ' +
                 'to this release, whose server restricts it on its next start; otherwise rename it aside ' +
                 '(Rename-Item) or pick another path, and run this again. A directory above it that others ' +
-                'can rename must be restricted to administrators first; one an account outside the local ' +
-                'Administrators group owns must be handed to the group (icacls <dir> /setowner *S-1-5-32-544).')
+                'can rename must be restricted to administrators first; ' +
+                $(if ($ownDisk) { 'one an account outside the local Administrators group owns' }
+                  else { 'one any single account owns -- judged from this machine, over the network, whose own ' +
+                         "Administrators group says nothing about the target's, even an administrator of the " +
+                         'target counts as anyone else --' }) +
+                ' must be handed to the group (icacls <dir> /setowner *S-1-5-32-544).')
         }
     }
 

@@ -843,7 +843,14 @@ changed: taking over what someone else could still change needs handles opened w
 links, which the installer and the service have and a script sent bare to a target does not. Rename
 such a directory aside and run again — or, if windiag already runs from it, let `update_self` bring it
 to this release, whose next start restricts it. A directory that is, or is reached through, a link, or
-sits below one others could rename, is refused too.
+sits below one others could rename, is refused too. Who counts as an administrator above the two
+directories depends on where they are judged. `bootstrap-winrm.ps1` judges them on the target, by the
+target's own rule, the installer's: a direct member of its Administrators group counts. `bootstrap-target.ps1`
+and `deploy-target.ps1` judge them from your workstation over the admin share (`\\host\C$\…`), where
+your machine's Administrators group says nothing about the target's, so there only SYSTEM, the
+Administrators group itself and TrustedInstaller count: a folder above that the target's built-in
+Administrator owns is refused over the share although the installer would accept it. Hand it to the group
+(`icacls <dir> /setowner *S-1-5-32-544`) or use `bootstrap-winrm.ps1`.
 
 Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
