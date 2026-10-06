@@ -56,8 +56,27 @@ public sealed class UserUnitTests : IDisposable
         }
     }
 
+    /// <summary>The owner check the server makes on the file it opens, modelled by place.</summary>
+    /// <remarks>
+    /// Managed code cannot read a file's owner, so what lies under the user's home is theirs and anything else is
+    /// another account's -- the case that matters, a link out of the home to root's file. A device, such as the
+    /// /dev/null that masks a file, opens as nothing, as the server's reader refuses anything but a regular file.
+    /// </remarks>
+    private string? ManagedReadOwnedBy(string path, long owner)
+    {
+        var real = ManagedRealPath(path);
+        if (real is null || !File.Exists(real) || real.StartsWith("/dev/", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return owner == User.UserId && real.StartsWith(Home + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            ? File.ReadAllText(real)
+            : null;
+    }
+
     private List<AutostartEntry> Audit(UserUnits? units = null, List<string>? limitations = null) =>
-        (units ?? new UserUnits(ManagedRead, ManagedRealPath, _root)).Audit([User], _ => false, limitations ?? []).ToList();
+        (units ?? new UserUnits(ManagedRead, ManagedReadOwnedBy, ManagedRealPath, _root)).Audit([User], _ => false, limitations ?? []).ToList();
 
     /// <summary>A packaged user unit, the user's enable link to it, and the user's drop-in that replaces its ExecStart.</summary>
     private (string Vendor, string DropIn) PackagedUnitOverriddenByTheUser()
@@ -299,10 +318,67 @@ public sealed class UserUnitTests : IDisposable
         PackagedSocketEnabledForEveryone();
         Write(Path.Combine(Home, ".config/environment.d/empty.conf"), "# nothing\n\n");
         Write(Path.Combine(Home, ".config/systemd/user.conf"), "[Manager]\n#DefaultEnvironment=A=1\nDefaultTimeoutStopSec=5s\n");
+        // Masked: a link to /dev/null is how a user switches off a system-wide environment.d file of the same name.
+        // It sets nothing, and is not someone else's file to report -- the reader opens a device as nothing.
+        Link(Path.Combine(Home, ".config/environment.d/50-masked.conf"), "/dev/null");
 
         var entry = Assert.Single(Audit());
 
         Assert.Equal("pipewire.socket", entry.Entry);
+    }
+
+    [UnprivilegedLinuxFact]
+    public void The_servers_own_reader_reads_a_users_own_environment_file_and_never_one_linked_to_roots()
+    {
+        // The owner is read from the file the server opens, which only the real reader can do: here the test's own
+        // account is the user, and /etc/os-release -- root's, with NAME= and VERSION_ID= lines -- is linked in.
+        // Unprivileged, because run as root the test's account would own /etc/os-release.
+        var user = new PasswdEntry("u", LinuxDiag.Mcp.Linux.Native.LibC.EffectiveUserId(), Home);
+        Write(Path.Combine(Home, ".config/environment.d/50-own.conf"), "LD_PRELOAD=/home/u/evil.so\n");
+        Link(Path.Combine(Home, ".config/environment.d/60-root.conf"), "/etc/os-release");
+        Link(Path.Combine(Home, ".config/environment.d/70-masked.conf"), "/dev/null");
+
+        var entries = UserUnits.Reading(_root).Audit([user], _ => false, []).ToList();
+
+        Assert.Equal(["environment.d/50-own.conf", "environment.d/60-root.conf"], entries.Select(e => e.Entry));
+        Assert.Contains("sets LD_PRELOAD for", entries[0].Description, StringComparison.Ordinal);
+        Assert.Contains("owned by another account", entries[1].Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("NAME", entries[1].Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void An_environment_file_linked_to_another_accounts_file_is_named_but_its_contents_never_reach_the_caller()
+    {
+        // Review: environment.d/k.conf -> /root/.ssh/id_ed25519 had the root server read the key, and the base64 line
+        // ending in '=' padding came back as a "variable name". The caller may hold no file-read grant at all.
+        var key = Write(Path.Combine(_root, "root/.ssh/id_ed25519"),
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nc2VjcmV0dG9rZW4=\n-----END OPENSSH PRIVATE KEY-----\n");
+        var link = Path.Combine(Home, ".config/environment.d/k.conf");
+        Link(link, key);
+
+        var entries = Audit();
+
+        var entry = Assert.Single(entries);
+        Assert.Equal("environment.d/k.conf", entry.Entry);
+        Assert.Equal(link, entry.Location);
+        Assert.Contains("owned by another account", entry.Description, StringComparison.Ordinal);
+        Assert.All(entries, e => Assert.DoesNotContain("c2VjcmV0dG9rZW4", e.Description, StringComparison.Ordinal));
+        Assert.False(LinuxAutostartInspector.Hidden(
+            LinuxAutostartInspector.Verify(entry, _ => null, _ => "md5"), new AutostartQuery(UnpackagedOnly: true)));
+    }
+
+    [UnixFact]
+    public void Only_names_systemd_would_take_as_variables_are_reported_from_a_users_own_file()
+    {
+        // systemd ignores an assignment whose name is not [A-Za-z_][A-Za-z0-9_]*; reporting such text as a name would
+        // pass on whatever the line holds rather than what the manager sets.
+        Write(Path.Combine(Home, ".config/environment.d/x.conf"), "GOOD_1=a\n1BAD=b\nA-B=c\nhas space=d\n");
+        Write(Path.Combine(Home, ".config/systemd/user.conf"), "[Manager]\nDefaultEnvironment=OK=1 9NO=2 \"x y=3\"\n");
+
+        var entries = Audit();
+
+        Assert.Contains("sets GOOD_1 for", entries.Single(e => e.Entry == "environment.d/x.conf").Description, StringComparison.Ordinal);
+        Assert.Contains("sets OK for", entries.Single(e => e.Entry == "user.conf").Description, StringComparison.Ordinal);
     }
 
     [UnixFact]

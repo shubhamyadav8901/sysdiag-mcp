@@ -13,17 +13,27 @@ internal sealed record UnitFiles(string? Fragment, IReadOnlyList<string> DropIns
 /// A user's XDG_* variables live in their session, which the server cannot see, so systemd's defaults are used.
 /// </remarks>
 /// <param name="read">A configuration file's text, or empty; the server's own reader opens only regular files.</param>
+/// <param name="readOwnedBy">
+/// As <paramref name="read"/>, but null when the file opened is not owned by the given user ID -- for a file whose
+/// content, not one setting's value, is reported.
+/// </param>
 /// <param name="realPath">Where a path leads, links resolved; null when it leads nowhere.</param>
 /// <param name="root">Prefixed to every system directory; empty except under test.</param>
-internal sealed class UserUnits(Func<string, string> read, Func<string, string?> realPath, string root = "")
+internal sealed class UserUnits(
+    Func<string, string> read, Func<string, long, string?> readOwnedBy, Func<string, string?> realPath, string root = "")
 {
+    /// <summary>What systemd's env_name_is_valid() accepts; it ignores any other assignment.</summary>
+    private static readonly System.Text.RegularExpressions.Regex VariableName = new("^[A-Za-z_][A-Za-z0-9_]*$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     private static readonly Dictionary<string, string> TriggerSections = new(StringComparer.Ordinal)
     {
         [".timer"] = "Timer", [".socket"] = "Socket", [".path"] = "Path",
     };
 
     /// <summary>The server's own readers: <see cref="LinuxAutostartInspector.ReadConfiguration"/> and realpath(3).</summary>
-    internal static UserUnits Reading(string root = "") => new(LinuxAutostartInspector.ReadConfiguration, SafeRealPath, root);
+    internal static UserUnits Reading(string root = "") =>
+        new(LinuxAutostartInspector.ReadConfiguration, LinuxAutostartInspector.ReadConfigurationOwnedBy, SafeRealPath, root);
 
     /// <summary>Every enabled user unit: once for every user when enabled globally, and per user where theirs differs.</summary>
     internal IEnumerable<AutostartEntry> Audit(IReadOnlyList<PasswdEntry> accounts, Func<string, bool> lingering, List<string> limitations)
@@ -60,7 +70,7 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
             List<AutostartEntry> environment;
             try
             {
-                environment = UserEnvironment(account.Home, account.Name, when);
+                environment = UserEnvironment(account, when);
                 any = personal.Any(Directory.Exists);
                 if (!any && environment.Count == 0 && Directory.Exists(account.Home))
                 {
@@ -132,9 +142,15 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
     /// the file and what it sets, and -- never a package's -- is never hidden by unpackagedOnly.</para>
     /// <para>ManagerEnvironment= is the manager's own, not its units', but the generators it runs inherit it, and
     /// their output is what the units get. Values are not shown: these files hold tokens as often as paths.</para>
+    /// <para>Names are reported, so a file is read only when the user owns it. A link or hard link here can lead
+    /// anywhere and the server is root: a link to /root/.ssh/id_ed25519 had the key's padded base64 line reported as
+    /// a "variable", and a name filter alone would not stop that line, which is a valid name. A file another account
+    /// owns is still an entry -- what it sets is unknown, which is not the same as nothing -- but its content is
+    /// not read. Only names systemd would accept are reported; it ignores any other assignment.</para>
     /// </remarks>
-    private List<AutostartEntry> UserEnvironment(string home, string user, string when)
+    private List<AutostartEntry> UserEnvironment(PasswdEntry account, string when)
     {
+        var (home, user) = (account.Home, account.Name);
         IEnumerable<string> Conf(string directory) =>
             Directory.Exists(directory) ? Directory.EnumerateFiles(directory, "*.conf").Order(StringComparer.Ordinal) : [];
 
@@ -145,7 +161,15 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
         var entries = new List<AutostartEntry>();
         foreach (var (file, name) in files)
         {
-            var text = read(file);
+            if (readOwnedBy(file, account.UserId) is not { } text)
+            {
+                entries.Add(new AutostartEntry(
+                    "userunits", file, name, true, user,
+                    $"{when}: owned by another account, not this user, so its content is not read and what it sets is not shown",
+                    null, null, null, [], null, null, [], false));
+                continue;
+            }
+
             var reaches = new List<string>();
             if (name.StartsWith("environment.d/", StringComparison.Ordinal))
             {
@@ -171,7 +195,7 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
 
         static void Reach(List<string> reaches, IEnumerable<string> names, string reach)
         {
-            var set = names.Distinct(StringComparer.Ordinal).ToList();
+            var set = names.Where(n => VariableName.IsMatch(n)).Distinct(StringComparer.Ordinal).ToList();
             if (set.Count > 0)
             {
                 reaches.Add($"sets {string.Join(", ", set)} {reach}");
