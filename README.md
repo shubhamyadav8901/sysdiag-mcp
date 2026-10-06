@@ -596,6 +596,10 @@ would use, because two copies of a Sysinternals tool on one machine is the norma
 `deploy-target.ps1` stages both builds of every tool, so the refusal only fires on a machine someone
 set up by hand.
 
+A tool found in the server's own folder, which is searched first, is also run only if its Authenticode
+signature is valid and Microsoft's: whatever sits there runs as the service's account. An unsigned or
+foreign-signed copy is refused by name, in the tool's result and in `capabilities`.
+
 ## Verifying on a target
 
 Two capabilities cannot be covered by `dotnet test`, because they need administrator rights and a kernel
@@ -1090,6 +1094,7 @@ split is what lets the tool layer be tested with fakes and no live machine.
 | Symptom | Cause and fix |
 |---|---|
 | `'handle.exe' was not found on this machine` | Sysinternals Suite is not installed. Native-backed tools still work. |
+| `'…\handle64.exe' is beside the server but is not signed by Microsoft` | The copy in the server's folder is damaged or was not Microsoft's. Replace it from `download.sysinternals.com` (or re-run `deploy-target.ps1`), or delete it to use an installed copy. |
 | `path_handle_search` warns about partial results | Not elevated. Restart the server from an elevated terminal. |
 | `who_locks_path` finds nothing on a file you know is locked | Expected: Restart Manager is not exhaustive. Run `path_handle_search`. |
 | `handle.exe did not finish within 120s` | Search term too broad. Narrow it, or raise `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS`. |

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Win32;
+using WinDiag.Mcp.Diagnostics.Signatures;
 
 namespace WinDiag.Mcp.Diagnostics.External;
 
@@ -31,6 +32,33 @@ public sealed class ToolLocator : IToolLocator
     /// </remarks>
     private readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The leaf certificate's simple name on every Sysinternals binary, as deploy-target.ps1 also requires.</summary>
+    private const string MicrosoftSigner = "Microsoft Corporation";
+
+    private readonly ISignatureInspector _signatures;
+    private readonly string? _serverDirectory;
+
+    public ToolLocator()
+        : this(new WinTrustSignatureInspector())
+    {
+    }
+
+    public ToolLocator(ISignatureInspector signatures)
+        : this(signatures, Path.GetDirectoryName(Environment.ProcessPath))
+    {
+    }
+
+    /// <param name="serverDirectory">
+    /// The folder searched first. <see cref="Environment.ProcessPath"/> rather than
+    /// <c>AppContext.BaseDirectory</c>: under a single-file publish the latter points at the extraction
+    /// directory, not at the exe.
+    /// </param>
+    internal ToolLocator(ISignatureInspector signatures, string? serverDirectory)
+    {
+        _signatures = signatures;
+        _serverDirectory = serverDirectory;
+    }
+
     public string Resolve(string executableName)
     {
         if (TryResolve(executableName, out var fullPath))
@@ -44,6 +72,15 @@ public sealed class ToolLocator : IToolLocator
     public bool TryResolve(string executableName, out string fullPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executableName);
+
+        // Ahead of the cache and checked on every call: a success remembered here would keep running the
+        // path it first approved, whatever has been put there since.
+        if (BesideTheServer(executableName) is { } beside)
+        {
+            RequireMicrosoftSigned(beside);
+            fullPath = beside;
+            return true;
+        }
 
         if (_cache.TryGetValue(executableName, out var cached))
         {
@@ -65,8 +102,7 @@ public sealed class ToolLocator : IToolLocator
 
     private static string? Locate(string executableName)
     {
-        return BesideTheServer(executableName)
-               ?? FromAppPaths(Registry.CurrentUser, executableName)
+        return FromAppPaths(Registry.CurrentUser, executableName)
                ?? FromAppPaths(Registry.LocalMachine, executableName)
                ?? FromSearchPath(executableName);
     }
@@ -78,19 +114,44 @@ public sealed class ToolLocator : IToolLocator
     /// installed there, so App Paths is empty and PATH knows nothing about it.</para>
     /// <para>Found the hard way — a freshly deployed lab VM reported <c>capture_activity</c> and
     /// <c>path_handle_search</c> as unavailable with Procmon sitting in a folder on the desktop.</para>
-    /// <para><see cref="Environment.ProcessPath"/> rather than <c>AppContext.BaseDirectory</c>: under a
-    /// single-file publish the latter points at the extraction directory, not at the exe.</para>
     /// </remarks>
-    private static string? BesideTheServer(string executableName)
+    private string? BesideTheServer(string executableName)
     {
-        var directory = Path.GetDirectoryName(Environment.ProcessPath);
-        if (string.IsNullOrEmpty(directory))
+        if (string.IsNullOrEmpty(_serverDirectory))
         {
             return null;
         }
 
-        var candidate = Path.Combine(directory, executableName);
+        var candidate = Path.Combine(_serverDirectory, executableName);
         return File.Exists(candidate) ? candidate : null;
+    }
+
+    /// <summary>Refuses a binary from the server's folder that Microsoft did not sign.</summary>
+    /// <remarks>
+    /// <para>Only this location is checked. It is the one searched first, and the one a token holder
+    /// could write: put_file staged into it with no grant until the self-update grant was required. App
+    /// Paths and PATH are set by an installer or an administrator.</para>
+    /// <para>The signer is compared by name, which is safe only because the verdict is
+    /// <see cref="SignatureVerdict.Valid"/>: WinVerifyTrust has already chained it to a trusted root, and
+    /// no public CA issues a code-signing certificate named "Microsoft Corporation" to anyone else.</para>
+    /// <para>The file could still be swapped between this check and the process start. That window
+    /// needs write access to the server's folder, which is already code execution as its account.</para>
+    /// </remarks>
+    private void RequireMicrosoftSigned(string path)
+    {
+        var signature = _signatures.Inspect([path], CancellationToken.None).Files.SingleOrDefault();
+        if (signature is { Verdict: SignatureVerdict.Valid, Signer: MicrosoftSigner })
+        {
+            return;
+        }
+
+        throw new UntrustedToolException(
+            path,
+            signature is null
+                ? "it could not be read"
+                : signature.Verdict == SignatureVerdict.Valid
+                    ? $"signed by {signature.Signer ?? "an unnamed signer"}"
+                    : $"{signature.Verdict}: {signature.Detail}");
     }
 
     private static string? FromAppPaths(RegistryKey root, string executableName)
