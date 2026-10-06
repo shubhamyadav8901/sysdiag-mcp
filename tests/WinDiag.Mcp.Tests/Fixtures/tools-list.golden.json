@@ -972,8 +972,8 @@
   },
   {
     "name": "named_pipes",
-    "title": "Named pipes and instance usage",
-    "description": "List named pipes with how many instances are currently in use against how many the server allows. Use it when a client cannot connect to a local service, or hangs connecting, while the service itself looks healthy - a pipe at its instance limit produces exactly that, and is invisible from every other angle. Pipes at their limit are listed first.",
+    "title": "Named pipes and whether a client can connect",
+    "description": "List named pipes with how many server instances exist against how many the server allows, and, for a pipe whose every instance is created, whether one is listening for a client right now. Use it when a client cannot connect to a local service, or hangs connecting, while the service itself looks healthy - a pipe with every instance taken and none listening produces exactly that, and is invisible from every other angle. Those are marked BUSY and listed first. Every instance created is not busy on its own: an instance listens from the moment it is created until a client takes it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1001,13 +1001,23 @@
               "name": {
                 "type": "string"
               },
-              "activeInstances": {
+              "instancesCreated": {
                 "type": "integer"
               },
               "maximumInstances": {
                 "type": "integer"
               },
-              "exhausted": {
+              "listening": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "default": null
+              },
+              "allInstancesCreated": {
+                "type": "boolean"
+              },
+              "busy": {
                 "type": "boolean"
               },
               "unlimited": {
@@ -1016,7 +1026,7 @@
             },
             "required": [
               "name",
-              "activeInstances",
+              "instancesCreated",
               "maximumInstances"
             ]
           }
@@ -1036,7 +1046,7 @@
       ]
     },
     "annotations": {
-      "title": "Named pipes and instance usage",
+      "title": "Named pipes and whether a client can connect",
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true,

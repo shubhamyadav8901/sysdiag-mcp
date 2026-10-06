@@ -65,7 +65,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
 | `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLL version actually loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision |
-| `named_pipes` | `NtQueryDirectoryFile` | IPC pipes, and whether any is at its instance limit |
+| `named_pipes` | `NtQueryDirectoryFile` + `WaitNamedPipe` | IPC pipes, and whether any has every instance taken and none listening for a client |
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
