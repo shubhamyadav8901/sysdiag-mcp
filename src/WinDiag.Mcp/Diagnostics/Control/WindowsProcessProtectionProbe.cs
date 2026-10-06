@@ -19,8 +19,59 @@ public sealed class WindowsProcessProtectionProbe : IProcessProtectionProbe
     private const uint ServiceWin32 = 0x30;
     private const uint ServiceActive = 0x1;
     private const int ErrorMoreData = 234;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
 
-    public IReadOnlyList<string> ServicesHostedBy(int processId)
+    /// <summary>The first batch's buffer; a typical machine's whole list fits, so one call usually does.</summary>
+    private readonly int _initialBufferBytes;
+
+    public WindowsProcessProtectionProbe()
+        : this(64 * 1024)
+    {
+    }
+
+    /// <summary>A probe whose first batch is <paramref name="initialBufferBytes"/> long.</summary>
+    /// <remarks>
+    /// Internal so a test can make the list arrive in several batches. With the default, the resume path
+    /// never runs on a machine with an ordinary number of services, and a mistake in it would go unseen until
+    /// one with many more -- where it would drop the services of the first batch, RpcSs's host among them.
+    /// </remarks>
+    internal WindowsProcessProtectionProbe(int initialBufferBytes) => _initialBufferBytes = initialBufferBytes;
+
+    public IReadOnlyList<string> ServicesHostedBy(int processId) =>
+        ActiveServices().Where(s => s.ProcessId == processId).Select(s => s.Name).ToList();
+
+    /// <remarks>
+    /// Opens its own handle with the one right IsProcessCritical needs. Process.Handle asks for
+    /// PROCESS_ALL_ACCESS, which a protected process -- wininit, csrss, smss and services are all critical and
+    /// all protected -- refuses even to an elevated caller holding SeDebugPrivilege, so the probe failed on
+    /// exactly the processes it is about. The PID is safe to reopen while the caller holds the Process: an open
+    /// handle keeps the PID from being reused.
+    /// </remarks>
+    public bool IsCritical(Process process)
+    {
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, (uint)process.Id);
+        if (handle == IntPtr.Zero)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        try
+        {
+            if (!IsProcessCritical(handle, out var critical))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
+            return critical;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    /// <summary>Every running Win32 service with the PID that hosts it, from the SCM.</summary>
+    internal IReadOnlyList<(string Name, int ProcessId)> ActiveServices()
     {
         var manager = OpenSCManagerW(null, null, ScManagerEnumerateService);
         if (manager == IntPtr.Zero)
@@ -30,7 +81,7 @@ public sealed class WindowsProcessProtectionProbe : IProcessProtectionProbe
 
         try
         {
-            return Enumerate(manager).Where(s => s.ProcessId == processId).Select(s => s.Name).ToList();
+            return Enumerate(manager, _initialBufferBytes);
         }
         finally
         {
@@ -38,22 +89,12 @@ public sealed class WindowsProcessProtectionProbe : IProcessProtectionProbe
         }
     }
 
-    public bool IsCritical(Process process)
-    {
-        if (!IsProcessCritical(process.Handle, out var critical))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
-
-        return critical;
-    }
-
-    private static List<(string Name, int ProcessId)> Enumerate(IntPtr manager)
+    private static List<(string Name, int ProcessId)> Enumerate(IntPtr manager, int initialBufferBytes)
     {
         var services = new List<(string, int)>();
         var stride = Marshal.SizeOf<EnumServiceStatusProcess>();
         uint resume = 0;
-        var size = 64 * 1024;
+        var size = initialBufferBytes;
 
         while (true)
         {
@@ -128,6 +169,13 @@ public sealed class WindowsProcessProtectionProbe : IProcessProtectionProbe
         out uint servicesReturned,
         ref uint resumeHandle,
         string? groupName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
