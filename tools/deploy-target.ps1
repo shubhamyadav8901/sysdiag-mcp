@@ -71,6 +71,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+. "$PSScriptRoot\windiag-acl.ps1"
+
 $repo = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $PSScriptRoot 'sysinternals.json'
 $cacheDir = Join-Path $repo 'artifacts\sysinternals'
@@ -531,8 +533,10 @@ else {
     Write-Step "Checking $remoteShare"
 
     if (-not (Test-Path $remoteShare)) {
-        New-Item -ItemType Directory -Force $remoteShare | Out-Null
-        Write-Note 'created'
+        # Made restricted to SYSTEM and Administrators, not left to inherit from C:\: there a new folder
+        # gets "Authenticated Users: Modify", and the SYSTEM service will run what it finds in it.
+        Protect-WinDiagDirectory $remoteShare
+        Write-Note 'created, writable by SYSTEM and Administrators only'
     }
 
     if (Test-Path $stagedManifest) {
@@ -664,7 +668,7 @@ if (-not $hasUpdateSelf) {
     Write-Host "    (stop the server)"
     Write-Host "    cd `"$RemotePath`""
     Write-Host "    move /y WinDiag.Mcp.new.exe WinDiag.Mcp.exe"
-    Write-Host "    set WINDIAG_TOKEN=$Token"
+    Write-Host "    set WINDIAG_TOKEN=<the token you passed as -Token>"
     Write-Host "    set WINDIAG_ALLOW_SELF_UPDATE=1    (so future updates need no console step)"
     Write-Host "    WinDiag.Mcp.exe --http http://${Target}:${Port}"
     Write-Host ""

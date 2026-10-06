@@ -22,6 +22,12 @@
     auditing and EDR on this machine. PsExec then rides that session and runs the installer as SYSTEM
     (-s), so the password never reaches any command line.
 
+    The token does not reach one either. It travels to the target as a file in the install directory,
+    which is first restricted to SYSTEM and Administrators, is fed to the installer's --token-stdin by a
+    small .cmd beside it, and both are deleted as soon as the installer returns. Passed as --token, it
+    would sit in the target's process-creation log, PSEXESVC's command line and windiag's own
+    process_list.
+
 .PARAMETER Target
     Target IP or host name. Needs 445 and 135 reachable, and 4024 free.
 
@@ -67,6 +73,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+. "$PSScriptRoot\windiag-acl.ps1"
 
 function Step { param($m) Write-Host "==> $m" -ForegroundColor Cyan }
 function Warn { param($m) Write-Host "    $m" -ForegroundColor Yellow }
@@ -206,6 +214,12 @@ try {
         throw "$RemotePath\WinDiag.Mcp.exe is not on the target. Staging did not leave a build behind."
     }
 
+    # Before the token file is written into it, and before the installer runs from it. The installer
+    # restricts both directories too; doing it here first closes the window in between.
+    Step "restricting $RemotePath and $ArtifactPath to SYSTEM and Administrators"
+    Protect-WinDiagDirectory $share
+    Protect-WinDiagDirectory ("\\$targetIp\" + ($ArtifactPath -replace '^([A-Za-z]):', '$1$'))
+
     # --- register ----------------------------------------------------------------------------------
     $installArgs = @(
         '--install-service'
@@ -214,7 +228,7 @@ try {
         '--artifacts'; $ArtifactPath
         '--firewall-from'; $FirewallFrom
     )
-    if ($Token) { $installArgs += @('--token', $Token) }
+    if ($Token) { $installArgs += '--token-stdin' }
     switch ($Grants) {
         'Standard' { $installArgs += @('--allow-self-update', '--allow-command-execution') }
         'All'      { $installArgs += @('--allow-self-update', '--allow-command-execution',
@@ -222,17 +236,40 @@ try {
         'None'     { $installArgs += '--read-only' }
     }
 
+    # The installer is started by a .cmd rather than by PsExec directly, because cmd can feed it the
+    # token file on stdin: PsExec documents forwarding typed console input, not a pipe, and the token
+    # must not be an argument. Every argument is quoted for cmd, with % doubled so none is expanded.
+    $line = (@("$RemotePath\WinDiag.Mcp.exe") + $installArgs | ForEach-Object {
+        if ("$_" -match '"') { throw "An install argument contains a double quote, which cmd cannot carry: $_" }
+        '"' + ("$_" -replace '%', '%%') + '"'
+    }) -join ' '
+    if ($Token) { $line += " < `"$RemotePath\install-token.tmp`"" }
+
     Step "registering '$ServiceName' on $targetIp"
 
-    # -s runs the installer as SYSTEM, riding the IPC$ session opened above rather than taking the
-    # password on a command line where the operator's own process list and any PowerShell transcript
-    # would capture it. SYSTEM is also unconditionally elevated, which matters for more than tidiness:
-    # with a filtered admin token the installer would call its own UAC relaunch and then block on
-    # WaitForExit for a prompt in session 0 that nobody can answer.
-    $output = Invoke-Native {
-        psexec "\\$targetIp" -s -accepteula -nobanner "$RemotePath\WinDiag.Mcp.exe" @installArgs
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    try {
+        if ($Token) { [System.IO.File]::WriteAllText("$share\install-token.tmp", $Token, $utf8) }
+        [System.IO.File]::WriteAllText("$share\install-windiag.cmd",
+            "@echo off`r`n$line`r`nexit /b %errorlevel%`r`n", $utf8)
+
+        # -s runs the installer as SYSTEM, riding the IPC$ session opened above. SYSTEM is also
+        # unconditionally elevated, which matters for more than tidiness: with a filtered admin token
+        # the installer would call its own UAC relaunch and then block on WaitForExit for a prompt in
+        # session 0 that nobody can answer.
+        $output = Invoke-Native {
+            psexec "\\$targetIp" -s -accepteula -nobanner cmd.exe /c "$RemotePath\install-windiag.cmd"
+        }
+        $installExit = $LASTEXITCODE
     }
-    $installExit = $LASTEXITCODE
+    finally {
+        # As soon as the installer is done with it, success or not: from here the token lives only in
+        # the service's own restricted registry key.
+        Remove-Item -LiteralPath "$share\install-token.tmp", "$share\install-windiag.cmd" -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath "$share\install-token.tmp") {
+            Warn "could not delete $RemotePath\install-token.tmp on the target; delete it by hand."
+        }
+    }
 
     $output | ForEach-Object { Write-Host "    $_" }
 

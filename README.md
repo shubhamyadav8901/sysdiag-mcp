@@ -805,6 +805,13 @@ $c = Get-Credential
 .\tools\bootstrap-winrm.ps1 -Target host.example.com -Token $token -Grants All -Bind 'http://0.0.0.0:4024'
 ```
 
+Neither script puts a secret on a command line. The token reaches the installer on `--token-stdin` —
+piped through the WinRM session, or, for PsExec, from a file in the install directory that is deleted
+as soon as the installer returns — and `bootstrap-target.ps1` opens its `IPC$` session in-process
+rather than through `net use`, whose command line would carry the password. Both restrict `-RemotePath`
+and `-ArtifactPath` (default `C:\WinDiag` and `C:\WinDiagArtifacts`) to SYSTEM and Administrators
+before anything is copied into them, since a folder made under `C:\` is writable by every user.
+
 Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
 addresses in that file** for the same reason as the bind: a DHCP lease that moves breaks every entry
