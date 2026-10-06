@@ -163,7 +163,9 @@ public static class TrustedDirectory
     private static PathWalk Walk(string spelled, Func<string, FileStatus?> linkStatus, Func<string, string?> readLink)
     {
         const int MaxLinks = 40;
-        var pending = new Stack<string>(spelled.Split('/').Reverse());
+        // Enumerable.Reverse by name: with LangVersion latest a newer compiler binds array.Reverse() to the in-place
+        // MemoryExtensions.Reverse(Span<T>), which returns nothing, and the build broke on CI's SDK only.
+        var pending = new Stack<string>(Enumerable.Reverse(spelled.Split('/')));
         var current = "/";
         var directories = new List<string> { "/" };
         var links = new List<(string, uint, string)>();
@@ -216,7 +218,7 @@ public static class TrustedDirectory
                     current = "/";
                 }
 
-                foreach (var part in target.Split('/').Reverse())
+                foreach (var part in Enumerable.Reverse(target.Split('/')))
                 {
                     pending.Push(part);
                 }
