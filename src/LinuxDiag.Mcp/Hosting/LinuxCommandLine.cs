@@ -99,12 +99,16 @@ public static class LinuxCommandLine
             }
             else if (values.Contains(name))
             {
-                // The next argument is the value whatever it looks like -- a pinned token may start with a dash --
-                // unless it is one of the options themselves: `--artifacts --read-only` made "--read-only" the
-                // directory and dropped the grant.
-                if (i + 1 >= args.Count || known.Contains(args[i + 1]))
+                // A value that looks like an option is a value forgotten, as WinDiag and MacDiag rule. Refusing only
+                // this server's own option names was not enough: `--token $TOK --readonly`, with $TOK empty and
+                // unquoted, made the misspelled grant the bearer token and installed a writable server. One leading
+                // dash is still a value -- a pinned token may start with one -- and an empty value is never one.
+                if (i + 1 >= args.Count || string.IsNullOrWhiteSpace(args[i + 1]) || args[i + 1].StartsWith("--", StringComparison.Ordinal))
                 {
-                    throw new ConfigurationException($"{name} needs a value.{Nothing(mode)}");
+                    var given = i + 1 >= args.Count ? string.Empty
+                        : string.IsNullOrWhiteSpace(args[i + 1]) ? ", and it was given an empty one"
+                        : $", and '{args[i + 1]}' is an option";
+                    throw new ConfigurationException($"{name} needs a value{given}.{Nothing(mode)}");
                 }
 
                 i++;

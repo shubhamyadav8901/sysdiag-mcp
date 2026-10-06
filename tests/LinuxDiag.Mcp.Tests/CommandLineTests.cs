@@ -49,6 +49,34 @@ public sealed class CommandLineTests
         Assert.Contains($"{option} needs a value", ex.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("--token", "--readonly")]
+    [InlineData("--service-name", "--readonly")]
+    [InlineData("--artifacts", "--allow-arbitary-read")]
+    [InlineData("--token", "")]
+    [InlineData("--token", "   ")]
+    [InlineData("--service-name", "")]
+    public void A_value_that_is_empty_or_looks_like_an_option_is_refused_even_when_the_option_is_misspelled(string option, string value)
+    {
+        // Re-check: only the server's own option names were refused as values, so `--token $TOK --readonly`
+        // with $TOK empty and unquoted installed a writable root server whose bearer token was "--readonly" --
+        // and, the token counting as supplied, never printed one.
+        var ex = Assert.Throws<ConfigurationException>(() =>
+            LinuxServiceInstallOptions.Parse(["--install-service", "--http", Bind, option, value]));
+
+        Assert.Contains($"{option} needs a value", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was installed", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Uninstall_refuses_a_service_name_that_looks_like_an_option()
+    {
+        var ex = Assert.Throws<ConfigurationException>(() =>
+            LinuxCommandLine.Require(["--uninstall-service", "--service-name", "--purge"]));
+
+        Assert.Contains("--service-name needs a value", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void An_option_given_twice_is_refused_rather_than_one_silently_winning()
     {
