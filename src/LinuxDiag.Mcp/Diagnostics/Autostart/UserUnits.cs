@@ -55,11 +55,14 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
             // Directory.Exists says false for a directory behind one the server cannot search, so an unreadable
             // home is looked for explicitly rather than read as "no user units".
             var personal = PersonalDirectories(account.Home);
+            var when = lingering(account.Name) ? "starts at boot (lingering)" : "starts at the user's login";
             bool any;
+            List<AutostartEntry> environment;
             try
             {
+                environment = UserEnvironment(account.Home, account.Name, when);
                 any = personal.Any(Directory.Exists);
-                if (!any && Directory.Exists(account.Home))
+                if (!any && environment.Count == 0 && Directory.Exists(account.Home))
                 {
                     _ = Directory.EnumerateFileSystemEntries(account.Home).Any();
                 }
@@ -70,13 +73,17 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
                 continue;
             }
 
+            foreach (var entry in environment)
+            {
+                yield return entry;
+            }
+
             if (!any)
             {
                 continue;
             }
 
             var path = SearchPath(account.Home, account.UserId);
-            var when = lingering(account.Name) ? "starts at boot (lingering)" : "starts at the user's login";
             IReadOnlyList<(string Name, string Link)> own;
             try
             {
@@ -112,6 +119,63 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
         if (unreadable > 0)
         {
             limitations.Add($"{unreadable} home directories could not be read, so those users' units are missing; run the server as root.");
+        }
+    }
+
+    /// <summary>The files in a user's home that set the environment of what their systemd manager runs, one entry each.</summary>
+    /// <remarks>
+    /// <para>No unit file or drop-in is needed to change what a packaged user unit does: the manager hands
+    /// ~/.config/environment.d/*.conf (through its environment generator) and DefaultEnvironment= in
+    /// ~/.config/systemd/user.conf and user.conf.d to every unit it starts, so LD_PRELOAD there runs the user's code
+    /// inside each one, and PATH chooses what a relative ExecStart runs. Folding these into every unit's drop-ins
+    /// would mark every packaged unit of that user as changed and still not say why; an entry of their own names
+    /// the file and what it sets, and -- never a package's -- is never hidden by unpackagedOnly.</para>
+    /// <para>ManagerEnvironment= is the manager's own, not its units', but the generators it runs inherit it, and
+    /// their output is what the units get. Values are not shown: these files hold tokens as often as paths.</para>
+    /// </remarks>
+    private List<AutostartEntry> UserEnvironment(string home, string user, string when)
+    {
+        IEnumerable<string> Conf(string directory) =>
+            Directory.Exists(directory) ? Directory.EnumerateFiles(directory, "*.conf").Order(StringComparer.Ordinal) : [];
+
+        var files = Conf(Path.Combine(home, ".config/environment.d")).Select(f => (f, "environment.d/" + Path.GetFileName(f)))
+            .Concat(new[] { Path.Combine(home, ".config/systemd/user.conf") }.Where(File.Exists).Select(f => (f, "user.conf")))
+            .Concat(Conf(Path.Combine(home, ".config/systemd/user.conf.d")).Select(f => (f, "user.conf.d/" + Path.GetFileName(f))));
+
+        var entries = new List<AutostartEntry>();
+        foreach (var (file, name) in files)
+        {
+            var text = read(file);
+            var reaches = new List<string>();
+            if (name.StartsWith("environment.d/", StringComparison.Ordinal))
+            {
+                Reach(reaches, UnitFile.Keys(text, null), "for every unit this user's systemd manager starts");
+            }
+            else
+            {
+                Reach(reaches, UnitFile.Values([text], "Manager", "DefaultEnvironment").SelectMany(UnitFile.EnvironmentNames),
+                    "for every unit this user's systemd manager starts");
+                Reach(reaches, UnitFile.Values([text], "Manager", "ManagerEnvironment").SelectMany(UnitFile.EnvironmentNames),
+                    "for this user's systemd manager itself and the generators it runs");
+            }
+
+            if (reaches.Count > 0)
+            {
+                entries.Add(new AutostartEntry(
+                    "userunits", file, name, true, user, $"{when}: {string.Join("; ", reaches)} (values not shown)",
+                    null, null, null, [], null, null, [], false));
+            }
+        }
+
+        return entries;
+
+        static void Reach(List<string> reaches, IEnumerable<string> names, string reach)
+        {
+            var set = names.Distinct(StringComparer.Ordinal).ToList();
+            if (set.Count > 0)
+            {
+                reaches.Add($"sets {string.Join(", ", set)} {reach}");
+            }
         }
     }
 

@@ -41,6 +41,46 @@ public static class UnitFile
         return values;
     }
 
+    /// <summary>
+    /// The names a file assigns in a section -- or, for a null section, before any section header, which is how an
+    /// environment.d file assigns them -- each once, in the order first assigned.
+    /// </summary>
+    public static IReadOnlyList<string> Keys(string text, string? section) =>
+        Assignments(text ?? string.Empty).Where(a => a.Section == section).Select(a => a.Key).Distinct(StringComparer.Ordinal).ToList();
+
+    /// <summary>The variable names in a systemd environment list: <c>A=1 "B=two words" 'C=3'</c> gives A, B, C.</summary>
+    public static IEnumerable<string> EnvironmentNames(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var word = new System.Text.StringBuilder();
+        char? quote = null;
+        foreach (var c in value + " ")
+        {
+            if (quote is null && c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c == quote)
+            {
+                quote = null;
+            }
+            else if (quote is null && char.IsWhiteSpace(c))
+            {
+                if (word.ToString().IndexOf('=', StringComparison.Ordinal) is > 0 and var equals)
+                {
+                    yield return word.ToString()[..equals];
+                }
+
+                word.Clear();
+            }
+            else
+            {
+                word.Append(c);
+            }
+        }
+    }
+
     /// <summary>A single-valued setting: the last assignment wins; null when unset or reset.</summary>
     public static string? Last(IEnumerable<string> texts, string section, string key) =>
         Values(texts, section, key).LastOrDefault();

@@ -266,6 +266,56 @@ public sealed class UserUnitTests : IDisposable
         Assert.Empty(entry.DropIns);
     }
 
+    [UnixTheory]
+    [InlineData(".config/environment.d/50-x.conf", "# comment\nLD_PRELOAD=/home/u/evil.so\nPATH=/home/u/bin:$PATH\n", "environment.d/50-x.conf", "every unit")]
+    [InlineData(".config/systemd/user.conf", "[Manager]\nDefaultEnvironment=\"LD_PRELOAD=/home/u/evil.so\" PATH=/home/u/bin\n", "user.conf", "every unit")]
+    [InlineData(".config/systemd/user.conf.d/o.conf", "[Manager]\nDefaultEnvironment=LD_PRELOAD=/home/u/evil.so 'PATH=/home/u/bin x'\n", "user.conf.d/o.conf", "every unit")]
+    [InlineData(".config/systemd/user.conf.d/m.conf", "[Manager]\nManagerEnvironment=LD_PRELOAD=/home/u/evil.so PATH=/x\n", "user.conf.d/m.conf", "the generators it runs")]
+    public void A_users_own_environment_for_their_systemd_manager_is_reported_as_unpackaged_input(string relative, string text, string name, string reach)
+    {
+        // Re-check: the user manager hands ~/.config/environment.d and DefaultEnvironment= in ~/.config/systemd/user.conf
+        // to every unit it starts, so LD_PRELOAD there ran the user's code inside every packaged user service --
+        // each still Packaged=true, and hidden by unpackagedOnly. The files are reported as entries of their own.
+        PackagedSocketEnabledForEveryone();
+        var file = Write(Path.Combine(Home, relative), text);
+
+        var entries = Audit();
+
+        var environment = entries.Single(e => e.Entry == name);
+        Assert.Equal("u", environment.Profile);
+        Assert.Equal(file, environment.Location);
+        Assert.Contains("LD_PRELOAD, PATH", environment.Description, StringComparison.Ordinal);
+        Assert.Contains(reach, environment.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("evil.so", environment.Description, StringComparison.Ordinal);
+
+        var verified = LinuxAutostartInspector.Verify(environment, _ => null, _ => "md5");
+        Assert.False(verified.Packaged);
+        Assert.False(LinuxAutostartInspector.Hidden(verified, new AutostartQuery(UnpackagedOnly: true)));
+    }
+
+    [UnixFact]
+    public void An_environment_file_that_sets_nothing_or_is_masked_is_not_an_entry()
+    {
+        PackagedSocketEnabledForEveryone();
+        Write(Path.Combine(Home, ".config/environment.d/empty.conf"), "# nothing\n\n");
+        Write(Path.Combine(Home, ".config/systemd/user.conf"), "[Manager]\n#DefaultEnvironment=A=1\nDefaultTimeoutStopSec=5s\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("pipewire.socket", entry.Entry);
+    }
+
+    [UnixFact]
+    public void A_user_with_only_an_environment_file_and_no_units_of_their_own_is_still_read()
+    {
+        // The per-user pass skipped every home with no ~/.config/systemd/user, which is where environment.d users are.
+        Write(Path.Combine(Home, ".config/environment.d/x.conf"), "LD_PRELOAD=/home/u/evil.so\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("environment.d/x.conf", entry.Entry);
+    }
+
     [UnixFact]
     public void A_socket_enabled_for_everyone_is_not_repeated_for_a_user_whose_files_leave_it_alone()
     {
