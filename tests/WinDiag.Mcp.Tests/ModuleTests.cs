@@ -404,29 +404,48 @@ public sealed class ModuleInspectorTests
         Assert.NotEmpty(result.Modules);
         Assert.Null(result.Limitation);
 
-        // Every one identified: proves the kernel's name for a mapping and the name a file opened under it
-        // reports come back in the same form. Were they spelled differently, every module everywhere
+        // A module may go unidentified only because someone other than SYSTEM, Administrators and
+        // TrustedInstaller can change a directory on its path -- this test's own output directory, under
+        // the runner's account, may well be one. Never for the mechanics: were the kernel's name for a
+        // mapping and the name a file opened under it reports spelled differently, every module everywhere
         // would be [FILE NOT IDENTIFIED] -- safe, and useless.
-        Assert.All(result.Modules, m => Assert.Null(m.ImageFileUnknownReason));
-        Assert.Equal(0, result.UnidentifiedCount);
+        Assert.All(result.Modules, m =>
+        {
+            if (m.ImageFileUnknownReason is { } reason)
+            {
+                Assert.EndsWith(ModuleImageIdentity.OnlyAdminPathsTrusted, reason);
+            }
+        });
+
+        // System32 is TrustedInstaller's, so its modules prove the whole chain works: named, opened, held,
+        // its directories judged, and the file read.
+        var system = result.Modules
+            .Where(m => m.Path.StartsWith(Environment.SystemDirectory + @"\", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        Assert.Contains(system, m => m.Name.Equals("ntdll.dll", StringComparison.OrdinalIgnoreCase));
+        // The reason in the message: on a runner image whose C:\ grants more than stock Windows, it names
+        // the directory and the entry that cost every module its identity.
+        Assert.All(system, m => Assert.True(m.ImageFileUnknownReason is null, $"{m.Path}: {m.ImageFileUnknownReason}"));
 
         // The relocation fields are the point: a base address with nothing to compare it against is a
         // number the caller cannot act on.
-        Assert.All(result.Modules, m => Assert.NotNull(m.PreferredBase));
-        Assert.All(result.Modules, m => Assert.NotNull(m.Relocated));
+        Assert.All(system, m => Assert.NotNull(m.PreferredBase));
+        Assert.All(system, m => Assert.NotNull(m.Relocated));
 
         // Not null: the listed path was opened and compared by file ID, not skipped.
-        Assert.All(result.Modules, m => Assert.False(m.ReplacedOnDisk));
+        Assert.All(system, m => Assert.False(m.ReplacedOnDisk));
     }
 
     [Fact]
-    public void Verifies_the_loaded_file_of_a_dll_renamed_away_even_when_its_replacement_has_an_identical_header()
+    public void Never_verifies_the_file_put_at_a_loaded_dlls_path_after_it_was_renamed_away_in_a_users_directory()
     {
         // The hole, both halves of it. Rename an unsigned DLL away while it is loaded and put a signed one
         // at its path: the signed one was verified in its place. Comparing PE headers caught a careless
         // swap, but not this one -- the loaded DLL is a byte-for-byte copy of the signed one except in its
         // DOS stub, so stamp, size, checksum and machine all match, and only the signature tells them
-        // apart. If the kernel's name for a mapping did not follow a rename, this is the test that says so.
+        // apart. The kernel's name for the mapping does follow this rename; but in %TEMP% the user could
+        // as well have renamed the directory, which that name does not follow (the test below), and the
+        // two look the same from here. So a module there gets no verdict at all, naming the directory.
         var directory = Path.Combine(Path.GetTempPath(), $"windiag-modules-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, $"windiag-probe-{Guid.NewGuid():N}.dll");
@@ -446,15 +465,30 @@ public sealed class ModuleInspectorTests
             File.Move(path, path + ".loaded");
             File.Copy(signed, path);
 
+            // The premise the policy's one exemption rests on: a user who may rename what is in the DLL's
+            // own directory is let through, because the kernel's name for the mapping follows a rename of
+            // the file itself. Were it not to, that exemption would be the hole all over again.
+            Assert.EndsWith(".loaded", MappedFileNameOf(library), StringComparison.OrdinalIgnoreCase);
+
             var result = Inspector().List(Environment.ProcessId, Path.GetFileName(path), true, CancellationToken.None);
 
             var module = Assert.Single(result.Modules);
-            Assert.True(module.ReplacedOnDisk);
-            Assert.Null(module.ImageFileUnknownReason);
-            Assert.EndsWith(".loaded", module.ImageFilePath, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(module.SignatureVerdict, new[] { "Unsigned", "Untrusted" });
-            Assert.Equal(1, result.ReplacedCount);
-            Assert.Equal(1, result.UnsignedCount);
+            Assert.Equal(LoadedModule.NotVerified, module.SignatureVerdict);
+            Assert.Null(module.Signer);
+            Assert.Null(module.FileVersion);
+            Assert.Null(module.PreferredBase);
+
+            // The reason names the first directory on the DLL's path that a non-admin can change. The
+            // kernel's name should keep the spelling the DLL was loaded under -- a runner's RUNNER~1 short
+            // name included -- but either spelling of this test's path is accepted.
+            var reason = Assert.IsType<string>(module.ImageFileUnknownReason);
+            Assert.EndsWith(ModuleImageIdentity.OnlyAdminPathsTrusted, reason);
+            Assert.Contains(ModuleImageIdentity.DirectoriesAbove(path).Concat(ModuleImageIdentity.DirectoriesAbove(LongPathOf(path))),
+                d => reason.StartsWith(d + " ", StringComparison.OrdinalIgnoreCase));
+
+            Assert.Equal(1, result.UnidentifiedCount);
+            Assert.Equal(1, result.NotVerifiedCount);
+            Assert.Equal(0, result.UnsignedCount);
         }
         finally
         {
@@ -546,6 +580,28 @@ public sealed class ModuleInspectorTests
             Directory.Delete(parent, recursive: true);
         }
     }
+
+    private static string MappedFileNameOf(IntPtr module)
+    {
+        var name = new char[32_768];
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        var length = K32GetMappedFileNameW(self.Handle, module, name, (uint)name.Length);
+        Assert.True(length > 0, $"GetMappedFileName failed with error {Marshal.GetLastPInvokeError()}");
+        return new string(name, 0, (int)length);
+    }
+
+    private static string LongPathOf(string path)
+    {
+        var buffer = new char[32_768];
+        var length = GetLongPathNameW(path, buffer, (uint)buffer.Length);
+        return length == 0 || length >= buffer.Length ? path : new string(buffer, 0, (int)length);
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint K32GetMappedFileNameW(IntPtr process, IntPtr address, char[] fileName, uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint GetLongPathNameW(string shortPath, char[] longPath, uint size);
 
     [Fact]
     public void Refuses_a_pid_that_is_not_running_rather_than_returning_nothing()
@@ -688,6 +744,162 @@ public sealed class ModuleImageIdentityTests
         // Opening it would sign this server in to whoever serves the share; and a volume this server
         // has no letter for is not one it can name to open.
         Assert.Null(ModuleImageIdentity.LocalDosPath(ntName, Drives));
+    }
+
+    [Fact]
+    public void Lists_every_directory_above_a_file_from_the_volume_root_down()
+    {
+        Assert.Equal([@"C:\", @"C:\Windows", @"C:\Windows\System32"],
+            ModuleImageIdentity.DirectoriesAbove(@"C:\Windows\System32\ntdll.dll"));
+        Assert.Equal([@"C:\"], ModuleImageIdentity.DirectoriesAbove(@"C:\x.dll"));
+        Assert.Empty(ModuleImageIdentity.DirectoriesAbove(@"\Device\HarddiskVolume1\x.dll"));
+    }
+
+    private const string Users = "S-1-5-32-545";
+    private const string AuthenticatedUsers = "S-1-5-11";
+    private const string SomeUser = "S-1-5-21-1-2-3-1001";
+    private const string TrustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+    private const uint ReadAndExecute = 0x1200A9;
+    private const uint Modify = 0x1301BF;
+    private const uint FullControl = 0x1F01FF;
+
+    private static DirectoryAce Allow(string sid, uint mask, byte flags = 0) => new(0x0, flags, mask, sid);
+
+    /// <summary>A System32-shaped directory: owned by TrustedInstaller, readable by users, theirs alone to change.</summary>
+    private static DirectoryGuard Locked(string path, params DirectoryAce[] extra) =>
+        new(path, null, false, TrustedInstaller,
+        [
+            Allow(TrustedInstaller, FullControl),
+            Allow("S-1-5-18", Modify),
+            Allow("S-1-5-32-544", Modify),
+            Allow(Users, ReadAndExecute),
+            // CREATOR OWNER, full control, inherit-only: grants nothing on this directory itself.
+            Allow("S-1-3-0", 0x1000_0000, flags: 0x0B),
+            .. extra
+        ]);
+
+    private static readonly DirectoryGuard Root = Locked(@"C:\");
+    private static readonly DirectoryGuard Windows = Locked(@"C:\Windows");
+    private static readonly DirectoryGuard System32 = Locked(@"C:\Windows\System32");
+
+    [Fact]
+    public void Trusts_a_path_only_system_administrators_and_trustedinstaller_can_change()
+    {
+        Assert.Null(ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Windows, System32]));
+    }
+
+    [Fact]
+    public void Refuses_a_directory_a_user_can_rename_and_names_it()
+    {
+        // The CI failure: %TEMP% is the user's own, so its subdirectory was renamed away with the loaded
+        // DLL inside and a signed copy put at the old path -- which the kernel went on naming.
+        var temp = Locked(@"C:\Users\me\AppData\Local\Temp", Allow(SomeUser, FullControl));
+
+        var reason = ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Locked(@"C:\Users"), temp]);
+
+        Assert.NotNull(reason);
+        Assert.StartsWith(@"C:\Users\me\AppData\Local\Temp lets " + SomeUser + " ", reason);
+        Assert.EndsWith(ModuleImageIdentity.OnlyAdminPathsTrusted, reason);
+    }
+
+    [Fact]
+    public void Names_the_directory_nearest_the_root_when_several_can_be_changed()
+    {
+        var reason = ModuleImageIdentity.WhyItsPathMayHaveMoved(
+        [
+            Root,
+            Locked(@"C:\Apps", Allow(AuthenticatedUsers, Modify)),
+            Locked(@"C:\Apps\Tool", Allow(SomeUser, FullControl))
+        ]);
+
+        Assert.StartsWith(@"C:\Apps lets " + AuthenticatedUsers + " ", reason);
+    }
+
+    [Theory]
+    [InlineData(0x0001_0000u)] // DELETE: renames it
+    [InlineData(0x0004_0000u)] // WRITE_DAC: grants itself DELETE
+    [InlineData(0x0008_0000u)] // WRITE_OWNER: takes it, then grants itself DELETE
+    [InlineData(0x1000_0000u)] // GENERIC_ALL
+    [InlineData(0x0200_0000u)] // MAXIMUM_ALLOWED, meaningless in an ACE and so read as everything
+    public void Refuses_any_right_that_renames_a_directory_or_grants_the_right_to(uint mask)
+    {
+        Assert.NotNull(ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Windows, Locked(@"C:\Windows\x", Allow(Users, mask))]));
+    }
+
+    [Fact]
+    public void Refuses_the_right_to_rename_what_is_in_a_directory_above_the_files_own()
+    {
+        // FILE_DELETE_CHILD on C:\Apps renames C:\Apps\Tool, the file's own directory.
+        var reason = ModuleImageIdentity.WhyItsPathMayHaveMoved(
+            [Root, Locked(@"C:\Apps", Allow(Users, 0x40)), Locked(@"C:\Apps\Tool")]);
+
+        Assert.StartsWith(@"C:\Apps lets " + Users + " rename or delete what is in it", reason);
+    }
+
+    [Fact]
+    public void Lets_a_user_rename_the_file_itself_because_the_kernels_name_follows_that()
+    {
+        // FILE_DELETE_CHILD on the file's own directory renames only the file, and the kernel's name for
+        // the mapping does follow that; the before-and-after comparison is what catches it.
+        Assert.Null(ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Windows, Locked(@"C:\Windows\x", Allow(Users, 0x40))]));
+    }
+
+    [Fact]
+    public void Lets_users_delete_on_the_volume_root_because_a_root_cannot_be_renamed()
+    {
+        Assert.Null(ModuleImageIdentity.WhyItsPathMayHaveMoved([Locked(@"D:\", Allow(AuthenticatedUsers, Modify)), Locked(@"D:\Tool")]));
+    }
+
+    [Fact]
+    public void Refuses_a_root_that_lets_a_user_rename_what_is_in_it()
+    {
+        Assert.NotNull(ModuleImageIdentity.WhyItsPathMayHaveMoved([Locked(@"D:\", Allow(Users, 0x40)), Locked(@"D:\Tool")]));
+    }
+
+    [Fact]
+    public void Ignores_inherit_only_and_deny_entries_and_reading_and_writing_rights()
+    {
+        // Inherit-only grants nothing here; a deny never grants; GENERIC_WRITE and Write do not include
+        // DELETE or FILE_DELETE_CHILD. C:\'s own "Users: create folders" is the same kind of right.
+        var guard = Locked(@"C:\Windows\x",
+            Allow(AuthenticatedUsers, Modify, flags: 0x0B),
+            new DirectoryAce(0x1, 0, FullControl, Users),
+            Allow(Users, 0x4000_0000),
+            Allow(Users, 0x0012_0116), // FILE_GENERIC_WRITE
+            Allow(Users, 0x4));
+
+        Assert.Null(ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Windows, guard]));
+    }
+
+    [Fact]
+    public void Refuses_a_directory_owned_by_anyone_else_because_an_owner_can_grant_itself_anything()
+    {
+        var reason = ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Locked(@"C:\Tool") with { Owner = SomeUser }]);
+
+        Assert.StartsWith($@"C:\Tool is owned by {SomeUser}", reason);
+    }
+
+    [Fact]
+    public void Refuses_a_null_dacl_an_unreadable_directory_and_a_link_on_the_path()
+    {
+        Assert.Contains("no access list", ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Locked(@"C:\Tool") with { Dacl = null }]));
+        Assert.Contains("could not be examined (error 5",
+            ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, DirectoryGuard.Unreadable(@"C:\Tool", "error 5: Access is denied.")]));
+        Assert.Contains("link or mount point", ModuleImageIdentity.WhyItsPathMayHaveMoved([Root, Locked(@"C:\Tool") with { IsReparsePoint = true }]));
+        Assert.NotNull(ModuleImageIdentity.WhyItsPathMayHaveMoved([]));
+    }
+
+    [Fact]
+    public void Refuses_an_allow_entry_it_cannot_read_and_reads_a_conditional_allow_as_unconditional()
+    {
+        // An object ACE (type 5) is laid out differently and not read: guessing would be failing open.
+        Assert.Contains("type 0x05", ModuleImageIdentity.WhyItsPathMayHaveMoved(
+            [Root, Locked(@"C:\Tool", new DirectoryAce(0x5, 0, 0, null))]));
+
+        // A callback allow (type 9) may hold under conditions this server cannot evaluate; assume it does.
+        Assert.NotNull(ModuleImageIdentity.WhyItsPathMayHaveMoved(
+            [Root, Locked(@"C:\Tool", new DirectoryAce(0x9, 0, FullControl, Users))]));
     }
 }
 
