@@ -26,8 +26,12 @@ public enum SignatureVerdict
 /// The full subject of the certificate WinVerifyTrust itself verified the signature with -- the catalog's
 /// signer for a catalog-signed file. Unlike <see cref="Signer"/>, which names the leaf picked out of the
 /// certificates embedded in the file, this cannot be steered by extra certificates added to that
-/// unsigned bag, which is why it is what the update ratchet compares publishers by. Null when no
-/// signature was verified far enough to name one.
+/// unsigned bag, which is why every trust decision reads it, through <see cref="VerifiedSigner"/>. Null
+/// when no signature was verified far enough to name one.
+/// </param>
+/// <param name="Signer">
+/// The simple name of the leaf picked from the certificates embedded in the file, for display only: that
+/// bag is unsigned and can be added to, so no decision may rest on it. See <see cref="VerifiedSigner"/>.
 /// </param>
 public sealed record FileSignature(
     string Path,

@@ -32,9 +32,6 @@ public sealed class ToolLocator : IToolLocator
     /// </remarks>
     private readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The leaf certificate's simple name on every Sysinternals binary, as deploy-target.ps1 also requires.</summary>
-    private const string MicrosoftSigner = "Microsoft Corporation";
-
     private readonly ISignatureInspector _signatures;
     private readonly string? _serverDirectory;
 
@@ -131,16 +128,18 @@ public sealed class ToolLocator : IToolLocator
     /// <para>Only this location is checked. It is the one searched first, and the one a token holder
     /// could write: put_file staged into it with no grant until the self-update grant was required. App
     /// Paths and PATH are set by an installer or an administrator.</para>
-    /// <para>The signer is compared by name, which is safe only because the verdict is
-    /// <see cref="SignatureVerdict.Valid"/>: WinVerifyTrust has already chained it to a trusted root, and
-    /// no public CA issues a code-signing certificate named "Microsoft Corporation" to anyone else.</para>
+    /// <para>Judged by <see cref="VerifiedSigner.IsMicrosoftCorporation"/>, the rule the update ratchet
+    /// uses too: the certificate WinVerifyTrust verified must be Microsoft's. A Valid verdict alone does
+    /// not make the signer name in <see cref="FileSignature.Signer"/> true -- that name comes from the
+    /// file's unsigned certificate bag, so a binary re-signed with any CA-issued certificate, with a
+    /// "Microsoft Corporation" certificate added to the bag, read as Microsoft's and ran as SYSTEM.</para>
     /// <para>The file could still be swapped between this check and the process start. That window
     /// needs write access to the server's folder, which is already code execution as its account.</para>
     /// </remarks>
     private void RequireMicrosoftSigned(string path)
     {
         var signature = _signatures.Inspect([path], CancellationToken.None).Files.SingleOrDefault();
-        if (signature is { Verdict: SignatureVerdict.Valid, Signer: MicrosoftSigner })
+        if (signature is not null && VerifiedSigner.IsMicrosoftCorporation(signature))
         {
             return;
         }
@@ -150,7 +149,7 @@ public sealed class ToolLocator : IToolLocator
             signature is null
                 ? "it could not be read"
                 : signature.Verdict == SignatureVerdict.Valid
-                    ? $"signed by {signature.Signer ?? "an unnamed signer"}"
+                    ? $"signed by {VerifiedSigner.Publisher(signature) ?? "a signer that could not be read"}"
                     : $"{signature.Verdict}: {signature.Detail}");
     }
 
