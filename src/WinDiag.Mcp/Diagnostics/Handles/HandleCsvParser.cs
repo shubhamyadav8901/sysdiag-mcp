@@ -42,8 +42,8 @@ namespace WinDiag.Mcp.Diagnostics.Handles;
 /// the process holding that object, and is marked <see cref="HandleEntry.Unproven"/>; any other line is
 /// counted as unattributable. That is what can be proven: the process. Under <c>-p</c> every row is that
 /// process, so the rows stay listed, marked. A name that cannot hold a break -- none, or a path on a drive
-/// letter, since NTFS, ReFS and FAT refuse control characters in a name -- leaves the next line a row,
-/// which keeps the common search, file handles on drive paths, fully proven.</para>
+/// letter whose volume is NTFS, ReFS or FAT, which refuse control characters in a name -- leaves the next
+/// line a row, which keeps the common search, file handles on local disks, fully proven.</para>
 /// </remarks>
 internal static class HandleCsvParser
 {
@@ -76,8 +76,16 @@ internal static class HandleCsvParser
     /// The PID handle.exe was scoped to with <c>-p</c>, when it was. It anchors each row, so a PID spelled
     /// out inside an image name can never be taken for it.
     /// </param>
-    public static HandleParseResult Parse(string csv, int? processId = null)
+    /// <param name="driveRefusesControlCharacters">
+    /// Whether the volume behind a drive letter refuses control characters in a name; null asks this
+    /// machine (<see cref="RefusesControlCharacters(char)"/>). Supplied by tests, so the rule can be pinned
+    /// on a machine with no drive letters.
+    /// </param>
+    public static HandleParseResult Parse(
+        string csv, int? processId = null, Func<char, bool>? driveRefusesControlCharacters = null)
     {
+        var refuses = Memoised(driveRefusesControlCharacters ?? RefusesControlCharacters);
+
         if (string.IsNullOrWhiteSpace(csv))
         {
             return new HandleParseResult([], 0);
@@ -156,7 +164,7 @@ internal static class HandleCsvParser
             }
 
             entries.Add(entry);
-            if (doubtFrom is null && CanHoldLineBreak(entry.Name))
+            if (doubtFrom is null && CanHoldLineBreak(entry.Name, refuses))
             {
                 doubtFrom = (entry.ProcessId, entry.ProcessName);
             }
@@ -213,17 +221,42 @@ internal static class HandleCsvParser
 
     /// <summary>Whether a printed object name could contain a line break, and so run on into the next line.</summary>
     /// <remarks>
-    /// Only two kinds of name are taken not to: none, and a path on a drive letter. handle.exe prints a
-    /// file on a local volume that way, and NTFS, ReFS and FAT refuse control characters in a name. A
-    /// file on a share is taken to print as <c>\Device\Mup\...</c>, as the object manager names it,
-    /// which falls on the breakable side; no capture here shows a share, so that is the assumption this
-    /// rests on. An object-manager name starts with a backslash and a registry key with its hive, so
-    /// neither can be mistaken for a drive path. Everything else -- named objects, keys, pipes,
-    /// devices -- is assumed to hold a break.
+    /// Only two kinds of name are taken not to: none, and a path on a drive letter whose volume refuses
+    /// control characters in a name. The letter alone is not enough: a standard user can mount an ISO,
+    /// and a UDF or CDFS name is whatever the image says. A file on a share is taken to print as
+    /// <c>\Device\Mup\...</c>, as the object manager names it, which falls on the breakable side; no
+    /// capture here shows a share, so that is an assumption this rests on. An object-manager name starts
+    /// with a backslash and a registry key with its hive, so neither can be mistaken for a drive path.
+    /// Everything else -- named objects, keys, pipes, devices -- is assumed to hold a break.
     /// </remarks>
-    private static bool CanHoldLineBreak(string name) =>
+    private static bool CanHoldLineBreak(string name, Func<char, bool> driveRefusesControlCharacters) =>
         name.Length > 0 &&
-        !(name.Length >= 3 && char.IsAsciiLetter(name[0]) && name[1] == ':' && name[2] == '\\');
+        !(name.Length >= 3 && char.IsAsciiLetter(name[0]) && name[1] == ':' && name[2] == '\\' &&
+          driveRefusesControlCharacters(char.ToUpperInvariant(name[0])));
+
+    /// <summary>The file systems whose drivers refuse a control character in a name.</summary>
+    private static readonly HashSet<string> ControlCharacterFreeFormats =
+        new(["NTFS", "ReFS", "FAT", "FAT32", "exFAT"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Whether this machine's volume at <paramref name="letter"/> is one of those; anything unreadable is not.</summary>
+    internal static bool RefusesControlCharacters(char letter)
+    {
+        try
+        {
+            return ControlCharacterFreeFormats.Contains(new DriveInfo(letter.ToString()).DriveFormat);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>One lookup per letter per parse: a result can name the same volume thousands of times.</summary>
+    private static Func<char, bool> Memoised(Func<char, bool> lookup)
+    {
+        var known = new Dictionary<char, bool>();
+        return letter => known.TryGetValue(letter, out var answer) ? answer : known[letter] = lookup(letter);
+    }
 
     private static bool IsPid(string field)
     {

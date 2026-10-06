@@ -18,7 +18,7 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Parses_captured_output_positionally_not_by_header_name()
     {
-        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv")).Entries;
+        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), driveRefusesControlCharacters: Ntfs.Everywhere).Entries;
 
         Assert.Equal(7, entries.Count);
 
@@ -37,7 +37,7 @@ public sealed class HandleCsvParserTests
     [Fact]
     public void Skips_the_header_row_without_treating_it_as_data()
     {
-        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv")).Entries;
+        var entries = HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), driveRefusesControlCharacters: Ntfs.Everywhere).Entries;
 
         Assert.DoesNotContain(entries, e => e.ProcessName == "Process");
     }
@@ -122,8 +122,8 @@ public sealed class HandleCsvParserTests
     public void Finds_no_unattributable_rows_in_either_real_capture()
     {
         // The count below must mean something when it is not zero, so it must be zero on real output.
-        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv")).UnparsedRows);
-        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-p-explorer.csv"), processId: 14032).UnparsedRows);
+        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-u-v-fonts.csv"), driveRefusesControlCharacters: Ntfs.Everywhere).UnparsedRows);
+        Assert.Equal(0, HandleCsvParser.Parse(LoadFixture("handle-p-explorer.csv"), processId: 14032, Ntfs.Everywhere).UnparsedRows);
     }
 
     [Fact]
@@ -232,7 +232,7 @@ public sealed class ProcessScopedHandleLayoutTests
     private static string Fixture() =>
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv"));
 
-    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture(), processId: 14032).Entries;
+    private static IReadOnlyList<HandleEntry> Parsed() => HandleCsvParser.Parse(Fixture(), processId: 14032, Ntfs.Everywhere).Entries;
 
     [Fact]
     public void Reads_the_process_scoped_layout()
@@ -390,11 +390,26 @@ public sealed class HandleLineBreakTests
         // The default path_handle_search: file handles to paths on drive letters, none of which can hold
         // a line break. The rule must cost this case nothing.
         var parsed = HandleCsvParser.Parse(File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-u-v-fonts.csv")));
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-u-v-fonts.csv")), driveRefusesControlCharacters: Ntfs.Everywhere);
 
         Assert.Equal(7, parsed.Entries.Count);
         Assert.All(parsed.Entries, e => Assert.False(e.Unproven));
         Assert.Equal(0, parsed.UnparsedRows);
+    }
+
+    [Fact]
+    public void A_drive_path_on_a_volume_that_allows_control_characters_can_hold_a_line_break()
+    {
+        // A standard user can mount an ISO and get a drive letter; a UDF name is whatever the image says.
+        // So the letter alone does not make a name safe -- the volume behind it has to refuse the break.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"evil.exe,4242,File,CONTOSO\mallory,0x00000010,E:\x.docx" + "\n" +
+                  @"victim.exe,668,File,NT AUTHORITY\SYSTEM,0x00000004,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv, driveRefusesControlCharacters: letter => letter == 'C');
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
+        Assert.Equal(1, parsed.UnparsedRows);
     }
 
     [Fact]
@@ -423,7 +438,7 @@ public sealed class HandleLineBreakTests
                   @"victim.exe,668,NT AUTHORITY\SYSTEM,0x00000004,File,,C:\shared\x.docx" + lineBreak +
                   @"svc.exe,1234,NT AUTHORITY\SYSTEM,0x00000010,File,,C:\shared\x.docx" + RowEnd;
 
-        var parsed = HandleCsvParser.Parse(csv, processId: 1234);
+        var parsed = HandleCsvParser.Parse(csv, processId: 1234, Ntfs.Everywhere);
 
         Assert.DoesNotContain(parsed.Entries, e => e.ProcessId == 668);
         Assert.Equal(3, parsed.Entries.Count);
@@ -439,10 +454,16 @@ public sealed class HandleLineBreakTests
     {
         // The real capture opens on a Key, whose name can hold a break: from there on nothing is proven.
         var parsed = HandleCsvParser.Parse(File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv")), processId: 14032);
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "handle-p-explorer.csv")), processId: 14032, Ntfs.Everywhere);
 
         Assert.Equal(7, parsed.Entries.Count);
         Assert.False(parsed.Entries[0].Unproven);
         Assert.All(parsed.Entries.Skip(1), e => Assert.True(e.Unproven));
     }
+}
+
+/// <summary>The volumes the captures were taken on: NTFS, which refuses control characters in a name.</summary>
+internal static class Ntfs
+{
+    public static bool Everywhere(char letter) => true;
 }
