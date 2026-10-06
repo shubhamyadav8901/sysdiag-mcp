@@ -345,7 +345,10 @@ public sealed class ServiceInstallationTests
         Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
         [
             "WinDiag.Mcp.exe", "WinDiag.Mcp.new.exe", "handle64.exe", "Procmon64.exe", "autorunsc64.exe",
-            "handle.exe", "windiag-staged.json", "install-token.tmp", "install-windiag.cmd"
+            "handle.exe", "windiag-staged.json", "install-token.tmp", "install-windiag.cmd",
+
+            // The documented Procmon filter override, read from beside the server.
+            "windiag.pmc"
         ]));
 
         Assert.Equal(

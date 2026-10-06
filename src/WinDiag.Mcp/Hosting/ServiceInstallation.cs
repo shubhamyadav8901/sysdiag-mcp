@@ -323,12 +323,12 @@ public sealed record ServiceInstallOptions
     }
 
     // What a directory windiag was deployed into holds: the server and its staged successor, the
-    // Sysinternals tools found beside it, deploy-target's manifest, and bootstrap-target's two files
-    // that exist only while the installer runs.
+    // Sysinternals tools found beside it, deploy-target's manifest, the Procmon filter override an
+    // operator may put there, and bootstrap-target's two files that exist only while the installer runs.
     private static readonly string[] ServerDirectoryFiles =
     [
         "WinDiag.Mcp*", "handle*.exe", "Procmon*.exe", "autorunsc*.exe", "windiag-staged.json",
-        "install-token.tmp", "install-windiag.cmd"
+        "windiag.pmc", "install-token.tmp", "install-windiag.cmd"
     ];
 
     /// <summary>The names in a server directory that are not windiag's, in the order given.</summary>
