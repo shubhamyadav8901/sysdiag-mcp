@@ -82,8 +82,11 @@ public static class ServerBuilder
 
           An option not listed here is refused, and nothing is installed.
 
-          The token is written to the service's own registry key, which only SYSTEM and
-          Administrators can read -- never to a machine-wide variable, which every local user can.
+          The token is written to the service's own registry key, which the installer first restricts
+          to SYSTEM and Administrators -- never to a machine-wide variable, which every local user can
+          read. The server's own directory and --artifacts are restricted the same way when anyone
+          else can write them, because the service runs what it finds there. A service also checks on
+          every start, restricts what it can, and refuses to start from a directory it cannot.
 
           Each grant flag above becomes its WINDIAG_* variable (below) in that same per-service key:
           --allow-self-update -> WINDIAG_ALLOW_SELF_UPDATE=1, and so on. Flags and variables are two

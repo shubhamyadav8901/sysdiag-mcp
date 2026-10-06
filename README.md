@@ -692,6 +692,14 @@ That registers the service, configures the SCM to restart it if the process dies
 256-bit token and stores it where only SYSTEM and Administrators can read it, opens the port to one
 address, and starts it. The token is printed once, because it exists nowhere else a human can read.
 
+It also restricts the executable's directory and the `--artifacts` directory to SYSTEM and
+Administrators whenever anyone else can write them. That is not tidiness: the service runs the
+Sysinternals binaries it finds beside itself and `self-update.cmd` from the artifact directory as
+SYSTEM, and a folder made under `C:\` inherits *Authenticated Users: Modify*. A service repeats the
+check on every start — so a target installed by an older build is fixed by its next `update_self` —
+writes what it changed to the Application event log, and refuses to start from a directory it cannot
+restrict. Keep the executable out of a drive root: `C:\` itself is refused rather than locked down.
+
 ```
 WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?
 WinDiag.Mcp.exe --uninstall-service   # removes the service, its token and its firewall rule
@@ -813,9 +821,18 @@ sc create windiagsvc binPath= "\"C:\WinDiag\WinDiag.Mcp.exe\" --http http://10.0
 **Put the token in the service's own environment, not a machine-wide variable.** A service has no
 console to inherit `WINDIAG_TOKEN` from, and the obvious fix is the wrong one: machine environment
 variables are readable by *every local user*, and with `run_command` or `update_self` enabled that
-token is code execution as SYSTEM. The per-service key is ACL'd to SYSTEM and Administrators:
+token is code execution as SYSTEM. **`sc create` does not protect the per-service key either** — it
+inherits the Services key's ACL, under which every local user can read its values — so restrict it to
+SYSTEM and Administrators *before* writing the token:
 
 ```powershell
+$acl = New-Object System.Security.AccessControl.RegistrySecurity
+$acl.SetAccessRuleProtection($true, $false)
+'S-1-5-18', 'S-1-5-32-544' | ForEach-Object {   # SYSTEM, Administrators
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.RegistryAccessRule (
+    [Security.Principal.SecurityIdentifier]$_), 'FullControl', 'ContainerInherit', 'None', 'Allow')) }
+Set-Acl -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc -AclObject $acl
+
 New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc `
   -Name Environment -PropertyType MultiString -Force -Value @(
     'WINDIAG_TOKEN=<paste a long random value>',
@@ -883,6 +900,11 @@ level through an ordinary tool call. The token is the whole boundary.
   is what the bootstrap scripts use.
 - **There is no default bind address.** `--http` with no address and no `WINDIAG_HTTP_BIND` is a
   startup failure, not a guess.
+- **A service's directories and registry key are SYSTEM's and Administrators' alone.** The installer
+  restricts them, and a service re-checks on every start, restricting what it can and refusing to start
+  from a directory it cannot. A target installed before this was the case may have had its token read
+  by a local user: its first start on this build logs that to the Application event log, and the token
+  should then be changed.
 - **A hostname is a wildcard bind, and is warned about as one.** Kestrel's binder falls back to
   "any IP" for any host that is not an IP literal and is not `localhost` — so
   `--http http://target-vm:7777` listens on `0.0.0.0` while looking specific. Verified: that address

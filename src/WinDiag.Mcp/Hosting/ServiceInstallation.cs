@@ -377,9 +377,11 @@ public sealed record ServiceInstallOptions
     /// The per-service environment, as the REG_MULTI_SZ the SCM hands the process.
     /// </summary>
     /// <remarks>
-    /// This key is ACL'd to SYSTEM and Administrators. A machine-wide variable would be readable by
-    /// every local user, and with self-update or command execution enabled the token is equivalent to
-    /// code execution -- so where it is written matters more than that it is set.
+    /// The installer restricts this key to SYSTEM and Administrators before writing it
+    /// (<see cref="ProtectedAcl.ProtectServiceKey"/>): sc.exe creates it with the Services key's ACL,
+    /// under which every local user can read its values. A machine-wide variable would be readable by
+    /// every local user too, and with self-update or command execution enabled the token is equivalent
+    /// to code execution -- so where it is written, and who can read that, matters more than that it is set.
     /// </remarks>
     public IReadOnlyList<string> EnvironmentBlock()
     {

@@ -118,7 +118,21 @@ public static class ServiceInstaller
                 + "service will run without event log output. Tools are unaffected.");
         }
 
+        // Before the service exists, so a refusal leaves nothing registered. The server runs Sysinternals
+        // binaries from beside itself and self-update.cmd from the artifact directory, as SYSTEM; under
+        // C:\ both directories would otherwise inherit "Authenticated Users: Modify".
+        var account = ProtectedAcl.AccountSid(options.Account);
+        ProtectIfExposed("server directory", Path.GetDirectoryName(exe)!, account);
+        if (!string.IsNullOrWhiteSpace(options.ArtifactDirectory))
+        {
+            ProtectIfExposed("artifact directory", options.ArtifactDirectory, account);
+        }
+
         Run("sc.exe", options.CreateArguments(exe), "create the service");
+
+        // Restricted before the token is written, not after: sc.exe creates the key with the Services
+        // key's ACL, which lets every local user read its values, Environment included.
+        ProtectedAcl.ProtectServiceKey(options.Name);
 
         // Written after creation because the key does not exist until the service does.
         WriteEnvironment(options);
@@ -137,8 +151,15 @@ public static class ServiceInstaller
 
         Console.Error.WriteLine($"[windiag] installed '{options.Name}' and started it on {options.Bind}.");
 
+        // Printed so a grant that did not make it -- the failure mode the install flags have always had --
+        // is on the screen at the moment it can still be corrected.
+        Console.Error.WriteLine(
+            $"[windiag] read-only: {YesNo(options.ReadOnly)}; self-update: {YesNo(options.AllowSelfUpdate)}; "
+            + $"command execution: {YesNo(options.AllowCommandExecution)}; arbitrary write: "
+            + $"{YesNo(options.AllowArbitraryWrite)}; arbitrary read: {YesNo(options.AllowArbitraryRead)}.");
+
         // Printed once, here, because a generated token exists nowhere a human can read it: the
-        // registry value is ACL'd and the server never logs it. Losing it means reinstalling.
+        // registry key was restricted above and the server never logs it. Losing it means reinstalling.
         if (!options.TokenWasSupplied)
         {
             Console.Error.WriteLine();
@@ -212,6 +233,14 @@ public static class ServiceInstaller
         // the token is not casually readable, and printing it here would undo that.
         Console.Error.WriteLine($"  token     {(hasToken ? "configured (per-service key)" : "NOT configured")}");
 
+        // Installs made before the key was restricted are still out there, and this is the one command
+        // an operator runs on a target to ask how it is set up.
+        var exposed = ProtectedAcl.ServiceKeyExposures(serviceName);
+        Console.Error.WriteLine(exposed.Count == 0
+            ? "  key ACL   SYSTEM and Administrators only"
+            : $"  key ACL   WARNING: {string.Join("; ", exposed)}. Any local user may have the token: "
+              + "restart the service (it restricts its own key) and change the token.");
+
         foreach (var value in environment.Where(v => !v.StartsWith("WINDIAG_TOKEN=", StringComparison.OrdinalIgnoreCase)))
         {
             Console.Error.WriteLine($"  env       {value}");
@@ -219,6 +248,24 @@ public static class ServiceInstaller
 
         key?.Dispose();
         return 0;
+    }
+
+    private static string YesNo(bool value) => value ? "yes" : "no";
+
+    /// <summary>Protects a directory only when someone other than an administrator can write it.</summary>
+    /// <remarks>
+    /// Conditional, so a server installed from Program Files keeps the ACL Windows gave it rather than
+    /// being rewritten to an equivalent one. The drive-root refusal lives in ProtectDirectory.
+    /// </remarks>
+    private static void ProtectIfExposed(string what, string path, System.Security.Principal.SecurityIdentifier? account)
+    {
+        if (Directory.Exists(path) && ProtectedAcl.DirectoryExposures(path, account).Count == 0)
+        {
+            return;
+        }
+
+        ProtectedAcl.ProtectDirectory(path, account);
+        Console.Error.WriteLine($"[windiag] restricted the {what} {path} to SYSTEM and Administrators.");
     }
 
     private static bool Exists(string name) =>

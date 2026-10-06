@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
 using WinDiag.Mcp;
 using WinDiag.Mcp.Configuration;
@@ -96,12 +97,28 @@ try
     CommandLine.RejectUnknownServerArguments(args);
     options = WinDiagOptions.FromEnvironment();
     bind = CommandLine.ResolveHttpBind(args, options);
+
+    // Only under the SCM. A by-hand server runs as whoever started it, from wherever they put it, and
+    // re-ACLing a developer's bin directory on `dotnet run` would be a surprise with no security gain.
+    if (WindowsServiceHelpers.IsWindowsService())
+    {
+        ServiceHardening.Apply(options.ArtifactDirectory);
+    }
 }
 catch (ConfigurationException ex)
 {
     // Fail at startup rather than on the first tool call: a misconfigured server that answers
-    // questions is worse than one that refuses to start.
-    Console.Error.WriteLine($"[windiag] configuration error: {ex.Message}");
+    // questions is worse than one that refuses to start. As a service the event log is the only place
+    // anyone will read why.
+    if (WindowsServiceHelpers.IsWindowsService())
+    {
+        ServiceHardening.Refuse($"configuration error: {ex.Message}");
+    }
+    else
+    {
+        Console.Error.WriteLine($"[windiag] configuration error: {ex.Message}");
+    }
+
     return 2;
 }
 
