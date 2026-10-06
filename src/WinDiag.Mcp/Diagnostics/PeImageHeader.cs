@@ -13,16 +13,14 @@ namespace WinDiag.Mcp.Diagnostics;
 /// only reliable way to tell a Sysinternals 32-bit launcher from the real thing, since both are named
 /// the same.
 /// </param>
-/// <param name="TimeDateStamp">The COFF link stamp (a content hash under reproducible builds).</param>
-/// <param name="SizeOfImage">How much address space the image occupies once mapped.</param>
-/// <param name="CheckSum">The optional header's checksum; zero for most images that are not drivers.</param>
-public readonly record struct PeImageHeader(
-    ulong ImageBase,
-    bool DynamicBase,
-    ushort Machine,
-    uint TimeDateStamp,
-    uint SizeOfImage,
-    uint CheckSum)
+/// <remarks>
+/// Nothing here says which file an image is. Every field is the builder's to choose, and the loader
+/// rewrites some of them in the copy it maps (ImageBase always; Machine for an ARM64X image in an x64
+/// process, or an IL-only PE32 in a 64-bit one), so two headers agreeing proves nothing about two files
+/// being the same -- which is why <c>process_modules</c> settles that from the kernel's own record of the
+/// mapped file instead.
+/// </remarks>
+public readonly record struct PeImageHeader(ulong ImageBase, bool DynamicBase, ushort Machine)
 {
     public const ushort MachineI386 = 0x014C;
     public const ushort MachineAmd64 = 0x8664;
@@ -30,22 +28,6 @@ public readonly record struct PeImageHeader(
 
     /// <summary>True for an image that cannot run as a 64-bit process.</summary>
     public bool Is32Bit => Machine == MachineI386;
-
-    /// <summary>
-    /// True when two headers describe the same build of an image: same machine, link stamp, mapped size
-    /// and checksum.
-    /// </summary>
-    /// <remarks>
-    /// <c>ImageBase</c> is deliberately not compared. The loader writes the address an image actually got
-    /// into the header it maps, so a relocated module's in-memory header and its own file disagree there
-    /// by design. These four fields the loader never touches. Identity of the header, not of every byte:
-    /// a file patched in place with its header kept would still match.
-    /// </remarks>
-    public bool IsSameBuildAs(PeImageHeader other) =>
-        Machine == other.Machine
-        && TimeDateStamp == other.TimeDateStamp
-        && SizeOfImage == other.SizeOfImage
-        && CheckSum == other.CheckSum;
 }
 
 /// <summary>
@@ -64,6 +46,8 @@ public readonly record struct PeImageHeader(
 /// </remarks>
 public static class PeImageReader
 {
+    private const int DosHeaderSize = 64;
+    private const ushort DosSignature = 0x5A4D; // "MZ", little-endian
     private const int DosHeaderLfaNewOffset = 0x3C;
     private const uint PeSignature = 0x0000_4550; // "PE\0\0", little-endian
     private const int CoffHeaderSize = 20;
@@ -71,27 +55,30 @@ public static class PeImageReader
     private const ushort Pe32PlusMagic = 0x020B;
     private const int Pe32ImageBaseOffset = 28;
     private const int Pe32PlusImageBaseOffset = 24;
-    private const int CoffTimeDateStampOffset = 4;
-
-    // Same offsets in both optional-header layouts, for the same reason as DllCharacteristics below.
-    private const int SizeOfImageOffset = 56;
-    private const int CheckSumOffset = 64;
-
-    /// <summary>
-    /// How many leading bytes of an image <see cref="TryParse"/> needs. The optional header cannot start
-    /// further in than this and still be a real image.
-    /// </summary>
-    public const int HeaderBytes = 1024;
 
     // Same offset in both optional-header layouts: PE32+ drops BaseOfData (4 bytes) but widens
     // ImageBase by the same 4, so everything from SectionAlignment onwards realigns.
     private const int DllCharacteristicsOffset = 70;
     private const ushort DynamicBaseFlag = 0x0040;
 
+    /// <summary>The signature, COFF header and as much of the optional header as is read.</summary>
+    private const int NtHeaderBytes = 4 + CoffHeaderSize + DllCharacteristicsOffset + 2;
+
+    /// <summary>
+    /// The loader's own ceiling on <c>e_lfanew</c> (<c>RtlImageNtHeaderEx</c> refuses 256 MB and over,
+    /// whatever the file's length).
+    /// </summary>
+    /// <remarks>
+    /// The bound is the loader's, not a buffer's. This used to read the first kilobyte and refuse an
+    /// <c>e_lfanew</c> past it, which the loader accepts: an image built that way loads, runs, and came
+    /// back here as "not a PE" -- a check its author could switch off at will.
+    /// </remarks>
+    private const int MaxLfaNew = 0x1000_0000;
+
     /// <summary>Reads the header, or returns null if the file cannot be read or is not a PE image.</summary>
     /// <remarks>
-    /// Never throws for a caller's benefit: a module whose file has been deleted or replaced under the
-    /// running process is a normal thing to meet, and it must not cost the rest of the list.
+    /// Never throws for a caller's benefit: a file that is gone, unreadable or not an image is a normal
+    /// thing to meet, and it must not cost the rest of a list.
     /// </remarks>
     public static PeImageHeader? TryRead(string path)
     {
@@ -102,16 +89,12 @@ public static class PeImageReader
 
         try
         {
-            // FileShare.ReadWrite|Delete: these files are mapped into a running process, and on Windows
-            // a pending-delete image still opens only for a sharer that says so.
+            // FileShare.ReadWrite|Delete: these files may be mapped into a running process, and on
+            // Windows a pending-delete image still opens only for a sharer that says so.
             using var stream = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096);
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
 
-            // One buffer, so a short or truncated file fails on length rather than on seeking.
-            Span<byte> header = stackalloc byte[HeaderBytes];
-            var read = stream.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
-
-            return TryParse(header[..read]);
+            return TryRead(stream);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                       or NotSupportedException or ArgumentException)
@@ -121,42 +104,64 @@ public static class PeImageReader
     }
 
     /// <summary>
-    /// Reads the header from an image's leading bytes, wherever they came from -- a file, or a module's
-    /// mapping in another process. Null when they are not a PE header.
+    /// Reads the header through a stream the caller already holds, so the answer is about that file and
+    /// not whatever its path names by the time a second open would happen.
     /// </summary>
-    public static PeImageHeader? TryParse(ReadOnlySpan<byte> header)
+    /// <remarks>Seeks; the caller must not rely on the stream's position afterwards.</remarks>
+    public static PeImageHeader? TryRead(Stream stream)
     {
-        if (header.Length < DosHeaderLfaNewOffset + 4)
+        try
+        {
+            Span<byte> dos = stackalloc byte[DosHeaderSize];
+            stream.Seek(0, SeekOrigin.Begin);
+            if (stream.ReadAtLeast(dos, dos.Length, throwOnEndOfStream: false) < dos.Length
+                || BinaryPrimitives.ReadUInt16LittleEndian(dos) != DosSignature)
+            {
+                return null;
+            }
+
+            var peOffset = BinaryPrimitives.ReadInt32LittleEndian(dos[DosHeaderLfaNewOffset..]);
+            if (peOffset is < 0 or >= MaxLfaNew)
+            {
+                return null;
+            }
+
+            // Short means the headers run past the end of the file, which the loader refuses too.
+            Span<byte> nt = stackalloc byte[NtHeaderBytes];
+            stream.Seek(peOffset, SeekOrigin.Begin);
+            if (stream.ReadAtLeast(nt, nt.Length, throwOnEndOfStream: false) < nt.Length)
+            {
+                return null;
+            }
+
+            return ParseNtHeaders(nt);
+        }
+        catch (Exception ex) when (ex is IOException or NotSupportedException or UnauthorizedAccessException)
         {
             return null;
         }
+    }
 
-        // In long arithmetic: these bytes may come from another process's memory, and an e_lfanew near
-        // int.MaxValue would otherwise wrap past this check into an out-of-range slice.
-        var peOffset = BinaryPrimitives.ReadInt32LittleEndian(header[DosHeaderLfaNewOffset..]);
-        if (peOffset < 0 || (long)peOffset + 4 + CoffHeaderSize + DllCharacteristicsOffset + 2 > header.Length)
-        {
-            return null;
-        }
-
-        if (BinaryPrimitives.ReadUInt32LittleEndian(header[peOffset..]) != PeSignature)
+    /// <summary>Reads the fields from the NT headers: signature, COFF header, optional header.</summary>
+    private static PeImageHeader? ParseNtHeaders(ReadOnlySpan<byte> nt)
+    {
+        if (BinaryPrimitives.ReadUInt32LittleEndian(nt) != PeSignature)
         {
             return null;
         }
 
         // The COFF header opens with the machine type, immediately after the signature.
-        var machine = BinaryPrimitives.ReadUInt16LittleEndian(header[(peOffset + 4)..]);
+        var machine = BinaryPrimitives.ReadUInt16LittleEndian(nt[4..]);
 
-        var optional = header[(peOffset + 4 + CoffHeaderSize)..];
-        var magic = BinaryPrimitives.ReadUInt16LittleEndian(optional);
-
-        var imageBase = magic switch
+        var optional = nt[(4 + CoffHeaderSize)..];
+        var imageBase = BinaryPrimitives.ReadUInt16LittleEndian(optional) switch
         {
             Pe32Magic => BinaryPrimitives.ReadUInt32LittleEndian(optional[Pe32ImageBaseOffset..]),
             Pe32PlusMagic => BinaryPrimitives.ReadUInt64LittleEndian(optional[Pe32PlusImageBaseOffset..]),
             _ => 0UL
         };
 
+        // Zero is never a mapped image's base, and a ROM or unknown magic does not load.
         if (imageBase == 0)
         {
             return null;
@@ -164,12 +169,6 @@ public static class PeImageReader
 
         var characteristics = BinaryPrimitives.ReadUInt16LittleEndian(optional[DllCharacteristicsOffset..]);
 
-        return new PeImageHeader(
-            imageBase,
-            (characteristics & DynamicBaseFlag) != 0,
-            machine,
-            TimeDateStamp: BinaryPrimitives.ReadUInt32LittleEndian(header[(peOffset + 4 + CoffTimeDateStampOffset)..]),
-            SizeOfImage: BinaryPrimitives.ReadUInt32LittleEndian(optional[SizeOfImageOffset..]),
-            CheckSum: BinaryPrimitives.ReadUInt32LittleEndian(optional[CheckSumOffset..]));
+        return new PeImageHeader(imageBase, (characteristics & DynamicBaseFlag) != 0, machine);
     }
 }

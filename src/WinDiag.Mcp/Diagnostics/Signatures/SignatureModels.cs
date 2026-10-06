@@ -64,4 +64,14 @@ public interface ISignatureInspector
     /// </summary>
     /// <exception cref="IOException">The file is open for writing elsewhere, or could not be opened.</exception>
     FileSignature InspectHeld(string path, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inspects a file through a handle the caller already holds and has already settled the identity of,
+    /// so the verdict is about that file and not whatever its path names by the time of a second open.
+    /// </summary>
+    /// <param name="path">A path to the held file, for the parts of the check that only take one.</param>
+    /// <param name="held">
+    /// Open for reading, shared for reading only, so nothing can write, rename or delete it meanwhile.
+    /// </param>
+    FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken);
 }
