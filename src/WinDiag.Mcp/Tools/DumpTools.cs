@@ -67,15 +67,15 @@ public sealed class DumpTools
         var builder = new StringBuilder();
 
         builder.Append("Captured a ").Append(dump.Kind.ToString().ToLowerInvariant()).Append(" dump of ")
-            .Append(dump.ProcessName).Append(" (PID ").Append(dump.ProcessId).Append("), ")
+            .Append(RenderLimits.Printable(dump.ProcessName)).Append(" (PID ").Append(dump.ProcessId).Append("), ")
             .Append(FormatBytes(dump.SizeBytes)).AppendLine(".");
 
-        builder.Append("On this machine: ").AppendLine(dump.Path);
+        builder.Append("On this machine: ").AppendLine(RenderLimits.Printable(dump.Path));
 
         if (dump.UncPath is { } unc)
         {
             // The whole point of the UNC form: it saves copying gigabytes between machines.
-            builder.Append("From another machine: ").AppendLine(unc);
+            builder.Append("From another machine: ").AppendLine(RenderLimits.Printable(unc));
             builder.AppendLine(
                 "Analyse it with mcp-windbg's open_windbg_dump, passing the UNC path - cdb opens it " +
                 "directly, so there is no need to copy the file.");

@@ -54,11 +54,11 @@ public sealed class AccessTools
     {
         var builder = new StringBuilder();
 
-        builder.Append(report.Kind).Append(": ").AppendLine(report.Path);
-        builder.Append("Owner: ").AppendLine(report.Owner ?? "(could not be read)");
+        builder.Append(report.Kind).Append(": ").AppendLine(RenderLimits.Printable(report.Path));
+        builder.Append("Owner: ").AppendLine(RenderLimits.Printable(report.Owner) ?? "(could not be read)");
 
         // Lead with the empirical result. It is the answer; the ACL below is the explanation.
-        builder.Append("As ").Append(report.ProbeIdentity).Append(": read=")
+        builder.Append("As ").Append(RenderLimits.Printable(report.ProbeIdentity)).Append(": read=")
             .Append(Describe(report.Probe.CanRead));
 
         if (report.Probe.CanWrite is { } canWrite)
@@ -70,17 +70,17 @@ public sealed class AccessTools
 
         if (report.Probe.ReadError is { } readError)
         {
-            builder.Append("  Read failed: ").AppendLine(readError);
+            builder.Append("  Read failed: ").AppendLine(RenderLimits.Printable(readError));
         }
 
         if (report.Probe.WriteError is { } writeError)
         {
-            builder.Append("  ").AppendLine(writeError);
+            builder.Append("  ").AppendLine(RenderLimits.Printable(writeError));
         }
 
         if (report.Account is { } account)
         {
-            builder.Append("Entries naming '").Append(account).Append("': ");
+            builder.Append("Entries naming '").Append(RenderLimits.Printable(account)).Append("': ");
 
             if (report.RulesForAccount.Count == 0)
             {
@@ -114,8 +114,8 @@ public sealed class AccessTools
 
     private static void AppendRule(StringBuilder builder, AccessRule rule)
     {
-        builder.Append("- ").Append(rule.Type.ToUpperInvariant()).Append(' ')
-            .Append(rule.Identity).Append(": ").Append(rule.Rights);
+        builder.Append("- ").Append(RenderLimits.Printable(rule.Type.ToUpperInvariant())).Append(' ')
+            .Append(RenderLimits.Printable(rule.Identity)).Append(": ").Append(RenderLimits.Printable(rule.Rights));
 
         if (rule.Inherited)
         {

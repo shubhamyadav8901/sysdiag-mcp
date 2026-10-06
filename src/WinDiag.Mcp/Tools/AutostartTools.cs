@@ -155,11 +155,11 @@ public sealed class AutostartTools
 
         builder.Append(result.TotalMatched)
             .Append(result.TotalMatched == 1 ? " autostart entry" : " autostart entries")
-            .Append(" in ").Append(categories);
+            .Append(" in ").Append(RenderLimits.Printable(categories));
 
         if (!string.IsNullOrWhiteSpace(nameFilter))
         {
-            builder.Append(" matching '").Append(nameFilter).Append('\'');
+            builder.Append(" matching '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
         }
 
         builder.AppendLine(":");
@@ -167,18 +167,18 @@ public sealed class AutostartTools
         foreach (var group in result.Entries.Take(RenderLimits.MaxRenderedRows)
                      .GroupBy(e => e.Category, StringComparer.OrdinalIgnoreCase))
         {
-            builder.Append("[").Append(group.Key).AppendLine("]");
+            builder.Append("[").Append(RenderLimits.Printable(group.Key)).AppendLine("]");
 
             foreach (var entry in group)
             {
-                builder.Append("- ").Append(entry.Entry);
+                builder.Append("- ").Append(RenderLimits.Printable(entry.Entry));
 
                 if (!entry.Enabled)
                 {
                     builder.Append(" (disabled)");
                 }
 
-                builder.Append("  ").Append(entry.ImagePath ?? "(no image recorded)");
+                builder.Append("  ").Append(RenderLimits.Printable(entry.ImagePath) ?? "(no image recorded)");
 
                 if (entry.ImageMissing)
                 {
@@ -193,11 +193,11 @@ public sealed class AutostartTools
                 }
                 else if (entry.Company is { } company)
                 {
-                    builder.Append("  ").Append(company);
+                    builder.Append("  ").Append(RenderLimits.Printable(company));
                 }
 
                 builder.AppendLine();
-                builder.Append("    ").AppendLine(entry.Location);
+                builder.Append("    ").AppendLine(RenderLimits.Printable(entry.Location));
             }
         }
 

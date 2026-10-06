@@ -138,12 +138,12 @@ internal static class ActivityRendering
         builder.Append("Captured ").Append(capture.DurationSeconds).Append("s of activity: ")
             .Append(Count(capture.TotalEvents)).AppendLine(" events.");
 
-        builder.Append("Trace (opens in the Procmon GUI): ").AppendLine(capture.PmlPath);
-        builder.Append("Queryable export: ").AppendLine(capture.CsvPath);
+        builder.Append("Trace (opens in the Procmon GUI): ").AppendLine(RenderLimits.Printable(capture.PmlPath));
+        builder.Append("Queryable export: ").AppendLine(RenderLimits.Printable(capture.CsvPath));
 
         if (capture.CsvUncPath is { } unc)
         {
-            builder.Append("From another machine: ").AppendLine(unc);
+            builder.Append("From another machine: ").AppendLine(RenderLimits.Printable(unc));
         }
 
         builder.Append(FormatBytes(capture.PmlSizeBytes)).Append(" trace, ")
@@ -164,7 +164,7 @@ internal static class ActivityRendering
             builder.AppendLine().AppendLine("Operations that FAILED:");
             foreach (var result in capture.ProblemResults)
             {
-                builder.Append("- ").Append(result.Name).Append(": ").Append(Count(result.Count)).AppendLine();
+                builder.Append("- ").Append(RenderLimits.Printable(result.Name)).Append(": ").Append(Count(result.Count)).AppendLine();
             }
 
             builder.AppendLine("Call query_activity with problemsOnly to see them.");
@@ -177,7 +177,7 @@ internal static class ActivityRendering
         builder.AppendLine().AppendLine("Busiest processes:");
         foreach (var process in capture.TopProcesses.Take(5))
         {
-            builder.Append("- ").Append(process.Name).Append(": ").Append(Count(process.Count)).AppendLine();
+            builder.Append("- ").Append(RenderLimits.Printable(process.Name)).Append(": ").Append(Count(process.Count)).AppendLine();
         }
 
         return builder.ToString().TrimEnd();
@@ -215,7 +215,7 @@ internal static class ActivityRendering
         builder.AppendLine().AppendLine("Results among matches:");
         foreach (var entry in result.Results.Take(6))
         {
-            builder.Append("- ").Append(entry.Name).Append(": ").Append(Count(entry.Count)).AppendLine();
+            builder.Append("- ").Append(RenderLimits.Printable(entry.Name)).Append(": ").Append(Count(entry.Count)).AppendLine();
         }
 
         builder.AppendLine().AppendLine("Busiest paths among matches:");
@@ -237,10 +237,10 @@ internal static class ActivityRendering
         // string, which the 32-bit build cannot be relied on to allocate.
         foreach (var e in result.Events.Take(RenderLimits.MaxRenderedRows))
         {
-            builder.Append("- ").Append(e.Time).Append(' ').Append(e.ProcessName)
-                .Append(" (").Append(e.ProcessId).Append(") ").Append(e.Operation)
+            builder.Append("- ").Append(RenderLimits.Printable(e.Time)).Append(' ').Append(RenderLimits.Printable(e.ProcessName))
+                .Append(" (").Append(e.ProcessId).Append(") ").Append(RenderLimits.Printable(e.Operation))
                 .Append(' ').Append(Truncate(e.Path, 160))
-                .Append(" -> ").Append(e.Result);
+                .Append(" -> ").Append(RenderLimits.Printable(e.Result));
 
             // Detail carries the operation-specific fields (Disposition, Desired Access, ShareMode) that
             // are the whole point of a detailContains filter - and used to be in structuredContent only,
@@ -288,8 +288,17 @@ internal static class ActivityRendering
 
     private static string Count(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
-    private static string Truncate(string value, int max) =>
-        value.Length <= max ? value : value[..max] + "...";
+    /// <summary>A path or detail field from the trace, escaped and then cut to <paramref name="max"/>.</summary>
+    /// <remarks>
+    /// Every caller passes text the traced processes chose, so escaping lives here rather than at each call
+    /// site, where the next one added would be the one that forgot. Escaped before the cut, so the budget is
+    /// measured on what is actually written.
+    /// </remarks>
+    private static string Truncate(string value, int max)
+    {
+        var printable = RenderLimits.Printable(value);
+        return printable.Length <= max ? printable : printable[..max] + "...";
+    }
 
     private static string FormatBytes(long bytes)
     {

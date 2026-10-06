@@ -60,7 +60,7 @@ public sealed class RegistryTools
 
         // "view: x" rather than "[x view]": the descriptions are noun phrases, and gluing a word on
         // the end of one produced "[32-bit Windows, single view view]" on the target.
-        builder.Append(contents.Path).Append("  [view: ").Append(contents.View).AppendLine("]");
+        builder.Append(RenderLimits.Printable(contents.Path)).Append("  [view: ").Append(RenderLimits.Printable(contents.View)).AppendLine("]");
 
         if (contents.Values.Count == 0)
         {
@@ -71,11 +71,13 @@ public sealed class RegistryTools
             foreach (var value in contents.Values.Take(RenderLimits.MaxRenderedRows))
             {
                 // The unnamed default value has an empty name in the API; printing nothing there would
-                // read as a blank line rather than as the default.
+                // read as a blank line rather than as the default. Names and data are escaped: any user
+                // can write a REG_SZ under HKCU, and a newline in one would otherwise start a line of
+                // this summary that reads as the server's own.
                 builder.Append("  ")
-                    .Append(value.Name.Length == 0 ? "(Default)" : value.Name)
-                    .Append("  ").Append(value.Kind)
-                    .Append("  = ").Append(value.Value);
+                    .Append(value.Name.Length == 0 ? "(Default)" : RenderLimits.Printable(value.Name))
+                    .Append("  ").Append(RenderLimits.Printable(value.Kind))
+                    .Append("  = ").Append(RenderLimits.Printable(value.Value));
 
                 if (value.Truncated)
                 {
@@ -96,7 +98,7 @@ public sealed class RegistryTools
             // and at the current row cap this was one unwrapped line of well over a million characters.
             builder.Append(contents.TotalSubKeys)
                 .Append(contents.TotalSubKeys == 1 ? " subkey: " : " subkeys: ")
-                .AppendLine(RenderLimits.Join(contents.SubKeyNames));
+                .AppendLine(RenderLimits.Join(contents.SubKeyNames.Select(n => RenderLimits.Printable(n)).ToList()));
         }
         else if (valueName is null)
         {

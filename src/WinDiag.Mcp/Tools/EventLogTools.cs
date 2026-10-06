@@ -133,10 +133,10 @@ public sealed class EventLogTools
 
         if (result.Candidates.Count > 0)
         {
-            builder.Append("No event log named '").Append(result.Log).AppendLine("' exists. Available logs include:");
+            builder.Append("No event log named '").Append(RenderLimits.Printable(result.Log)).AppendLine("' exists. Available logs include:");
             foreach (var candidate in result.Candidates)
             {
-                builder.Append("- ").AppendLine(candidate);
+                builder.Append("- ").AppendLine(RenderLimits.Printable(candidate));
             }
 
             return builder.ToString().TrimEnd();
@@ -146,21 +146,21 @@ public sealed class EventLogTools
         {
             // A quiet log is a real and useful answer, but only if the caller knows the filter that
             // produced it -- otherwise "nothing found" gets read as "nothing happened".
-            builder.Append("No matching records in the '").Append(result.Log)
+            builder.Append("No matching records in the '").Append(RenderLimits.Printable(result.Log))
                 .Append("' log in the last ").Append(result.Minutes)
                 .Append(" minutes. Widen the window, relax the severity filter, or check the log name.");
             return builder.ToString();
         }
 
         builder.Append(result.Events.Count).Append(result.Events.Count == 1 ? " record" : " records")
-            .Append(" in the '").Append(result.Log).Append("' log over the last ")
+            .Append(" in the '").Append(RenderLimits.Printable(result.Log)).Append("' log over the last ")
             .Append(result.Minutes).AppendLine(" minutes, newest first:");
 
         foreach (var entry in result.Events.Take(RenderLimits.MaxRenderedRows))
         {
             builder.Append("- ").Append(entry.TimeCreated.ToString("u", CultureInfo.InvariantCulture))
-                .Append(" [").Append(entry.Level).Append("] ")
-                .Append(entry.Provider).Append(" id ").Append(entry.EventId);
+                .Append(" [").Append(RenderLimits.Printable(entry.Level)).Append("] ")
+                .Append(RenderLimits.Printable(entry.Provider)).Append(" id ").Append(entry.EventId);
 
             if (entry.ProcessId is { } pid)
             {
@@ -195,7 +195,11 @@ public sealed class EventLogTools
     private static string FirstLine(string message)
     {
         var newline = message.IndexOfAny(['\r', '\n']);
-        var line = newline < 0 ? message : message[..newline];
+
+        // Whoever registered the provider wrote the message, so an ESC or a bidirectional override in the
+        // first line is theirs too -- cutting at the newline was never the whole defence. Escaped before the
+        // length cut, so the budget is measured on what is actually written.
+        var line = RenderLimits.Printable(newline < 0 ? message : message[..newline]);
         return line.Length <= 300 ? line : line[..300] + "...";
     }
 }
