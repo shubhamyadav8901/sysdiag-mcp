@@ -190,8 +190,10 @@ try {
     # Before anything is copied in, not after: deploy-target restricts only a directory it creates, and
     # an existing C:\WinDiag -- made by a local user, or left by an older bootstrap -- is writable by
     # every user. Restricted only afterwards, the build and the Sysinternals tools would have sat there,
-    # writable, until PsExec ran them as SYSTEM. This also comes before the token file is written. The
-    # installer restricts both directories again.
+    # writable, until PsExec ran them as SYSTEM. A missing directory is created restricted; one that
+    # exists is used only if it already is, and is refused otherwise, with nothing changed -- see
+    # windiag-acl.ps1. This also comes before the token file is written. The installer judges both
+    # directories again.
     Step "restricting $RemotePath and $ArtifactPath to SYSTEM and Administrators"
     Protect-WinDiagDirectory $share
     Protect-WinDiagDirectory ("\\$targetIp\" + ($ArtifactPath -replace '^([A-Za-z]):', '$1$'))

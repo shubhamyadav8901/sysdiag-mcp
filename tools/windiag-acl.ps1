@@ -26,9 +26,15 @@ function Protect-WinDiagDirectory {
         throw "$Path is the root of a drive. Give windiag a directory of its own, such as C:\WinDiag."
     }
 
-    # The same rule as ProtectedAcl.ProtectDirectory in the server, written twice because this runs before
-    # anything from this repository is on the target: bootstrap-winrm.ps1 sends this function alone.
-    # BootstrapAclScriptTests runs both on the same planted directory and compares what they leave.
+    # The server's ProtectedAcl.ProtectDirectory restricts a directory that already exists, and takes over
+    # what it holds, through handles opened without following links: every item judged and written through
+    # one handle, and listed and opened relative to its parent's. A path is resolved again on every call,
+    # so done by path -- Set-Acl, Get-ChildItem -- each step can be made to land somewhere else after the
+    # check before it, by whoever can still write the directory, which is why it needs restricting. This
+    # runs before anything from this repository is on the target -- bootstrap-winrm.ps1 sends this function
+    # alone -- so it does not try: it creates a missing directory restricted from the start, and uses one
+    # that exists only if it already is, refusing the rest with nothing changed. BootstrapAclScriptTests
+    # runs it against what the server leaves.
 
     $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
     $root = [System.IO.Path]::GetPathRoot($full).TrimEnd('\')
@@ -37,10 +43,10 @@ function Protect-WinDiagDirectory {
         $components = @($p) + $components
     }
 
-    # Set-Acl follows a junction, so a C:\WinDiag that some user made a junction to C:\Windows would have
-    # that restricted and handed to Administrators instead -- and the junction stays theirs, to point
-    # somewhere else once the check is done. A link above the directory is the same thing a level up.
-    # Attributes read by path do not follow the last component, so each one is judged as itself. Not
+    # Set-Acl and CreateDirectory follow a junction, so a C:\WinDiag that some user made a junction to
+    # C:\Windows would have that restricted, or a directory made inside it -- and the junction stays theirs,
+    # to point somewhere else once the check is done. A link above the directory is the same thing a level
+    # up. Attributes read by path do not follow the last component, so each one is judged as itself. Not
     # asked whether it exists first: Directory.Exists follows a link, so a junction to nowhere -- which a
     # create through it would then bring into being -- would read as not there yet.
     function Assert-NoLinkOnTheWay {
@@ -48,41 +54,150 @@ function Protect-WinDiagDirectory {
             try { $attributes = [System.IO.File]::GetAttributes($component) }
             catch [System.IO.FileNotFoundException], [System.IO.DirectoryNotFoundException] { return }
             if ($attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                throw ("$component is a link -- a junction, a symbolic link or a mounted folder" +
-                       $(if ($component -ne $full) { ", and $full is reached through it" } else { '' }) +
-                       '. Whoever made it can point it somewhere else once it has been checked. Nothing was ' +
-                       'changed. Give windiag a directory of its own that no link leads to.')
+                throw (Get-LinkRefusal $component)
             }
         }
     }
 
-    # A junction or symbolic link would carry the takeover below to wherever it points -- a user's profile,
-    # or System32. A hard link would too, less visibly: it is the same file as one elsewhere, and a user can
-    # give any file they can read a second name. Refused rather than skipped: a link nobody expected is
-    # itself the warning, and windiag never makes either. Every reparse point counts here, where the
-    # server's copy lets a deduplicated or compressed file through: PowerShell cannot read the tag that
-    # tells them apart, and refusing is the side to err on.
-    function Assert-Ownable([System.IO.FileSystemInfo] $Item) {
-        if ($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-            throw ("$($Item.FullName) is a link, which windiag never puts in its directories. " +
-                   "Nothing beneath it was changed; remove it and run this again.")
-        }
-        if (-not $Item.PSIsContainer -and $Item.LinkType -eq 'HardLink') {
-            throw ("$($Item.FullName) is a hard link: the same file as one elsewhere on the volume, so " +
-                   'restricting it would restrict that one too. Windiag never makes one. Remove it and run this again.')
-        }
+    function Get-LinkRefusal([string] $Component) {
+        "$Component is a link -- a junction, a symbolic link or a mounted folder" +
+            $(if ($Component -ne $full) { ", and $full is reached through it" } else { '' }) +
+            '. Whoever made it can point it somewhere else once it has been checked. Nothing was ' +
+            'changed. Give windiag a directory of its own that no link leads to.'
     }
 
-    # Before anything is changed, so a directory holding a link is refused untouched. Checked again item
-    # by item during the takeover, since until the directory is restricted its contents can still change.
-    function Assert-NothingLinked([string] $Directory) {
-        foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force)) {
-            Assert-Ownable $item
-            if ($item.PSIsContainer) { Assert-NothingLinked $item.FullName }
+    # A directory's attributes and security, read through one handle opened on it and not on whatever it
+    # links to. Get-Acl reads by path and follows a link: a junction its maker flips between a folder of
+    # theirs and one of the system's would read as owned by TrustedInstaller between two checks that it is
+    # no link. Through one handle, what is judged a link or not is what the owner and ACEs are read from.
+    if (-not ('WinDiagAcl.Handle' -as [type])) {
+        Add-Type -Namespace WinDiagAcl -Name Handle -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct TagInfo { public uint FileAttributes; public uint ReparseTag; }
+
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(
+    string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+[DllImport("kernel32.dll", SetLastError = true)]
+private static extern bool GetFileInformationByHandleEx(
+    Microsoft.Win32.SafeHandles.SafeFileHandle file, int infoClass, out TagInfo info, uint size);
+
+[DllImport("advapi32.dll", SetLastError = true)]
+private static extern bool GetKernelObjectSecurity(
+    Microsoft.Win32.SafeHandles.SafeFileHandle handle, uint information, byte[] descriptor, uint length, out uint needed);
+
+// 0 when read; otherwise the Win32 error: 2 or 3 when nothing is there, 5 when this account may not read it.
+public static int Read(string path, out uint attributes, out byte[] descriptor)
+{
+    attributes = 0;
+    descriptor = null;
+    // READ_CONTROL | FILE_READ_ATTRIBUTES, any sharing, OPEN_EXISTING, BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
+    using (var handle = CreateFileW(path, 0x00020080, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero))
+    {
+        if (handle.IsInvalid) { return Marshal.GetLastWin32Error(); }
+        TagInfo info;
+        if (!GetFileInformationByHandleEx(handle, 9, out info, 8)) { return Marshal.GetLastWin32Error(); }
+        attributes = info.FileAttributes;
+        uint needed;
+        GetKernelObjectSecurity(handle, 5, null, 0, out needed);   // OWNER | DACL; asks only for the size
+        if (needed == 0) { return Marshal.GetLastWin32Error(); }
+        descriptor = new byte[needed];
+        if (!GetKernelObjectSecurity(handle, 5, descriptor, needed, out needed)) { return Marshal.GetLastWin32Error(); }
+        return 0;
+    }
+}
+'@
+    }
+
+    # SYSTEM, Administrators and TrustedInstaller -- the OS's own servicing account, which owns C:\ and
+    # System32 and can replace the OS already. The same accounts the server trusts, less the service's own:
+    # the scripts install as LocalSystem, and a directory another account can write is not one to stage a
+    # binary into that PsExec then runs as SYSTEM.
+    $trusted = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3425522526-1101993487-2163447651-1013034063'
+    $directoryWriteRights = 0x500D0046   # GENERIC_ALL | GENERIC_WRITE | write, append, delete child, delete, WRITE_DAC, WRITE_OWNER
+    $renameRights = 0x100D0000           # GENERIC_ALL | DELETE | WRITE_DAC | WRITE_OWNER
+    $removeChildRights = 0x100C0040      # GENERIC_ALL | FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER
+
+    # Who other than $trusted owns the descriptor's object, or holds any of $Rights on it through an allow
+    # ACE that applies to it -- the server's ProtectedAcl.Exposures, in the same words.
+    function Get-Exposure($Descriptor, [int] $Rights, [string] $Verb) {
+        $found = @()
+        if ($Descriptor.Owner -and $trusted -notcontains $Descriptor.Owner.Value) {
+            $found += "$(Get-AccountName $Descriptor.Owner) owns it, so can change who has access"
+        }
+        if ($null -eq $Descriptor.DiscretionaryAcl) {
+            # No DACL at all: everyone may do anything. Not the same as an empty one, which admits nobody.
+            $found += "it has no access list, so everyone can $Verb it"
+            return $found
+        }
+        foreach ($ace in $Descriptor.DiscretionaryAcl) {
+            if ($ace -isnot [System.Security.AccessControl.CommonAce] -or
+                $ace.AceQualifier -ne [System.Security.AccessControl.AceQualifier]::AccessAllowed -or
+                ($ace.AceFlags -band [System.Security.AccessControl.AceFlags]::InheritOnly) -or
+                $ace.SecurityIdentifier.Value -eq 'S-1-3-0' -or       # CREATOR OWNER: only ever about a future child
+                $trusted -contains $ace.SecurityIdentifier.Value) { continue }
+            if ($ace.AccessMask -band $Rights) { $found += "$(Get-AccountName $ace.SecurityIdentifier) can $Verb it" }
+        }
+        $found | Select-Object -Unique
+    }
+
+    function Get-AccountName($Sid) {
+        try { $Sid.Translate([System.Security.Principal.NTAccount]).Value } catch { $Sid.Value }
+    }
+
+    # Every directory from the drive root down to $full that exists, each through its own handle: none a
+    # link; none above $full that anyone else could rename and replace with their own, everything below then
+    # theirs; and $full itself writable, and owned, by nobody else. Returns what is wrong, empty when nothing.
+    function Get-Problem {
+        $problems = @()
+        $parent = $null
+        foreach ($component in @("$root\") + $components) {
+            $attributes = [uint32] 0
+            $bytes = $null
+            $code = [WinDiagAcl.Handle]::Read($component, [ref] $attributes, [ref] $bytes)
+            if ($code -eq 2 -or $code -eq 3) { break }   # not there yet, and so nothing below it is either
+            if ($code -ne 0) {
+                $problems += "$component cannot be read ($((New-Object System.ComponentModel.Win32Exception $code).Message)), so who can change it is unknown"
+                break
+            }
+            if ($attributes -band [uint32][System.IO.FileAttributes]::ReparsePoint) { throw (Get-LinkRefusal $component) }
+            if (-not ($attributes -band [uint32][System.IO.FileAttributes]::Directory)) { throw "$component is a file, not a directory. Nothing was changed." }
+
+            $descriptor = New-Object System.Security.AccessControl.RawSecurityDescriptor -ArgumentList $bytes, 0
+            if ($component -ne "$root\") {
+                $problems += @(Get-Exposure $parent $removeChildRights 'remove what is in') | ForEach-Object { "${parentPath}, which holds ${component}: $_" }
+                if ($component -eq $full) {
+                    $problems += @(Get-Exposure $descriptor $directoryWriteRights 'write to') | ForEach-Object { "${component}: $_" }
+                }
+                else {
+                    $problems += @(Get-Exposure $descriptor $renameRights 'rename or remove') | ForEach-Object { "${component}, on the way to it: $_" }
+                }
+            }
+            $parent = $descriptor
+            $parentPath = $component
+        }
+        @($problems | Where-Object { $_ })
+    }
+
+    function Assert-Usable {
+        $problems = @(Get-Problem)
+        if ($problems.Count -gt 0) {
+            throw ("$full cannot be used as it is: " + (($problems | Select-Object -First 5) -join '; ') +
+                $(if ($problems.Count -gt 5) { "; and $($problems.Count - 5) more" } else { '' }) +
+                '. Nothing was changed: these scripts change nothing in a directory that already exists, ' +
+                'because doing that safely while someone else can still write it needs what only the ' +
+                'installer and the service have. If windiag runs from it, let update_self bring the target ' +
+                'to this release, whose server restricts it on its next start; otherwise rename it aside ' +
+                '(Rename-Item) or pick another path, and run this again. A directory above it that others ' +
+                'can rename must be restricted to administrators first.')
         }
     }
 
     Assert-NoLinkOnTheWay
+
+    # Judged before anything is created, so a refusal leaves nothing behind.
+    Assert-Usable
 
     $administrators = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'
 
@@ -99,11 +214,11 @@ function Protect-WinDiagDirectory {
             'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
     }
 
-    $existed = [System.IO.Directory]::Exists($Path)
-    if (-not $existed) {
+    if (-not [System.IO.Directory]::Exists($Path)) {
         # Created with the ACL already on it, not given it afterwards: in between it would inherit
         # "Authenticated Users: Modify" from C:\, and a handle a user opened then keeps that access
-        # whatever the ACL later says. Windows PowerShell and PowerShell 7 spell this differently.
+        # whatever the ACL later says. Every missing directory above it is made the same way. Windows
+        # PowerShell and PowerShell 7 spell this differently.
         if ($PSVersionTable.PSEdition -eq 'Core') {
             Add-Type -AssemblyName System.IO.FileSystem.AccessControl
             [void][System.IO.FileSystemAclExtensions]::CreateDirectory($acl, $Path)
@@ -112,64 +227,12 @@ function Protect-WinDiagDirectory {
             [void][System.IO.Directory]::CreateDirectory($Path, $acl)
         }
     }
-    else {
-        Assert-NothingLinked $Path
-    }
 
-    Set-Acl -LiteralPath $Path -AclObject $acl
-
-    # Again, now that only administrators can rename it: had it been swapped for a junction between the
-    # check above and Set-Acl, the takeover below must not follow it. The server's own copy closes that
-    # gap entirely by holding the directory open; a script sent bare to a target cannot.
+    # Judged again, whether this made it or not. CreateDirectory returns quietly when the directory is
+    # there already, so one a user made in the moment since the check -- theirs, with their ACL, and
+    # perhaps a file waiting at a name staging will write -- would otherwise pass as the one made here.
     Assert-NoLinkOnTheWay
-
-    # What was already inside keeps its own owner and its explicit ACEs through the change above -- only
-    # inherited ACEs are replaced -- and an owner can always grant itself write access again. A user who
-    # made C:\WinDiag first could otherwise keep a file in it that the staging copy then overwrites in
-    # place, keeping their ownership, and rewrite it after the hash check. So every item is handed to
-    # Administrators, and every explicit ACE it had is replaced by SYSTEM and Administrators only. A
-    # container is listed only after it is restricted, so nothing can be added to it between the listing
-    # and the reset.
-    function Reset-WinDiagContents([string] $Directory) {
-        foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force)) {
-            Assert-Ownable $item
-
-            # Explicit SYSTEM and Administrators ACEs, and inheritance left on so a service account's ACE on
-            # the directory still reaches the item. Never a security object with no rules added: a fresh one
-            # holds .NET's null-DACL placeholder, which Set-Acl writes as "Everyone: Full Control" -- every
-            # file here, the server binary included, would become writable by every user.
-            if ($item.PSIsContainer) {
-                $itemAcl = New-Object System.Security.AccessControl.DirectorySecurity
-                $inherit = 'ContainerInherit, ObjectInherit'
-            }
-            else {
-                $itemAcl = New-Object System.Security.AccessControl.FileSecurity
-                $inherit = 'None'
-            }
-            $itemAcl.SetOwner($administrators)
-            $itemAcl.SetAccessRuleProtection($false, $false)
-            foreach ($sid in 'S-1-5-18', 'S-1-5-32-544') {   # SYSTEM, Administrators
-                $itemAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule (
-                    (New-Object System.Security.Principal.SecurityIdentifier $sid),
-                    'FullControl', $inherit, 'None', 'Allow')))
-            }
-            Set-Acl -LiteralPath $item.FullName -AclObject $itemAcl
-
-            if ($item.PSIsContainer) { Reset-WinDiagContents $item.FullName }
-        }
-    }
-
-    if ($existed) {
-        $held = @(Get-ChildItem -LiteralPath $Path -Force | ForEach-Object Name)
-        Reset-WinDiagContents $Path
-        if ($held.Count -gt 0) {
-            Write-Warning ("$Path already existed and held: $(($held | Select-Object -First 5) -join ', ')" +
-                $(if ($held.Count -gt 5) { ', ...' } else { '' }) + '. It is now owned by Administrators and ' +
-                'writable only by SYSTEM and Administrators, but whatever it holds was put there before, and a ' +
-                'handle opened on it before keeps its access until it is closed: staging replaces windiag''s ' +
-                'own files; remove anything else, and restart the target if in doubt.')
-        }
-    }
+    Assert-Usable
 }
 
 function New-WinDiagRestrictedFile {

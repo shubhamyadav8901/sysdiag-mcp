@@ -35,66 +35,81 @@ public sealed class ElevatedTheoryAttribute : TheoryAttribute
 /// <summary>Runs tools/windiag-acl.ps1 itself, not a model of it: the scripts restrict the directories before any installer runs.</summary>
 public sealed class BootstrapAclScriptTests
 {
-    private static readonly SecurityIdentifier Everyone = new(WellKnownSidType.WorldSid, null);
-
-    [ElevatedFact]
-    public void Protecting_an_existing_directory_leaves_what_was_already_in_it_writable_only_by_system_and_administrators()
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_script_refuses_an_existing_directory_others_can_write_and_changes_nothing_in_it(string shell)
     {
-        // The bug this pins: each pre-existing item was given a security object with no rule added, which .NET
-        // writes as "Everyone: Full Control" -- so re-running bootstrap made the server binary and handle64.exe
-        // writable by every user. A file a user planted, granting Everyone write, is the case to get right.
-        var root = Directory.CreateTempSubdirectory("windiag-acl-").FullName;
+        // A C:\WinDiag a user made and filled, or one an older bootstrap left open. Taking it over by path --
+        // what the script did -- could be made to land elsewhere between each check and each Set-Acl by whoever
+        // still owned what was inside; the script now leaves that to the server, which works through handles.
+        var path = PlantedTree.UnderSystemDriveRoot();
         try
         {
-            var planted = Path.Combine(root, "handle64.exe");
-            File.WriteAllText(planted, string.Empty);
-            PlantedTree.GrantEveryoneFullControl(new FileInfo(planted));
-            var nested = Directory.CreateDirectory(Path.Combine(root, "nested")).FullName;
-            var nestedFile = Path.Combine(nested, "self-update.cmd");
-            File.WriteAllText(nestedFile, string.Empty);
-            PlantedTree.GrantEveryoneFullControl(new FileInfo(nestedFile));
+            var planted = PlantedTree.Plant(path);
+            var before = Describe(path);
 
-            RunProtectScript(root);
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
 
-            Assert.Empty(ProtectedAcl.DirectoryExposures(root, serviceAccount: null));
-            foreach (var file in new[] { planted, nestedFile })
-            {
-                var acl = new FileInfo(file).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
-                Assert.Empty(ProtectedAcl.Exposures(acl, ProtectedAcl.DirectoryWriteRights, ProtectedAcl.Trusted(null), "write to"));
-                Assert.DoesNotContain(
-                    acl.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>(),
-                    rule => rule.IdentityReference.Equals(Everyone));
-                Assert.Equal(ProtectedAcl.Administrators, acl.GetOwner(typeof(SecurityIdentifier)));
-            }
+            Assert.True(exit != 0, $"the script accepted a directory others can write: {output}");
+            Assert.Contains("can write to it", output, StringComparison.Ordinal);
+            Assert.Contains("Nothing was changed", output, StringComparison.Ordinal);
+            Assert.Equal(before, Describe(path));
+            Assert.All(planted, file => Assert.Equal("planted", File.ReadAllText(file)));
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            PlantedTree.Remove(path);
         }
     }
 
-    [ElevatedFact]
-    public void The_script_and_the_server_leave_the_same_owners_and_aces_on_a_directory_a_user_filled()
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_script_uses_a_directory_the_server_has_already_protected_and_changes_nothing_in_it(string shell)
     {
-        // One rule in two places: the script runs before anything from this repository is on the target, so
-        // it cannot call the server's ProtectedAcl.ProtectDirectory. What each leaves behind must not differ.
-        var byScript = PlantedTree.UnderSystemDriveRoot();
-        var byServer = PlantedTree.UnderSystemDriveRoot();
+        // Re-running bootstrap against a target windiag already runs from: the installer, or the service's own
+        // start, restricted the directory and took over what it held. The script judges it through a handle
+        // and goes on.
+        var path = PlantedTree.UnderSystemDriveRoot();
         try
         {
-            PlantedTree.Plant(byScript);
-            PlantedTree.Plant(byServer);
+            PlantedTree.Plant(path);
+            ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
+            var before = Describe(path);
 
-            RunProtectScript(byScript);
-            ProtectedAcl.ProtectDirectory(byServer, serviceAccount: null, ownedByAdministrators: true);
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
 
-            Assert.Equal(Describe(byServer), Describe(byScript));
-            Assert.Empty(ProtectedAcl.DirectoryExposures(byScript, serviceAccount: null));
+            Assert.True(exit == 0, output);
+            Assert.Equal(before, Describe(path));
         }
         finally
         {
-            PlantedTree.Remove(byScript);
-            PlantedTree.Remove(byServer);
+            PlantedTree.Remove(path);
+        }
+    }
+
+    [ElevatedTheory]
+    [InlineData("powershell.exe")]
+    [InlineData("pwsh.exe")]
+    public void The_script_refuses_a_path_below_a_directory_any_user_can_rename_and_creates_nothing_there(string shell)
+    {
+        // -RemotePath C:\Tools\WinDiag with C:\Tools made under C:\: any user can rename C:\Tools and put their
+        // own in its place after staging, and PsExec would then run their WinDiag.Mcp.exe as SYSTEM.
+        var parent = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            var path = Path.Combine(parent, "WinDiag");
+
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
+
+            Assert.True(exit != 0, $"the script accepted a path below a directory any user can rename: {output}");
+            Assert.Contains($"{parent}, on the way to it:", output, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(path));
+        }
+        finally
+        {
+            PlantedTree.Remove(parent);
         }
     }
 
@@ -127,8 +142,11 @@ public sealed class BootstrapAclScriptTests
     }
 
     [ElevatedFact]
-    public void The_script_refuses_a_hard_link_and_leaves_the_file_it_shares_a_name_with_as_it_was()
+    public void The_script_refuses_a_directory_others_can_write_without_changing_a_file_hard_linked_into_it()
     {
+        // The takeover the script used to do would have handed the file behind a hard link to Administrators,
+        // and PowerShell's own test for one gives up on a file someone holds open. Now nothing in a directory
+        // that exists is changed at all.
         var path = PlantedTree.UnderSystemDriveRoot();
         var elsewhere = PlantedTree.UnderSystemDriveRoot();
         try
@@ -140,8 +158,7 @@ public sealed class BootstrapAclScriptTests
 
             var (exit, output) = RunScript(path);
 
-            Assert.True(exit != 0, $"the script accepted a hard link: {output}");
-            Assert.Contains("hard link", output, StringComparison.Ordinal);
+            Assert.True(exit != 0, $"the script accepted a directory others can write: {output}");
             Assert.Equal(before, Sddl(original));
         }
         finally
@@ -162,15 +179,21 @@ public sealed class BootstrapAclScriptTests
         var parent = PlantedTree.UnderSystemDriveRoot();
         try
         {
+            // Below a directory only administrators can change; one any user could rename is refused, above.
+            ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
             var path = Path.Combine(parent, "Tools", "WinDiag");
 
-            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}' 3>$null", shell);
+            var (exit, output) = RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'", shell);
 
             Assert.True(exit == 0, output);
 
-            var acl = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
-            Assert.True(acl.AreAccessRulesProtected);
-            Assert.Equal(ProtectedAcl.Administrators, acl.GetOwner(typeof(SecurityIdentifier)));
+            foreach (var made in new[] { Path.GetDirectoryName(path)!, path })
+            {
+                var acl = new DirectoryInfo(made).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+                Assert.True(acl.AreAccessRulesProtected);
+                Assert.Equal(ProtectedAcl.Administrators, acl.GetOwner(typeof(SecurityIdentifier)));
+            }
+
             Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
         }
         finally
@@ -260,14 +283,8 @@ public sealed class BootstrapAclScriptTests
             : new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner))
         .GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner);
 
-    private static void RunProtectScript(string path)
-    {
-        var (exit, output) = RunScript(path);
-        Assert.True(exit == 0, $"exit {exit}: {output}");
-    }
-
     private static (int Exit, string Output) RunScript(string path) =>
-        RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}' 3>$null");
+        RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}'");
 
     private static string Quote(string value) => value.Replace("'", "''");
 
