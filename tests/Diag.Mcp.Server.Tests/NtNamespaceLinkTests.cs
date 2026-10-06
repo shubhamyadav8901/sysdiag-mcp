@@ -49,8 +49,9 @@ public sealed class NtNamespaceLinkTests
         // any user may create, and no name list caught it.
         "ice" + Sep + "HarddiskVolume3" + Sep,
         "ice" + Sep + "HarddiskVolumeShadowCopy1" + Sep,
-        // \??\Global\C:\Windows: a drive spelled through the global namespace.
-        Path.Combine("Global", "C:", "Windows"),
+        // \??\Global\C:\Windows: a drive spelled through the global namespace. Joined by hand: on Windows
+        // Path.Combine restarts at "C:", which would hand the walk the rooted C:\Windows instead.
+        "Global" + Sep + "C:" + Sep + "Windows",
         // A genuinely relative symlink. Indistinguishable from the above by its text, so it is stopped too.
         Path.Combine("Volumes", "data"),
         Path.Combine("..", "elsewhere"),
