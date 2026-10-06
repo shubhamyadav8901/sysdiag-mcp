@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using Diag.Mcp.Server.Files;
+using DiagRelay.Mcp.Tests;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Diag.Mcp.Server.Tests;
@@ -91,10 +92,11 @@ public sealed class WindowsSpellingTests
         Assert.Contains("stream", ex.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixFact]
     public void A_colon_in_a_directory_name_is_left_alone_under_the_posix_rule()
     {
-        // ':' is an ordinary character in a Linux or macOS name; the stream rule is Windows' alone.
+        // ':' is an ordinary character in a Linux or macOS name; the stream rule is Windows' alone. Unix only: on
+        // Windows "a:b" is drive-relative, so Path.Combine restarts at it and the path cannot even be spelled.
         var path = Path.Combine(Artifacts, "a:b", "x");
 
         var (real, _) = PathScope.Walk(path, NoLinks, windowsTargets: false, isMagicLink: null);
