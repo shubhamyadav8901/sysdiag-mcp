@@ -58,8 +58,17 @@ public sealed class MiniDumpWriter : IDumpWriter
                 "server down. Use an external tool such as procdump if you need to debug windiag itself.");
         }
 
-        using var process = OpenProcess(processId);
+        using var process = FindProcess(processId);
         var name = process.ProcessName;
+
+        // Before the process is opened for reading, so the refusal is the answer even where opening it
+        // would have failed anyway, and before a file exists to be left behind.
+        if (CredentialRefusal(name, processId, ImagePathOf(processId), Environment.SystemDirectory) is { } refusal)
+        {
+            throw new DumpCaptureException(refusal);
+        }
+
+        OpenForReading(process, processId);
 
         Directory.CreateDirectory(_options.ArtifactDirectory);
 
@@ -89,6 +98,64 @@ public sealed class MiniDumpWriter : IDumpWriter
             Kind: kind,
             Elevated: _privileges.IsElevated,
             TargetIsWow64: IsWow64(process));
+    }
+
+    /// <summary>Why a process must not be dumped, or null when it may be.</summary>
+    /// <remarks>
+    /// <para>Judged by the image the process runs when that can be read: the real lsass only ever runs from
+    /// System32, and a user's own tool that happens to be called lsass.exe is theirs to debug. When the path
+    /// cannot be read -- a protected lsass may refuse even a limited query -- the name decides, because not
+    /// being able to see where it runs from is no evidence that it is someone else's.</para>
+    /// <para>Refused outright rather than put behind a grant: nothing this server diagnoses needs a copy of
+    /// the machine's credentials, and a grant is a switch that ends up on.</para>
+    /// <para>The path is split on backslashes by hand rather than with <see cref="Path"/>, which is the
+    /// running OS's: it is always a Windows path, and the rule is tested off Windows too.</para>
+    /// </remarks>
+    internal static string? CredentialRefusal(string processName, int processId, string? imagePath, string systemDirectory)
+    {
+        if (imagePath is not null)
+        {
+            var separator = imagePath.LastIndexOf('\\');
+            var directory = separator < 0 ? string.Empty : imagePath[..separator];
+            var file = imagePath[(separator + 1)..];
+            var stem = file.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? file[..^4] : file;
+
+            if (!ProtectedTargets.CredentialProcesses.Contains(stem)
+                || !string.Equals(directory.TrimEnd('\\'), systemDirectory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            processName = stem;
+        }
+        else if (!ProtectedTargets.CredentialProcesses.Contains(processName))
+        {
+            return null;
+        }
+
+        return $"Refusing to dump {processName} (PID {processId}). lsass and lsaiso hold this machine's " +
+               "credentials - a dump of either is how NTLM hashes and Kerberos tickets are lifted off a host - " +
+               "and a dump lands in the artifact directory, which get_file reads back without any grant. csrss " +
+               "is refused with them; it is a protected process that would refuse the dump anyway. Nothing was " +
+               "written. Dumping these is not available through this server at all.";
+    }
+
+    /// <summary>The full Win32 path of the image a process runs, or null when it cannot be read.</summary>
+    /// <remarks>
+    /// A limited-information handle, not <see cref="Process.MainModule"/>: that needs read access to the
+    /// process's memory, which a protected process refuses -- and reading memory is the thing being decided.
+    /// </remarks>
+    private static string? ImagePathOf(int processId)
+    {
+        using var handle = OpenProcessHandle(ProcessQueryLimitedInformation, false, processId);
+        if (handle.IsInvalid)
+        {
+            return null;
+        }
+
+        var buffer = new char[1024];
+        var size = (uint)buffer.Length;
+        return QueryFullProcessImageNameW(handle, 0, buffer, ref size) ? new string(buffer, 0, (int)size) : null;
     }
 
     /// <summary>True when the target is a 32-bit process running under WOW64 on 64-bit Windows.</summary>
@@ -155,21 +222,26 @@ public sealed class MiniDumpWriter : IDumpWriter
         }
     }
 
-    private static Process OpenProcess(int processId)
+    private static Process FindProcess(int processId)
     {
         try
         {
-            var process = Process.GetProcessById(processId);
-
-            // Touching Handle here surfaces an access failure as a clear error before a file is created.
-            _ = process.Handle;
-            return process;
+            return Process.GetProcessById(processId);
         }
         catch (ArgumentException ex)
         {
             throw new DumpCaptureException(
                 $"No process with PID {processId} is running. Call process_list to get a current PID — " +
                 "PIDs are reused, so one read minutes ago may now be a different process.", ex);
+        }
+    }
+
+    private static void OpenForReading(Process process, int processId)
+    {
+        try
+        {
+            // Touching Handle here surfaces an access failure as a clear error before a file is created.
+            _ = process.Handle;
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
@@ -213,6 +285,17 @@ public sealed class MiniDumpWriter : IDumpWriter
             // Reporting the original failure matters more than this one.
         }
     }
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+
+    [DllImport("kernel32.dll", EntryPoint = "OpenProcess", SetLastError = true)]
+    private static extern SafeProcessHandle OpenProcessHandle(
+        uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageNameW(
+        SafeProcessHandle process, uint flags, [Out] char[] buffer, ref uint size);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

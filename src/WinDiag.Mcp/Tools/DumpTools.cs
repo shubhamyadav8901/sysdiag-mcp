@@ -40,7 +40,9 @@ public sealed class DumpTools
         "another machine can open directly - pass it to mcp-windbg's open_windbg_dump rather than " +
         "copying the file. Capturing a process owned by another user or by SYSTEM requires elevation. " +
         "Dumping a 32-bit process (an Office add-in or a shell extension host, for example) works, and " +
-        "the result says how to make the debugger show its real stacks.")]
+        "the result says how to make the debugger show its real stacks. " +
+        "lsass, lsaiso and csrss are never dumped: the first two hold the machine's credentials. Any other " +
+        "dump holds that process's memory and lands where get_file reads it with no extra grant.")]
     public CaptureDumpResult CaptureDump(
         [Description("Process id to dump. Get a current one from process_list; PIDs are reused.")]
         int processId,

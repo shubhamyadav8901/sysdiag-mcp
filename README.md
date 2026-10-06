@@ -72,7 +72,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
 | `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |
-| `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg |
+| `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg. Never lsass, lsaiso or csrss (judged by the image in System32): they hold the machine's credentials |
 | `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
 | `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting. Terminate and suspend are refused for core processes (lsass, csrss, winlogon…), for any process Windows marks critical, and for the host of any service `service_control` refuses to stop; resume never is |

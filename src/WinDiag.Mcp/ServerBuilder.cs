@@ -96,7 +96,9 @@ public static class ServerBuilder
                                                   NOT override this one -- reading is what a read-only
                                                   server is for, so --read-only --allow-arbitrary-read
                                                   is the deliberate combination for a look-but-do-not-
-                                                  touch target
+                                                  touch target. The artifact directory is always
+                                                  readable, so a capture_dump of any process is readable
+                                                  without it; lsass, lsaiso and csrss are never dumped
           WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
                                                   executable and restarts (default: false)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)

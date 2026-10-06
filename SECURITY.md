@@ -54,6 +54,11 @@ follow from that, and which are deliberate rather than oversights:
   one shared check rather than two copies. Widening it is opt-in
   (`WINDIAG_ALLOW_ARBITRARY_WRITE`, `WINDIAG_ALLOW_ARBITRARY_READ`) because reading anywhere the
   elevated account can reach is exfiltration.
+- **A dump is a read of a process's memory.** `capture_dump` writes into the artifact directory, which
+  `get_file` reads without `WINDIAG_ALLOW_ARBITRARY_READ`, so a writable server's token can read the
+  memory of any process the server can open -- SYSTEM services included. The processes that hold the
+  machine's credentials (`lsass`, `lsaiso`) are refused outright, with no grant to turn it back on;
+  `WINDIAG_READ_ONLY` removes the tool entirely.
 - **A signed server refuses an unsigned replacement.** The self-update signature check is a ratchet,
   not a setting: unsigned development builds keep working, but a target already running a signed
   build cannot be downgraded to an unsigned one through that path.
