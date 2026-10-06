@@ -29,7 +29,18 @@ internal sealed class UserUnits(Func<string, string> read, Func<string, string?>
     internal IEnumerable<AutostartEntry> Audit(IReadOnlyList<PasswdEntry> accounts, Func<string, bool> lingering, List<string> limitations)
     {
         var global = SearchPath(null, null);
-        var globalUnits = Enabled(global);
+        List<(string Name, string Link)> globalUnits;
+        try
+        {
+            globalUnits = Enabled(global);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // One unreadable directory must not cost the users' own units; it is named instead.
+            limitations.Add($"Units enabled for every user could not all be read ({ex.Message}); run the server as root.");
+            globalUnits = [];
+        }
+
         var globalFiles = new Dictionary<string, UnitFiles>(StringComparer.Ordinal);
         foreach (var (name, link) in globalUnits)
         {
