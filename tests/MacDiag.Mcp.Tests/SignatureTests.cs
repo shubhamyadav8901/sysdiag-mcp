@@ -245,6 +245,9 @@ public sealed class SignatureTests
         Assert.Equal(SignatureVerdict.Unknown, file.Verdict);
         Assert.Contains("whether Apple issued its certificate was not determined", file.Detail, StringComparison.Ordinal);
         Assert.Contains("did not finish", file.Detail, StringComparison.Ordinal);
+        // The team is the signer's own claim until Apple's issuance is settled, so the wording must not vouch for it.
+        Assert.DoesNotContain("(team ", file.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("verified", file.Detail, StringComparison.Ordinal);
     }
 
     [Fact]

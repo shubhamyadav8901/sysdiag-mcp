@@ -143,9 +143,10 @@ public sealed class MacSignatureInspector(IExternalCommand commands, MacDiagOpti
             {
                 { Issuer: Issuer.Apple } => (SignatureVerdict.Valid, "Signed by Apple, verified"),
                 { Issuer: Issuer.NotAppleIssued } => (SignatureVerdict.Untrusted, leaf + AppleIssuance.NotIssuedSuffix),
-                // Not Valid: whether anybody but the signer vouches for the name is exactly what is unknown.
+                // Not Valid, and worded from the leaf alone, without the team or "verified": whether anybody but the
+                // signer vouches for the name and team is exactly what is unknown. autostart_audit words it the same.
                 { Issuer: Issuer.Undetermined, Reason: var reason } =>
-                    (SignatureVerdict.Unknown, $"{signer}, but whether Apple issued its certificate was not determined: {reason}"),
+                    (SignatureVerdict.Unknown, $"{leaf}, but whether Apple issued its certificate was not determined: {reason}"),
                 { AppleQuestionLeftOpen: { } reason } => (SignatureVerdict.Valid, $"{signer}; whether Apple signed it was not determined: {reason}"),
                 _ => (SignatureVerdict.Valid, signer),
             },
