@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using LinuxDiag.Mcp.Configuration;
+using LinuxDiag.Mcp.Linux.Native;
 
 namespace LinuxDiag.Mcp.Hosting;
 
@@ -20,20 +21,31 @@ public static class LinuxServiceInstaller
 
         var source = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot determine this executable's path.");
 
-        Directory.CreateDirectory(InstallDirectory, Executable);
+        // First, so a refused --artifacts leaves everything as it was.
+        ArtifactDirectory(options.ArtifactDirectory);
+
+        OwnedDirectory(InstallDirectory, Executable);
         if (NeedsCopy(source, InstalledExecutable))
         {
             // Copied beside the target and renamed over it, so a running service's binary is replaced
-            // atomically rather than written into while it executes.
+            // atomically rather than written into while it executes. Deleted first, never overwritten: a file
+            // left there by whoever owned the directory before keeps its owner when written into.
             var temp = InstalledExecutable + ".installing";
-            File.Copy(source, temp, overwrite: true);
+            File.Delete(temp);
+            File.Copy(source, temp);
             File.SetUnixFileMode(temp, Executable);
             File.Move(temp, InstalledExecutable, overwrite: true);
         }
+        else
+        {
+            // Installing from the installed path: the binary may be one the operator's own account put there,
+            // so it is made root's, as a copied one is.
+            LibC.ChangeOwner(InstalledExecutable, 0, 0);
+            File.SetUnixFileMode(InstalledExecutable, Executable);
+        }
 
-        Directory.CreateDirectory("/etc/linuxdiag", OwnerOnlyDirectory);
+        OwnedDirectory("/etc/linuxdiag", OwnerOnlyDirectory);
         WriteOwnerOnly(options.EnvironmentFilePath, options.EnvironmentFile());
-        Directory.CreateDirectory(options.ArtifactDirectory ?? LinuxDiagOptions.DefaultArtifactDirectory, OwnerOnlyDirectory);
 
         WriteFresh(options.UnitFilePath, options.UnitFile(InstalledExecutable), UnitFileMode);
 
@@ -109,6 +121,62 @@ public static class LinuxServiceInstaller
         ["restart", name],
         ["is-active", "--quiet", name]
     ];
+
+    /// <summary>Creates the artifact directory root-only, or uses an existing one only root controls -- never re-chmodded.</summary>
+    /// <remarks>
+    /// <para>update_self writes the script root runs into it, and the log root writes, and put_file writes there
+    /// freely. An existing --artifacts directory another account could write, or replace through a directory above
+    /// it, is root code execution at the next update, so it is refused rather than used.</para>
+    /// <para>Never chmodded or chowned: --artifacts /tmp would make /tmp root's 0700 and break every other account
+    /// (MacDiag did exactly that on a Mac). The default is the installer's own, and is made root's 0700.</para>
+    /// </remarks>
+    internal static void ArtifactDirectory(string? requested)
+    {
+        if (requested is null)
+        {
+            OwnedDirectory(LinuxDiagOptions.DefaultArtifactDirectory, OwnerOnlyDirectory);
+            return;
+        }
+
+        if (!Directory.Exists(requested) && !File.Exists(requested) && new FileInfo(requested).LinkTarget is null)
+        {
+            Directory.CreateDirectory(requested, OwnerOnlyDirectory);
+        }
+
+        if (TrustedDirectory.Problems(requested, RootOnly) is { Count: > 0 } problems)
+        {
+            throw new ConfigurationException(
+                $"--artifacts {requested} cannot be used: {string.Join(" ", problems)} Choose a directory only root can " +
+                "write, or let the installer create one. Nothing was installed.");
+        }
+    }
+
+    /// <summary>Creates the directory, or takes an existing one over: root's, with exactly this mode.</summary>
+    /// <remarks>
+    /// Only for the installer's own fixed directories. CreateDirectory applies a mode only to a directory it creates,
+    /// so /opt/linuxdiag pre-created by the operator's account -- to scp the binary into -- stayed theirs, and a root
+    /// service ran a binary from a directory another account could write.
+    /// </remarks>
+    private static void OwnedDirectory(string path, UnixFileMode mode)
+    {
+        if (new FileInfo(path).LinkTarget is not null)
+        {
+            throw new ConfigurationException(
+                $"{path} is a symbolic link. The installer makes it a directory only root controls; remove the link and install again.");
+        }
+
+        Directory.CreateDirectory(path, mode);
+        LibC.ChangeOwner(path, 0, 0);
+        File.SetUnixFileMode(path, mode);
+        if (TrustedDirectory.Problems(path, RootOnly) is { Count: > 0 } problems)
+        {
+            throw new ConfigurationException(
+                $"{path} cannot be used: {string.Join(" ", problems)} Make the directories above it root's and not " +
+                "writable by group or others (chown root:root, chmod go-w), and install again.");
+        }
+    }
+
+    private static readonly uint[] RootOnly = [0];
 
     internal static bool NeedsCopy(string source, string destination) =>
         !string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.Ordinal);
