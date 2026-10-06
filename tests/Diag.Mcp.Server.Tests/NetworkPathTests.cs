@@ -14,6 +14,12 @@ namespace Diag.Mcp.Server.Tests;
 /// </remarks>
 public sealed class NetworkPathTests
 {
+    private static DriveType LocalDrives(char letter) => DriveType.Fixed;
+
+    // Z: is a share mapped for every session, as SYSTEM sees it; every other letter is a local disk.
+    private static DriveType ZIsMapped(char letter) =>
+        char.ToUpperInvariant(letter) == 'Z' ? DriveType.Network : DriveType.Fixed;
+
     [Theory]
     [InlineData(@"\\attacker\share\x")]
     [InlineData("//attacker/share/x")]
@@ -27,7 +33,7 @@ public sealed class NetworkPathTests
     [InlineData(@"\\?\Volume{11111111-1111-1111-1111-111111111111}\Windows")]
     public void A_network_or_device_spelling_is_recognised_on_windows(string path)
     {
-        Assert.True(NetworkPath.IsNetworkOrDevice(path, windows: true));
+        Assert.True(NetworkPath.IsNetworkOrDevice(path, windows: true, LocalDrives));
     }
 
     [Theory]
@@ -42,7 +48,31 @@ public sealed class NetworkPathTests
     {
         // The long-path prefixes are how a caller reaches past MAX_PATH on a local disk: refusing them
         // would break a legitimate path for no gain.
-        Assert.False(NetworkPath.IsNetworkOrDevice(path, windows: true));
+        Assert.False(NetworkPath.IsNetworkOrDevice(path, windows: true, LocalDrives));
+    }
+
+    [Theory]
+    [InlineData(@"Z:\x")]
+    [InlineData("z:/x")]
+    [InlineData(@"\\?\Z:\x")]
+    [InlineData(@"\\.\Z:\x")]
+    [InlineData(@"\??\Z:\x")]
+    [InlineData(@"//?/z:/x")]
+    public void A_mapped_network_drive_is_refused_however_its_letter_is_spelled(string path)
+    {
+        // The drive type used to be asked of the path's root. For \\?\Z:\ that root starts with two
+        // separators, DriveInfo refuses it, and the refusal was read as "local": the long-path spelling
+        // of a mapped share walked straight past the rule. It is asked of the letter now.
+        Assert.True(NetworkPath.IsNetworkOrDevice(path, windows: true, ZIsMapped));
+    }
+
+    [Theory]
+    [InlineData(@"C:\x")]
+    [InlineData(@"\\?\C:\x")]
+    [InlineData(@"\Windows\win.ini")]
+    public void A_local_drive_beside_a_mapped_one_is_still_local(string path)
+    {
+        Assert.False(NetworkPath.IsNetworkOrDevice(path, windows: true, ZIsMapped));
     }
 
     [Fact]
@@ -50,7 +80,7 @@ public sealed class NetworkPathTests
     {
         // POSIX lets "//" mean something implementation-defined; Linux and macOS read it as "/". Nothing
         // connects out, so the Unix servers keep their behaviour.
-        Assert.False(NetworkPath.IsNetworkOrDevice("//attacker/share/x", windows: false));
+        Assert.False(NetworkPath.IsNetworkOrDevice("//attacker/share/x", windows: false, LocalDrives));
     }
 
     [WindowsFact]

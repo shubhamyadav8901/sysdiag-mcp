@@ -14,36 +14,10 @@ namespace Diag.Mcp.Server.Files;
 public static class NetworkPath
 {
     /// <summary>Whether <paramref name="fullPath"/> reaches the network or a device on this machine.</summary>
-    /// <remarks>
-    /// Also true for a drive letter the system reports as a network drive: a share mapped for every
-    /// session is reached by the same SMB connection as its UNC spelling. <see cref="DriveInfo"/> asks
-    /// the drive's type without connecting.
-    /// </remarks>
-    public static bool IsNetworkOrDevice(string fullPath)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
+    public static bool IsNetworkOrDevice(string fullPath) =>
+        IsNetworkOrDevice(fullPath, OperatingSystem.IsWindows(), DriveTypeOf);
 
-        if (IsNetworkOrDevice(fullPath, windows: true))
-        {
-            return true;
-        }
-
-        try
-        {
-            var root = Path.GetPathRoot(fullPath);
-            return !string.IsNullOrEmpty(root) && new DriveInfo(root).DriveType == DriveType.Network;
-        }
-        catch (ArgumentException)
-        {
-            // Not a drive DriveInfo recognises: the spelling check above has already said it is local.
-            return false;
-        }
-    }
-
-    /// <summary>The spelling rule alone, with the OS supplied, so it can be pinned on any machine.</summary>
+    /// <summary>The rule, with the OS and the drive-type lookup supplied, so it can be pinned on any machine.</summary>
     /// <remarks>
     /// <para>Two leading separators, in either direction, are a UNC path (<c>\\host\share</c>) or a
     /// device path (<c>\\?\</c>, <c>\\.\</c>), and <c>\??\</c> is the NT spelling of the latter. Of those,
@@ -52,8 +26,13 @@ public static class NetworkPath
     /// pipe, <c>\\.\C:</c> (the raw volume), <c>\\?\GLOBALROOT</c> (the whole object namespace) and
     /// <c>\\?\Volume{guid}</c>, which is local storage but skips the drive-letter spelling the owned
     /// directories are configured in.</para>
+    /// <para>A drive letter the system reports as a network drive is refused too, however it is spelled:
+    /// a share mapped for every session is reached by the same SMB connection as its UNC spelling. The
+    /// type is asked of the letter, not of the path's root. <see cref="DriveInfo"/> refuses a root such as
+    /// <c>\\?\Z:\</c>, and taking that refusal for "local" let the long-path spelling of a mapped share
+    /// through.</para>
     /// </remarks>
-    internal static bool IsNetworkOrDevice(string path, bool windows)
+    internal static bool IsNetworkOrDevice(string path, bool windows, Func<char, DriveType> driveTypeOf)
     {
         if (!windows || path.Length < 2)
         {
@@ -61,12 +40,13 @@ public static class NetworkPath
         }
 
         static bool Separator(char c) => c is '\\' or '/';
+        static bool Drive(ReadOnlySpan<char> s) => s.Length >= 2 && char.IsAsciiLetter(s[0]) && s[1] == ':';
 
         var devicePrefix = Separator(path[0]) && Separator(path[1]);
         var ntPrefix = path.StartsWith(@"\??\", StringComparison.Ordinal);
         if (!devicePrefix && !ntPrefix)
         {
-            return false;
+            return Drive(path) && driveTypeOf(path[0]) == DriveType.Network;
         }
 
         var isDeviceForm = ntPrefix || (path.Length >= 4 && path[2] is '?' or '.' && Separator(path[3]));
@@ -76,7 +56,21 @@ public static class NetworkPath
         }
 
         var rest = path.AsSpan(4);
-        var localDrive = rest.Length >= 3 && char.IsAsciiLetter(rest[0]) && rest[1] == ':' && Separator(rest[2]);
-        return !localDrive;
+        var localDrive = Drive(rest) && rest.Length >= 3 && Separator(rest[2]);
+        return !localDrive || driveTypeOf(rest[0]) == DriveType.Network;
+    }
+
+    /// <summary>The type Windows reports for a drive letter, asked without touching the drive.</summary>
+    /// <remarks>GetDriveType answers a mapped drive from the session's mapping, not by connecting to it.</remarks>
+    internal static DriveType DriveTypeOf(char letter)
+    {
+        try
+        {
+            return new DriveInfo(letter.ToString()).DriveType;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException)
+        {
+            return DriveType.Unknown;
+        }
     }
 }
