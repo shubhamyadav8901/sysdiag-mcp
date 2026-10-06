@@ -89,8 +89,10 @@ internal static class HandleCsvParser
         var expectedPid = processId?.ToString(CultureInfo.InvariantCulture);
 
         // The process every later line must claim, once a name that can hold a line break has been
-        // printed; null until then. NoProcess when that name's row could not be read at all.
-        int? doubtFrom = null;
+        // printed; null until then. Its image name too when that row could be read, since a line from
+        // inside the name could otherwise list a made-up image under the right PID. NoProcess when the
+        // row could not be read at all and nothing scoped it.
+        (int Pid, string? Image)? doubtFrom = null;
 
         using var reader = new StringReader(csv);
         string? line;
@@ -124,7 +126,7 @@ internal static class HandleCsvParser
                 // Its name cannot be told from its image name, so whether it holds a line break cannot
                 // be either. Under -p it is still the scoped process's row.
                 unparsed++;
-                doubtFrom ??= processId ?? NoProcess;
+                doubtFrom ??= (processId ?? NoProcess, null);
                 continue;
             }
 
@@ -143,7 +145,9 @@ internal static class HandleCsvParser
                 Name: string.Join(',', fields.Skip(Column(layout.ObjectName))).TrimEnd(),
                 Unproven: doubtFrom is not null);
 
-            if (doubtFrom is { } holder && entry.ProcessId != holder)
+            if (doubtFrom is { } holder &&
+                (entry.ProcessId != holder.Pid ||
+                 (holder.Image is not null && !string.Equals(entry.ProcessName, holder.Image, StringComparison.Ordinal))))
             {
                 // Maybe the next process's row, maybe more of that name naming a victim: nothing in the
                 // line can say which, so it is counted and never listed against the PID it claims.
@@ -154,7 +158,7 @@ internal static class HandleCsvParser
             entries.Add(entry);
             if (doubtFrom is null && CanHoldLineBreak(entry.Name))
             {
-                doubtFrom = entry.ProcessId;
+                doubtFrom = (entry.ProcessId, entry.ProcessName);
             }
         }
 
@@ -209,10 +213,13 @@ internal static class HandleCsvParser
 
     /// <summary>Whether a printed object name could contain a line break, and so run on into the next line.</summary>
     /// <remarks>
-    /// Only two kinds of name are known not to: none, and a path on a drive letter. handle.exe prints a
-    /// file on a local volume that way, and NTFS, ReFS and FAT refuse control characters in a name. An
-    /// object-manager name starts with a backslash and a registry key with its hive, so neither can be
-    /// mistaken for one. Everything else -- named objects, keys, pipes, devices -- is assumed to.
+    /// Only two kinds of name are taken not to: none, and a path on a drive letter. handle.exe prints a
+    /// file on a local volume that way, and NTFS, ReFS and FAT refuse control characters in a name. A
+    /// file on a share is taken to print as <c>\Device\Mup\...</c>, as the object manager names it,
+    /// which falls on the breakable side; no capture here shows a share, so that is the assumption this
+    /// rests on. An object-manager name starts with a backslash and a registry key with its hive, so
+    /// neither can be mistaken for a drive path. Everything else -- named objects, keys, pipes,
+    /// devices -- is assumed to hold a break.
     /// </remarks>
     private static bool CanHoldLineBreak(string name) =>
         name.Length > 0 &&

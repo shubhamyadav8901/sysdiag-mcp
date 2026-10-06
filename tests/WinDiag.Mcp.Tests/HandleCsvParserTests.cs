@@ -370,6 +370,21 @@ public sealed class HandleLineBreakTests
     }
 
     [Fact]
+    public void A_line_after_a_breakable_name_that_claims_the_right_pid_under_another_image_is_not_listed()
+    {
+        // The PID matches the object's holder, but the image name is made up: listing it would show
+        // "victim.exe (PID 4242)" -- a process that does not exist, named by whoever named the event.
+        var csv = NameSearchHeader + "\r\n" +
+                  @"evil.exe,4242,Event,CONTOSO\mallory,0x00000010,\BaseNamedObjects\x.docx" + "\n" +
+                  @"victim.exe,4242,File,NT AUTHORITY\SYSTEM,0x00000014,C:\shared\x.docx" + RowEnd;
+
+        var parsed = HandleCsvParser.Parse(csv);
+
+        Assert.DoesNotContain(parsed.Entries, e => e.ProcessName == "victim.exe");
+        Assert.Equal(1, parsed.UnparsedRows);
+    }
+
+    [Fact]
     public void A_search_whose_names_are_all_drive_paths_is_proven_throughout()
     {
         // The default path_handle_search: file handles to paths on drive letters, none of which can hold
