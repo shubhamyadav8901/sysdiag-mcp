@@ -2,23 +2,28 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
-using System.Security.Principal;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace WinDiag.Mcp.Hosting;
 
 /// <summary>
-/// Files and directories opened as themselves -- never through a link -- and their ACLs read and written
-/// through that same handle.
+/// Files and directories opened as themselves -- never through a link -- listed and opened relative to a
+/// directory already held, and their security read and written through that same handle.
 /// </summary>
 /// <remarks>
-/// <para>Everything .NET offers for a directory's ACL works by path, and a path is resolved again on every
-/// call. Judging an item by one call and writing its ACL with another leaves a moment in which whoever can
-/// still write it -- that is why it is being taken over -- turns an empty directory into a mount point, and
-/// the write, and everything after it, lands on wherever that points. Through one handle opened without
-/// following a link, the object judged is the object written.</para>
-/// <para><see cref="SetSecurityInfo"/> on a handle applies inheritance as it does by path: an unprotected
-/// DACL takes its parent's inheritable ACEs, and inheritable ACEs are carried to existing children.</para>
+/// <para>Everything .NET offers for a directory's ACL or its contents works by path, and a path is resolved
+/// again on every call. Judging an item by one call and writing its ACL, or listing what is in it, with
+/// another leaves a moment in which whoever can still write it -- that is why it is being taken over --
+/// turns an empty directory into a mount point, and the write, and everything after it, lands on wherever
+/// that points. Through one handle opened without following a link, the object judged is the object
+/// written; and a child opened by its bare name relative to its parent's handle is looked up in that
+/// directory itself, whatever its path now leads to.</para>
+/// <para>The security is written with SetKernelObjectSecurity, which sets that one object's descriptor and
+/// nothing else. SetSecurityInfo -- what .NET's own handle-based write calls -- also carries inheritable ACEs
+/// down to every existing child, before any child has been looked at: a hard link a user added a moment
+/// earlier would have its other name's file, a System32 binary say, rewritten before it could be refused.
+/// Callers write each child's descriptor themselves, inherited ACEs included, after judging it.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 internal static class FileObjects
@@ -38,9 +43,33 @@ internal static class FileObjects
     private const int ErrorFileNotFound = 2;
     private const int ErrorPathNotFound = 3;
     private const int ErrorAccessDenied = 5;
+    private const int ErrorNoMoreFiles = 18;
+    private const int ErrorAlreadyExists = 183;
     private const uint BackupSemantics = 0x02000000;
     private const uint OpenReparsePoint = 0x00200000;
     private const int FileAttributeTagInfoClass = 9;
+    private const int FileFullDirectoryInfoClass = 14;
+    private const int FileFullDirectoryRestartInfoClass = 15;
+
+    private const uint OwnerSecurityInformation = 0x00000001;
+    private const uint DaclSecurityInformation = 0x00000004;
+    private const uint ProtectedDaclSecurityInformation = 0x80000000;
+    private const uint UnprotectedDaclSecurityInformation = 0x20000000;
+
+    // NtOpenFile's spelling of OpenReparsePoint and BackupSemantics, and the synchronous I/O a directory
+    // listing through the handle needs.
+    private const uint FileOpenReparsePoint = 0x00200000;
+    private const uint FileOpenForBackupIntent = 0x00004000;
+    private const uint FileSynchronousIoNonAlert = 0x00000020;
+
+    private const int StatusObjectNameNotFound = unchecked((int)0xC0000034);
+    private const int StatusObjectPathNotFound = unchecked((int)0xC000003A);
+    private const int StatusDeletePending = unchecked((int)0xC0000056);
+
+    // FILE_FULL_DIR_INFO: where each entry keeps the offset of the next, its name's length in bytes, and its name.
+    private const int NextEntryOffsetAt = 0;
+    private const int FileNameLengthAt = 60;
+    private const int FileNameAt = 68;
 
     /// <summary>What an opened file or directory is.</summary>
     internal readonly record struct Node(uint Attributes, uint Links, uint ReparseTag)
@@ -65,11 +94,23 @@ internal static class FileObjects
         (attributes & (uint)FileAttributes.ReparsePoint) != 0
         && ((attributes & (uint)FileAttributes.Directory) != 0 || reparseTag is not (DedupTag or WofTag));
 
-    /// <summary>Opens <paramref name="path"/> itself, never what it links to; null when nothing is there.</summary>
+    /// <summary>A full path in the <c>\\?\</c> form, which CreateFileW and CreateDirectoryW take past MAX_PATH.</summary>
+    /// <remarks>
+    /// .NET adds the prefix itself, so a tree it lists can be deeper than 260 characters; a raw call without
+    /// it fails such a path as not found, and an item taken for gone is an item never judged.
+    /// </remarks>
+    internal static string Extended(string fullPath) =>
+        fullPath.StartsWith(@"\\?\", StringComparison.Ordinal) || fullPath.StartsWith(@"\\.\", StringComparison.Ordinal)
+            ? fullPath
+            : fullPath.StartsWith(@"\\", StringComparison.Ordinal)
+                ? @"\\?\UNC\" + fullPath[2..]
+                : @"\\?\" + fullPath;
+
+    /// <summary>Opens <paramref name="fullPath"/> itself, never what it links to; null when nothing is there.</summary>
     /// <exception cref="UnauthorizedAccessException">This account may not open it with <paramref name="access"/>.</exception>
-    public static SafeFileHandle? Open(string path, uint access, FileShare share)
+    public static SafeFileHandle? Open(string fullPath, uint access, FileShare share)
     {
-        var handle = CreateFile(path, access, share, IntPtr.Zero, FileMode.Open, BackupSemantics | OpenReparsePoint, IntPtr.Zero);
+        var handle = CreateFile(Extended(fullPath), access, share, IntPtr.Zero, FileMode.Open, BackupSemantics | OpenReparsePoint, IntPtr.Zero);
         if (!handle.IsInvalid)
         {
             return handle;
@@ -77,7 +118,161 @@ internal static class FileObjects
 
         var error = Marshal.GetLastPInvokeError();
         handle.Dispose();
-        return error is ErrorFileNotFound or ErrorPathNotFound ? null : throw Failure(path, error);
+        return error is ErrorFileNotFound or ErrorPathNotFound ? null : throw Failure(fullPath, error);
+    }
+
+    /// <summary>
+    /// Opens the entry called <paramref name="name"/> in the directory <paramref name="directory"/> has open,
+    /// never what it links to; with an empty name, the object <paramref name="directory"/> has open, again.
+    /// Null when nothing is there.
+    /// </summary>
+    /// <param name="directory">A handle on a directory, or on any object when <paramref name="name"/> is empty.</param>
+    /// <param name="name">One name as the directory lists it, with no separator in it.</param>
+    /// <param name="access">The rights wanted; <see cref="Synchronize"/> is added, for synchronous listing.</param>
+    /// <param name="share">What others may do with it meanwhile.</param>
+    /// <param name="path">The item's path, for messages only: nothing here resolves it.</param>
+    /// <remarks>
+    /// Relative to the handle, the name is looked up in the very directory that was judged, so neither a
+    /// directory above it being renamed nor a link put where it used to be changes what is opened. An empty
+    /// name opens the same object anew, with other rights -- the listing right on a directory first opened
+    /// without it, which would otherwise mean naming it, and resolving it, again.
+    /// </remarks>
+    /// <exception cref="UnauthorizedAccessException">This account may not open it with <paramref name="access"/>.</exception>
+    public static SafeFileHandle? OpenChild(SafeFileHandle directory, string name, uint access, FileShare share, string path)
+    {
+        if (name.Contains('\\', StringComparison.Ordinal) || name.Contains('/', StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"'{name}' is not a single name.", nameof(name));
+        }
+
+        var added = false;
+        var buffer = Marshal.StringToHGlobalUni(name);
+        var unicode = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+        try
+        {
+            directory.DangerousAddRef(ref added);
+            Marshal.StructureToPtr(
+                new UnicodeString { Length = (ushort)(name.Length * 2), MaximumLength = (ushort)((name.Length + 1) * 2), Buffer = buffer },
+                unicode, fDeleteOld: false);
+
+            var attributes = new ObjectAttributes
+            {
+                Length = Marshal.SizeOf<ObjectAttributes>(),
+                RootDirectory = directory.DangerousGetHandle(),
+                ObjectName = unicode
+            };
+
+            var status = NtOpenFile(
+                out var opened, access | Synchronize, ref attributes, out _, (uint)share,
+                FileOpenReparsePoint | FileOpenForBackupIntent | FileSynchronousIoNonAlert);
+
+            if (status >= 0)
+            {
+                return new SafeFileHandle(opened, ownsHandle: true);
+            }
+
+            return status is StatusObjectNameNotFound or StatusObjectPathNotFound or StatusDeletePending
+                ? null
+                : throw Failure(path, RtlNtStatusToDosError(status));
+        }
+        finally
+        {
+            if (added)
+            {
+                directory.DangerousRelease();
+            }
+
+            Marshal.FreeHGlobal(unicode);
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>The names in the directory <paramref name="directory"/> has open, hidden and system ones included.</summary>
+    /// <remarks>
+    /// Read through the handle, so it is that directory's own entries whatever its path leads to now. The
+    /// handle needs <see cref="ListDirectory"/> and synchronous I/O, which <see cref="OpenChild"/> and
+    /// <see cref="Open"/> both give it.
+    /// </remarks>
+    public static List<string> Children(SafeFileHandle directory, string path)
+    {
+        const int size = 64 * 1024;
+        var native = Marshal.AllocHGlobal(size);
+        try
+        {
+            var names = new List<string>();
+            var managed = new byte[size];
+            var informationClass = FileFullDirectoryRestartInfoClass;
+            while (GetFileInformationByHandleEx(directory, informationClass, native, size))
+            {
+                Marshal.Copy(native, managed, 0, size);
+                names.AddRange(EntryNames(managed));
+                informationClass = FileFullDirectoryInfoClass;
+            }
+
+            var error = Marshal.GetLastPInvokeError();
+            return error == ErrorNoMoreFiles ? names : throw Failure(path, error);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(native);
+        }
+    }
+
+    /// <summary>The names in one buffer of FILE_FULL_DIR_INFO entries, without "." and "..".</summary>
+    internal static List<string> EntryNames(byte[] buffer)
+    {
+        var names = new List<string>();
+        for (var offset = 0; ; )
+        {
+            var next = BitConverter.ToInt32(buffer, offset + NextEntryOffsetAt);
+            var length = BitConverter.ToInt32(buffer, offset + FileNameLengthAt);
+            var name = Encoding.Unicode.GetString(buffer, offset + FileNameAt, length);
+            if (name is not ("." or ".."))
+            {
+                names.Add(name);
+            }
+
+            if (next == 0)
+            {
+                return names;
+            }
+
+            offset += next;
+        }
+    }
+
+    /// <summary>
+    /// Creates the directory <paramref name="fullPath"/> with <paramref name="descriptor"/> as its security from
+    /// the start; false, changing nothing, when something is already there.
+    /// </summary>
+    /// <remarks>
+    /// .NET's <c>CreateDirectory(DirectorySecurity, path)</c> returns quietly when the directory exists, so a
+    /// directory someone made a moment before -- theirs, with whatever ACL they chose -- would pass as the one
+    /// it was asked to create. This says which it was.
+    /// </remarks>
+    public static bool CreateDirectory(string fullPath, byte[] descriptor)
+    {
+        var pinned = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        try
+        {
+            var attributes = new SecurityAttributes
+            {
+                Length = Marshal.SizeOf<SecurityAttributes>(),
+                SecurityDescriptor = pinned.AddrOfPinnedObject()
+            };
+
+            if (CreateDirectoryW(Extended(fullPath), ref attributes))
+            {
+                return true;
+            }
+
+            var error = Marshal.GetLastPInvokeError();
+            return error == ErrorAlreadyExists ? false : throw Failure(fullPath, error);
+        }
+        finally
+        {
+            pinned.Free();
+        }
     }
 
     /// <summary>The attributes, link count and reparse tag of what <paramref name="handle"/> has open.</summary>
@@ -116,10 +311,28 @@ internal static class FileObjects
         return acl;
     }
 
-    /// <summary>Writes the owner, if <paramref name="acl"/> names one, and the DACL, to what <paramref name="handle"/> has open.</summary>
-    /// <remarks>Needs <see cref="WriteDac"/>, and <see cref="WriteOwner"/> when an owner is written.</remarks>
-    public static void WriteAcl(SafeFileHandle handle, FileSystemSecurity acl, bool isDirectory) =>
-        new HandleSecurity(isDirectory, acl).Write(handle);
+    /// <summary>
+    /// Writes the DACL of the self-relative <paramref name="descriptor"/>, and its owner when
+    /// <paramref name="withOwner"/>, to what <paramref name="handle"/> has open, and to nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>Needs <see cref="WriteDac"/>, and <see cref="WriteOwner"/> for the owner. Which ACEs count as
+    /// inherited is what the descriptor says: nothing is computed from the parent and nothing is carried to
+    /// children. <paramref name="protectedDacl"/> is said both in the descriptor's control bits and in the
+    /// call, so neither layer is left to infer it.</para>
+    /// <para>Microsoft's documentation steers file objects away from SetKernelObjectSecurity towards
+    /// SetSecurityInfo precisely because it does not propagate. Here that is the point.</para>
+    /// </remarks>
+    public static void WriteSecurity(SafeFileHandle handle, byte[] descriptor, bool withOwner, bool protectedDacl, string path)
+    {
+        var information = DaclSecurityInformation
+                          | (withOwner ? OwnerSecurityInformation : 0)
+                          | (protectedDacl ? ProtectedDaclSecurityInformation : UnprotectedDaclSecurityInformation);
+        if (!SetKernelObjectSecurity(handle, information, descriptor))
+        {
+            throw Failure(path, Marshal.GetLastPInvokeError());
+        }
+    }
 
     private static Exception Failure(string path, int error)
     {
@@ -133,11 +346,10 @@ internal static class FileObjects
         };
     }
 
-    /// <summary>A file object's security read or written through a handle, which DirectorySecurity cannot do.</summary>
+    /// <summary>A file object's security read through a handle, which DirectorySecurity cannot do.</summary>
     /// <remarks>
-    /// The protected members of <see cref="NativeObjectSecurity"/> are the runtime's own handle-based read
-    /// and write -- the ones <c>FileStream.SetAccessControl</c> uses -- so nothing here re-implements how
-    /// a security descriptor is marshalled.
+    /// The protected constructor of <see cref="NativeObjectSecurity"/> is the runtime's own handle-based
+    /// read, so nothing here re-implements how a security descriptor is marshalled.
     /// </remarks>
     private sealed class HandleSecurity : NativeObjectSecurity
     {
@@ -145,13 +357,6 @@ internal static class FileObjects
             : base(isDirectory, ResourceType.FileObject, handle, AccessControlSections.Access | AccessControlSections.Owner)
         {
         }
-
-        public HandleSecurity(bool isDirectory, FileSystemSecurity from)
-            : base(isDirectory, ResourceType.FileObject) =>
-            SetSecurityDescriptorBinaryForm(from.GetSecurityDescriptorBinaryForm(), AccessControlSections.All);
-
-        // Owner only when the descriptor has one: NativeObjectSecurity writes a section only if it is set.
-        public void Write(SafeHandle handle) => Persist(handle, AccessControlSections.Access | AccessControlSections.Owner);
 
         public override Type AccessRightType => typeof(FileSystemRights);
 
@@ -161,13 +366,13 @@ internal static class FileObjects
 
         // Never asked for: rules are read from the DirectorySecurity or FileSecurity ReadAcl copies this into.
         public override AccessRule AccessRuleFactory(
-            IdentityReference identityReference, int accessMask, bool isInherited, InheritanceFlags inheritanceFlags,
-            PropagationFlags propagationFlags, AccessControlType type) =>
+            System.Security.Principal.IdentityReference identityReference, int accessMask, bool isInherited,
+            InheritanceFlags inheritanceFlags, PropagationFlags propagationFlags, AccessControlType type) =>
             throw new NotSupportedException("Read the rules from ReadAcl's result.");
 
         public override AuditRule AuditRuleFactory(
-            IdentityReference identityReference, int accessMask, bool isInherited, InheritanceFlags inheritanceFlags,
-            PropagationFlags propagationFlags, AuditFlags flags) =>
+            System.Security.Principal.IdentityReference identityReference, int accessMask, bool isInherited,
+            InheritanceFlags inheritanceFlags, PropagationFlags propagationFlags, AuditFlags flags) =>
             throw new NotSupportedException("Read the rules from ReadAcl's result.");
     }
 
@@ -193,10 +398,56 @@ internal static class FileObjects
         public uint ReparseTag;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SecurityAttributes
+    {
+        public int Length;
+        public IntPtr SecurityDescriptor;
+        public int InheritHandle;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ObjectAttributes
+    {
+        public int Length;
+        public IntPtr RootDirectory;
+        public IntPtr ObjectName;
+        public uint Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoStatusBlock
+    {
+        public IntPtr Status;
+        public IntPtr Information;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
     private static extern SafeFileHandle CreateFile(
         string fileName, uint desiredAccess, FileShare shareMode, IntPtr securityAttributes, FileMode creationDisposition,
         uint flagsAndAttributes, IntPtr templateFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateDirectoryW(string pathName, ref SecurityAttributes securityAttributes);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtOpenFile(
+        out IntPtr fileHandle, uint desiredAccess, ref ObjectAttributes objectAttributes, out IoStatusBlock ioStatusBlock,
+        uint shareAccess, uint openOptions);
+
+    [DllImport("ntdll.dll")]
+    private static extern int RtlNtStatusToDosError(int status);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -206,4 +457,12 @@ internal static class FileObjects
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(
         SafeFileHandle file, int informationClass, out FileAttributeTagInfo information, uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "GetFileInformationByHandleEx")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, IntPtr information, uint size);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKernelObjectSecurity(SafeFileHandle handle, uint securityInformation, byte[] securityDescriptor);
 }

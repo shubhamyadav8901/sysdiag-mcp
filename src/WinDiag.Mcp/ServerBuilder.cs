@@ -88,9 +88,10 @@ public static class ServerBuilder
           read. The server's own directory and --artifacts are restricted the same way when anyone
           else can write them or anything in them, and what they hold is handed to Administrators,
           because the service runs what it finds there; install from a directory of its own, since one
-          that also holds other files is refused instead, as is one that is, is reached through, or
-          holds a link. A service also checks on every start, restricts what it can, and refuses to
-          start from a directory it cannot.
+          that also holds other files is refused instead. So is one that is, or is reached through, a
+          link, one below a directory others could rename, and one others can write that holds a link.
+          A service also checks on every start, restricts what it can, and refuses to start from a
+          directory it cannot.
 
           Each grant flag above becomes its WINDIAG_* variable (below) in that same per-service key:
           --allow-self-update -> WINDIAG_ALLOW_SELF_UPDATE=1, and so on. Flags and variables are two

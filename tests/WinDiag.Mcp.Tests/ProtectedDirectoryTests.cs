@@ -25,6 +25,16 @@ internal static class PlantedTree
     public static void HardLink(string link, string target) => Cmd($"mklink /H \"{link}\" \"{target}\"");
 
     /// <summary>
+    /// Hands <paramref name="path"/> itself -- a link, not what it leads to -- to Administrators, as an item an
+    /// administrator put there is owned when Windows gives new objects to that group rather than to whoever made them.
+    /// </summary>
+    /// <remarks>
+    /// Made by this elevated test, an item is owned by the account running it on a machine that gives new
+    /// objects to their creator, which counts as somebody other than SYSTEM and Administrators.
+    /// </remarks>
+    public static void OwnByAdministrators(string path) => Cmd($"icacls \"{path}\" /setowner *S-1-5-32-544 /L /Q");
+
+    /// <summary>
     /// <paramref name="path"/> with every link in it resolved, so a test's own temporary directory does not
     /// read as reached through a link: on macOS it is under /var, which is one.
     /// </summary>
@@ -203,10 +213,15 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
             Assert.Equal(ProtectedAcl.Administrators, Acl(file).GetOwner(typeof(SecurityIdentifier)));
             Assert.DoesNotContain(Rules(file, inherited: false).Concat(Rules(file, inherited: true)), r => r.IdentityReference.Equals(Everyone));
 
-            // Inheritance left on, so the service account's ACE on the directory still reaches what it runs
-            // and writes; and explicit rules present, never the empty ACL .NET writes as Everyone: Full Control.
-            Assert.Contains(Rules(file, inherited: true), r => r.IdentityReference.Equals(NetworkService));
-            Assert.Contains(Rules(file, inherited: false), r => r.IdentityReference.Equals(ProtectedAcl.LocalSystem));
+            // What an item created there afresh gets: no explicit ACE, inheritance left on so the service
+            // account's ACE on the directory still reaches what it runs and writes -- and never the empty ACL
+            // .NET writes as Everyone: Full Control.
+            Assert.False(Acl(file).AreAccessRulesProtected);
+            Assert.Empty(Rules(file, inherited: false));
+            foreach (var account in new[] { ProtectedAcl.LocalSystem, ProtectedAcl.Administrators, NetworkService })
+            {
+                Assert.Contains(Rules(file, inherited: true), r => r.IdentityReference.Equals(account));
+            }
         }
     }
 
@@ -221,6 +236,7 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
 
         var file = Path.Combine(path, "self-update.cmd");
         File.WriteAllText(file, "@echo off");
+        PlantedTree.OwnByAdministrators(file);
         PlantedTree.GrantEveryoneFullControl(new FileInfo(file));
 
         var exposure = Assert.Single(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
@@ -300,7 +316,9 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
     {
         // Created and then restricted, it would inherit "Authenticated Users: Modify" in between, and a
         // handle a user opened then keeps that access whatever the ACL later says.
+        // Below a directory only administrators can change: one any user could rename is refused, see below.
         var parent = NewDirectory();
+        ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
         var path = Path.Combine(parent, "WinDiagArtifacts", "dumps");
 
         ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
@@ -311,6 +329,246 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
             Assert.Empty(Rules(made, inherited: true));
             Assert.Empty(ProtectedAcl.DirectoryExposures(made, serviceAccount: null));
         }
+    }
+
+    [ElevatedFact]
+    public void Refuses_a_directory_below_one_any_user_can_rename_and_creates_nothing_there()
+    {
+        // --artifacts C:\Lab\artifacts, with C:\Lab made by anyone under C:\ -- or made by a user in the moment
+        // between finding it missing and creating it. Any user can rename C:\Lab and put their own in its
+        // place, and update_self would then write the script SYSTEM runs into a directory of theirs.
+        var parent = NewDirectory();
+        var path = Path.Combine(parent, "artifacts");
+        var before = Acl(parent).GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner);
+
+        var ex = Assert.Throws<ConfigurationException>(() => ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true));
+
+        Assert.Contains($"{parent} can be renamed", ex.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(path));
+        Assert.Equal(before, Acl(parent).GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner));
+
+        // The service's start-time check names it too, for a directory that is already there.
+        Directory.CreateDirectory(path);
+        Assert.Contains(ProtectedAcl.DirectoryExposures(path, serviceAccount: null), e => e.StartsWith($"{parent}, on the way to it:", StringComparison.Ordinal));
+    }
+
+    [ElevatedFact]
+    public void Neither_a_link_nor_a_hard_link_only_administrators_can_change_counts_against_a_protected_directory()
+    {
+        // A server directory beside Git for Windows' hard links, or holding a junction an administrator made,
+        // started under every earlier build. Nobody but an administrator can change either, so the start-time
+        // check must not turn it into a refusal after update_self.
+        var path = NewDirectory();
+        ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
+        var elsewhere = NewDirectory();
+        ProtectedAcl.ProtectDirectory(elsewhere, serviceAccount: null, ownedByAdministrators: true);
+
+        var original = Path.Combine(elsewhere, "original.dll");
+        File.WriteAllText(original, "an administrator's");
+        PlantedTree.OwnByAdministrators(original);
+        PlantedTree.HardLink(Path.Combine(path, "git-core.dll"), original);
+        var junction = Path.Combine(path, "tools");
+        PlantedTree.LinkDirectory(junction, elsewhere);
+        PlantedTree.OwnByAdministrators(junction);
+
+        Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+
+        // The same links where anyone may change them are what a user would plant, and are reported.
+        PlantedTree.GrantEveryoneFullControl(new FileInfo(original));
+        Assert.Contains(ProtectedAcl.DirectoryExposures(path, serviceAccount: null), e => e.Contains("git-core.dll is a hard link, and", StringComparison.Ordinal));
+    }
+
+    [ElevatedFact]
+    public void Takes_over_an_item_whose_path_is_longer_than_max_path()
+    {
+        // A raw CreateFileW without the \\?\ prefix fails such a path as not found, which was taken for "gone
+        // since the listing": the item was never judged, never refused and never taken over.
+        var path = NewDirectory();
+        var deep = Path.Combine(path, new string('a', 100), new string('b', 100), new string('c', 100));
+        Directory.CreateDirectory(deep);
+        var file = Path.Combine(deep, "handle64.exe");
+        File.WriteAllText(file, "planted");
+        Assert.True(file.Length > 260);
+        PlantedTree.GrantEveryoneFullControl(new FileInfo(Long(file)));
+
+        ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
+
+        var acl = new FileInfo(Long(file)).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+        Assert.Equal(ProtectedAcl.Administrators, acl.GetOwner(typeof(SecurityIdentifier)));
+        Assert.DoesNotContain(
+            acl.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>(),
+            r => r.IdentityReference.Equals(Everyone));
+        Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+    }
+
+    [ElevatedFact]
+    public void Reports_a_directory_it_may_not_list_as_unknown_and_takes_it_over_rather_than_throwing()
+    {
+        // A user's directory whose DACL keeps the caller from listing it threw a bare access-denied out of the
+        // start-time check, and the operator never got the repair or its instructions.
+        var path = NewDirectory();
+        var nested = Directory.CreateDirectory(Path.Combine(path, "nested")).FullName;
+        var file = Path.Combine(nested, "self-update.cmd");
+        File.WriteAllText(file, "planted");
+        var deny = new FileSystemAccessRule(ProtectedAcl.Administrators, FileSystemRights.ListDirectory, AccessControlType.Deny);
+        var nestedAcl = new DirectoryInfo(nested).GetAccessControl();
+        nestedAcl.AddAccessRule(deny);
+        new DirectoryInfo(nested).SetAccessControl(nestedAcl);
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(nested));
+
+            Assert.Contains(ProtectedAcl.DirectoryExposures(path, serviceAccount: null), e => e.StartsWith($"{nested}: what it holds cannot be listed", StringComparison.Ordinal));
+
+            ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
+
+            Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+            Assert.Equal(ProtectedAcl.Administrators, Acl(file).GetOwner(typeof(SecurityIdentifier)));
+        }
+        finally
+        {
+            // So the test's own clean-up can list it, whatever happened above.
+            var reset = new DirectoryInfo(nested).GetAccessControl();
+            reset.RemoveAccessRuleAll(deny);
+            new DirectoryInfo(nested).SetAccessControl(reset);
+        }
+    }
+
+    [ElevatedFact]
+    public void A_server_copied_to_a_drive_root_reads_as_exposed_without_walking_the_drive()
+    {
+        // C:\WinDiag.Mcp.exe registered as a service: the root has no directory above it to judge, and must
+        // still read as what it is -- a directory every user can add to -- so the start is refused.
+        var root = Path.GetPathRoot(Environment.SystemDirectory)!;
+        var started = Stopwatch.StartNew();
+
+        Assert.NotEmpty(ProtectedAcl.DirectoryExposures(root, serviceAccount: null));
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(30), $"took {started.Elapsed}: it walked the drive");
+    }
+
+    private static string Long(string path) => @"\\?\" + path;
+}
+
+/// <summary>
+/// <see cref="FileObjects"/>' handle-based primitives on a real volume: what makes the takeover safe while
+/// someone else can still write the directory, shown one property at a time.
+/// </summary>
+public sealed class FileObjectsOnDiskTests : IDisposable
+{
+    private readonly List<string> _made = [];
+
+    // Newest first, so a junction goes before the directory it points to.
+    public void Dispose() => Enumerable.Reverse(_made).ToList().ForEach(PlantedTree.Remove);
+
+    private string NewDirectory()
+    {
+        var path = PlantedTree.UnderSystemDriveRoot();
+        _made.Add(path);
+        return path;
+    }
+
+    private static string Sddl(string path) =>
+        (Directory.Exists(path)
+            ? (FileSystemSecurity)new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner)
+            : new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner))
+        .GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner);
+
+    [ElevatedFact]
+    public void Writing_a_directorys_security_changes_nothing_inside_it_so_a_hard_link_added_after_the_check_is_never_touched()
+    {
+        // SetSecurityInfo, which .NET's handle-based write calls, carries inheritable ACEs down to every child
+        // before any has been judged: a hard link a user added after the scan had the file it shares a name
+        // with -- in System32, say -- rewritten, and only then was refused.
+        var path = NewDirectory();
+        var elsewhere = NewDirectory();
+        var original = Path.Combine(elsewhere, "original.dll");
+        File.WriteAllText(original, "not windiag's");
+        PlantedTree.HardLink(Path.Combine(path, "dbghelp.dll"), original);
+        var before = Sddl(original);
+
+        using (var held = FileObjects.Open(path, FileObjects.ReadControl | FileObjects.WriteDac | FileObjects.ReadAttributes, FileShare.ReadWrite | FileShare.Delete)!)
+        {
+            FileObjects.WriteSecurity(held, ProtectedAcl.DirectoryAcl(serviceAccount: null, ownedByAdministrators: false).GetSecurityDescriptorBinaryForm(), withOwner: false, protectedDacl: true, path);
+        }
+
+        Assert.True(new DirectoryInfo(path).GetAccessControl().AreAccessRulesProtected);
+        Assert.Equal(before, Sddl(original));
+    }
+
+    [ElevatedFact]
+    public void A_child_is_listed_and_opened_in_the_directory_held_even_after_its_path_is_made_to_lead_elsewhere()
+    {
+        // What a user does to a directory of theirs between its check and its walk: move it aside and put a
+        // junction to somewhere else at its name. Listing or opening by path would follow the junction.
+        var path = NewDirectory();
+        File.WriteAllText(Path.Combine(path, "mine.txt"), "judged");
+        var elsewhere = NewDirectory();
+        File.WriteAllText(Path.Combine(elsewhere, "theirs.txt"), "not judged");
+
+        using var held = FileObjects.Open(path, FileObjects.ListDirectory | FileObjects.ReadAttributes | FileObjects.Synchronize, FileShare.ReadWrite | FileShare.Delete)!;
+        Directory.Move(path, path + ".moved");
+        _made.Add(path + ".moved");
+        PlantedTree.LinkDirectory(path, elsewhere);
+
+        Assert.Equal(["mine.txt"], FileObjects.Children(held, path));
+        using (var mine = FileObjects.OpenChild(held, "mine.txt", FileObjects.ReadAttributes, FileShare.ReadWrite | FileShare.Delete, path))
+        {
+            Assert.NotNull(mine);
+        }
+
+        Assert.Null(FileObjects.OpenChild(held, "theirs.txt", FileObjects.ReadAttributes, FileShare.ReadWrite | FileShare.Delete, path));
+
+        // And the object itself, opened again through the handle, is still the directory that was judged.
+        using var again = FileObjects.OpenChild(held, string.Empty, FileObjects.ListDirectory | FileObjects.ReadAttributes, FileShare.ReadWrite | FileShare.Delete, path)!;
+        Assert.False(FileObjects.Inspect(again, path).IsLink);
+        Assert.Equal(["mine.txt"], FileObjects.Children(again, path));
+    }
+
+    [ElevatedFact]
+    public void Creating_a_directory_that_is_already_there_says_so_and_leaves_it_as_it_was()
+    {
+        // .NET's CreateDirectory with an ACL returns quietly over an existing directory: one a user made in the
+        // moment before passed as the restricted one asked for, and stayed theirs.
+        var path = NewDirectory();
+        var before = Sddl(path);
+        var descriptor = ProtectedAcl.DirectoryAcl(serviceAccount: null, ownedByAdministrators: true).GetSecurityDescriptorBinaryForm();
+
+        Assert.False(FileObjects.CreateDirectory(path, descriptor));
+        Assert.Equal(before, Sddl(path));
+
+        var made = Path.Combine(path, "made");
+        Assert.True(FileObjects.CreateDirectory(made, descriptor));
+        Assert.True(new DirectoryInfo(made).GetAccessControl().AreAccessRulesProtected);
+    }
+}
+
+/// <summary>The parts of <see cref="FileObjects"/> that are arithmetic on strings and buffers, and so run anywhere.</summary>
+public sealed class FileObjectsFormatTests
+{
+    [Theory]
+    [InlineData(@"C:\WinDiag", @"\\?\C:\WinDiag")]
+    [InlineData(@"\\server\C$\WinDiag", @"\\?\UNC\server\C$\WinDiag")]
+    [InlineData(@"\\?\C:\WinDiag", @"\\?\C:\WinDiag")]
+    public void A_full_path_is_given_the_prefix_that_lifts_max_path_once(string path, string expected) =>
+        Assert.Equal(expected, FileObjects.Extended(path));
+
+    [Fact]
+    public void Reads_every_name_in_a_listing_buffer_and_leaves_out_the_dot_entries()
+    {
+        var buffer = new byte[1024];
+        var offset = 0;
+        var names = new[] { ".", "..", "handle64.exe", "self-update.cmd" };
+        for (var i = 0; i < names.Length; i++)
+        {
+            var name = System.Text.Encoding.Unicode.GetBytes(names[i]);
+            var size = (68 + name.Length + 7) & ~7;
+            BitConverter.GetBytes(i == names.Length - 1 ? 0 : size).CopyTo(buffer, offset);
+            BitConverter.GetBytes(name.Length).CopyTo(buffer, offset + 60);
+            name.CopyTo(buffer, offset + 68);
+            offset += size;
+        }
+
+        Assert.Equal(["handle64.exe", "self-update.cmd"], FileObjects.EntryNames(buffer));
     }
 }
 
