@@ -20,6 +20,10 @@ namespace WinDiag.Mcp.Diagnostics.Autostart;
 /// When the entry was last written, in UTC. Autoruns is asked for normalised UTC explicitly, because
 /// its default is a locale-formatted local time that cannot be parsed portably.
 /// </param>
+/// <param name="Profile">
+/// Whose autostart this is: <c>System-wide</c>, or the account (<c>DOMAIN\user</c>) whose profile holds
+/// it. Every profile is scanned, so two users' identical HKCU Run values differ only here.
+/// </param>
 public sealed record AutostartEntry(
     string Category,
     string Location,
@@ -54,8 +58,14 @@ public sealed record AutostartQuery(
 
 /// <summary>Result of an autostart audit.</summary>
 /// <param name="Elevated">
-/// False means entries under other users' profiles and some protected keys were not readable, so an
-/// absent entry does not mean it is not configured.
+/// False means the profiles of users who are logged off and some protected keys were not readable, so
+/// an absent entry does not mean it is not configured. Every profile is always asked for; elevation is
+/// what lets autorunsc load the ones not already loaded.
+/// </param>
+/// <param name="MalformedRowCount">
+/// Rows of autorunsc's output that could not be read as a whole entry and are not in
+/// <see cref="Entries"/>. Non-zero means the list is incomplete, and possibly that a hostile value name
+/// was trying to hide or forge an entry.
 /// </param>
 public sealed record AutostartAuditResult(
     IReadOnlyList<AutostartEntry> Entries,
@@ -64,7 +74,8 @@ public sealed record AutostartAuditResult(
     bool Elevated,
     bool SignaturesVerified,
     int UnsignedCount,
-    int MissingImageCount = 0);
+    int MissingImageCount = 0,
+    int MalformedRowCount = 0);
 
 /// <summary>Lists what is configured to start on its own.</summary>
 public interface IAutostartInspector

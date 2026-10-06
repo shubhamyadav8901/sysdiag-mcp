@@ -21,6 +21,7 @@
     <!-- The shared guards, compiled in rather than referenced: one implementation of each reflection
          check, applied to this server's assemblies, without pulling another test assembly in. -->
     <Compile Include="..\Diag.Mcp.Server.Tests\Guards\*.cs" LinkBase="Guards" />
+    <Compile Include="..\DiagRelay.Mcp.Tests\PlatformFacts.cs" Link="PlatformFacts.cs" />
   </ItemGroup>
 
   <ItemGroup>

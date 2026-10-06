@@ -24,13 +24,12 @@ internal static class RelayFileScope
     public const string RootsVariable = "SYSDIAG_RELAY_FILE_ROOT";
 
     /// <summary>
-    /// Where the roots come from: the variable if set, otherwise the two directories a deploy and a
-    /// capture-retrieval actually use.
+    /// Where the roots come from: the variable if set, otherwise <see cref="DefaultRoots"/>.
     /// </summary>
     /// <remarks>
     /// Defaulting to something workable rather than to nothing is deliberate: an empty default makes
     /// both tools inert until an environment variable is set, and the predictable response to a tool
-    /// that does nothing is to widen it to everything. Two narrow, useful roots are a better starting
+    /// that does nothing is to widen it to everything. Narrow, useful roots are a better starting
     /// point than a refusal that invites its own removal.
     /// </remarks>
     public static IReadOnlyList<string> Roots(IDictionary? environment = null)
@@ -38,10 +37,10 @@ internal static class RelayFileScope
         var configured = Value(environment ?? Environment.GetEnvironmentVariables(), RootsVariable);
 
         var roots = string.IsNullOrWhiteSpace(configured)
-            ? new[] { DefaultBuildRoot, DefaultArtifactRoot }
+            ? DefaultRoots
             : configured.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var resolved = new List<string>(roots.Length);
+        var resolved = new List<string>(roots.Count);
         foreach (var root in roots)
         {
             try
@@ -63,35 +62,77 @@ internal static class RelayFileScope
         return resolved;
     }
 
-    /// <summary>The build tree the relay was published into -- what a deploy pushes from.</summary>
+    /// <summary>
+    /// The build tree the relay was published into -- what a deploy pushes from -- or null when the relay
+    /// is not running from one.
+    /// </summary>
     /// <remarks>
-    /// <para>The relay ships at <c>artifacts/diagrelay/DiagRelay.Mcp.exe</c> while the builds it exists to
-    /// send sit beside it at <c>artifacts/win-x64</c>, so the useful root is the directory ABOVE the
-    /// one the executable is in. An earlier version combined the executable's own directory with
-    /// "artifacts" and produced <c>artifacts/relay/artifacts</c>, which does not exist -- the default
-    /// was dead, and pushing a build needed <see cref="RootsVariable"/> set, which is exactly the
-    /// inert-by-default state this was supposed to avoid.</para>
-    /// <para>Climbing one level is bounded deliberately. A relay unpacked straight into <c>C:\Tools</c>
-    /// would otherwise default to <c>C:\Tools</c>, which is defensible, but one dropped at a drive root
-    /// would default to the whole drive, which is not. A root parent is refused and the executable's own
-    /// directory is used instead -- narrower and useless beats wider and silent.</para>
-    /// <para>Resolved against the running executable, which is the published single-file exe in every
-    /// real deployment. Under <c>dotnet exec</c> or <c>dotnet run</c> that is dotnet's own install
-    /// directory, so this default is meaningless while developing -- set <see cref="RootsVariable"/>
-    /// there rather than wondering why a path was refused.</para>
+    /// Resolved against the running executable, which is the published single-file exe in every real
+    /// deployment. Under <c>dotnet exec</c> or <c>dotnet run</c> it is dotnet itself, which is not in a
+    /// build tree, so while developing this is null and <see cref="RootsVariable"/> is how to push a build.
     /// </remarks>
-    public static string DefaultBuildRoot
-    {
-        get
-        {
-            var directory = PathScope.ProcessDirectory;
-            var parent = Directory.GetParent(directory);
+    public static string? DefaultBuildRoot => BuildRootFor(PathScope.ProcessDirectory, UserProfile);
 
-            // GetParent returns null only at a root; Parent being null in turn means the parent IS a
-            // root, and handing out a whole drive is the one outcome worth refusing.
-            return parent is null || parent.Parent is null ? directory : parent.FullName;
+    /// <summary>
+    /// The roots that apply when <see cref="RootsVariable"/> is not set: the per-user artifact folder,
+    /// plus the build tree when the relay runs from one.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultRoots =>
+        DefaultBuildRoot is { } build ? [build, DefaultArtifactRoot] : [DefaultArtifactRoot];
+
+    /// <summary>
+    /// The <c>artifacts</c> directory when <paramref name="executableDirectory"/> is
+    /// <c>artifacts/diagrelay</c> or <c>artifacts/diagrelay-&lt;rid&gt;</c>; otherwise null.
+    /// </summary>
+    /// <remarks>
+    /// <para>The relay is published to <c>artifacts/diagrelay</c> while the builds it exists to send sit
+    /// beside it in <c>artifacts/win-x64</c>, so in that layout the useful root is the directory ABOVE the
+    /// executable's. An earlier version combined the executable's own directory with "artifacts" and
+    /// produced <c>artifacts/relay/artifacts</c>, which does not exist -- the default was dead, and pushing
+    /// a build needed <see cref="RootsVariable"/> set.</para>
+    /// <para>The climb used to happen wherever the relay was, refusing only a drive root. That made the
+    /// parent of an ordinary install folder the boundary: <c>~/bin</c> gave the whole home directory,
+    /// <c>~/DiagRelay.Mcp</c> gave every user's, and an unpacked release zip gave <c>~/Downloads</c>. With
+    /// $HOME in scope one push_file -- prompted by injected text in any forwarded tool result -- copies
+    /// ~/.ssh or the targets file with every bearer token onto a target, over plaintext HTTP. So the climb
+    /// now needs the layout it was written for, recognised by name; anywhere else there is no build root,
+    /// and the per-user artifact folder is the whole default.</para>
+    /// <para>Falling back to the executable's own directory was the obvious alternative and is no better:
+    /// a relay dropped straight into the home directory would then hand out the home directory itself.</para>
+    /// <para>The names alone are not proof -- a home directory can be called <c>artifacts</c> -- so a tree
+    /// that is or contains the user profile is refused as well.</para>
+    /// </remarks>
+    internal static string? BuildRootFor(string executableDirectory, string userProfile)
+    {
+        var directory = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(executableDirectory)));
+        var artifacts = directory.Parent;
+
+        // Matched case-insensitively everywhere: this only recognises a layout the publish step produced
+        // and widens nothing by itself -- the profile check below is what bounds it.
+        var isRelayFolder =
+            directory.Name.Equals(PublishFolder, StringComparison.OrdinalIgnoreCase) ||
+            directory.Name.StartsWith(PublishFolder + "-", StringComparison.OrdinalIgnoreCase);
+
+        if (!isRelayFolder ||
+            artifacts?.Parent is null ||
+            !artifacts.Name.Equals("artifacts", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
         }
+
+        if (!string.IsNullOrEmpty(userProfile) &&
+            PathScope.IsUnder(Path.GetFullPath(userProfile), artifacts.FullName))
+        {
+            return null;
+        }
+
+        return artifacts.FullName;
     }
+
+    /// <summary>What the relay's own publish directory is called, alone or suffixed with a RID.</summary>
+    private const string PublishFolder = "diagrelay";
+
+    private static string UserProfile => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
     /// <summary>Where captures and dumps land locally -- what a pull writes.</summary>
     /// <remarks>
@@ -116,8 +157,18 @@ internal static class RelayFileScope
     }
 
     /// <summary>
-    /// Canonicalises a local path and requires it to sit inside one of the roots.
+    /// Canonicalises a local path and requires it to sit inside one of the roots, both as spelled and with
+    /// every link along it followed.
     /// </summary>
+    /// <remarks>
+    /// <para>The spelled check alone let a link inside a root -- <c>root/keys</c> pointing at
+    /// <c>~/.ssh/id_ed25519</c>, or a linked directory a pull writes into -- carry the transfer anywhere
+    /// while the path in the request still looked confined. The roots are resolved the same way, so a
+    /// builds folder that is itself a link still admits what is inside it.</para>
+    /// <para>The walk is <see cref="PathScope.Walk(string)"/>, the one the server's put_file and get_file
+    /// use. A path it cannot judge -- a link loop, an unreadable link, a procfs magic link -- is refused,
+    /// not let through as spelled.</para>
+    /// </remarks>
     /// <param name="what">Named in the error, so the caller learns which argument was refused.</param>
     public static string Require(string? path, string what, IReadOnlyList<string> roots)
     {
@@ -133,6 +184,7 @@ internal static class RelayFileScope
 
         if (roots.Any(root => PathScope.IsUnder(full, root)))
         {
+            RequireRealPathInside(full, what, roots);
             return full;
         }
 
@@ -141,6 +193,52 @@ internal static class RelayFileScope
             $"({string.Join(", ", roots)}). Set {RootsVariable} to a semicolon-separated list of roots to " +
             "widen it -- deliberately, because this is the boundary that stops one tool call copying an " +
             "arbitrary local file onto a target.");
+    }
+
+    private static void RequireRealPathInside(string full, string what, IReadOnlyList<string> roots)
+    {
+        string real;
+        try
+        {
+            var (landed, crossesMagicLink) = PathScope.Walk(full);
+            if (crossesMagicLink)
+            {
+                throw new RelayException(
+                    $"The {what} '{full}' passes through a procfs link, so where it lands cannot be judged. " +
+                    "Name the file by a path without one.");
+            }
+
+            real = landed;
+        }
+        catch (FileTransferException ex)
+        {
+            throw new RelayException(ex.Message);
+        }
+
+        if (roots.Select(RealRoot).Any(root => root is not null && PathScope.IsUnder(real, root)))
+        {
+            return;
+        }
+
+        throw new RelayException(
+            $"The {what} '{full}' leads through a link to '{real}', which is outside the directories the " +
+            $"relay may touch on this machine ({string.Join(", ", roots)}). Name the file where it really " +
+            $"is, inside one of them, or set {RootsVariable} to include it -- deliberately, because a link " +
+            "inside a root is otherwise a way round this boundary.");
+    }
+
+    /// <summary>A root with its links followed, or null when it cannot be judged -- which then admits nothing.</summary>
+    private static string? RealRoot(string root)
+    {
+        try
+        {
+            var (real, crossesMagicLink) = PathScope.Walk(root);
+            return crossesMagicLink ? null : real;
+        }
+        catch (FileTransferException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

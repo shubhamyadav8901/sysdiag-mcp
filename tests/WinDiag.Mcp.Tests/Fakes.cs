@@ -1,5 +1,6 @@
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Autostart;
+using WinDiag.Mcp.Diagnostics.Control;
 using WinDiag.Mcp.Diagnostics.External;
 using WinDiag.Mcp.Diagnostics.Handles;
 using WinDiag.Mcp.Diagnostics.Locks;
@@ -128,7 +129,7 @@ internal sealed class FakeAutostartInspector(AutostartAuditResult result) : IAut
 /// Asserting on <see cref="Invocations"/> is how the suite proves that no destructive switch can be
 /// composed -- checking the parsed result alone would pass even if the wrong flags were sent.
 /// </remarks>
-internal sealed class StubExternalToolRunner(string standardOutput = "", int exitCode = 0) : IExternalToolRunner
+internal sealed class StubExternalToolRunner(string standardOutput = "", int exitCode = 0, int? processId = null) : IExternalToolRunner
 {
     public List<(string Executable, IReadOnlyList<string> Arguments)> Invocations { get; } = [];
 
@@ -144,6 +145,55 @@ internal sealed class StubExternalToolRunner(string standardOutput = "", int exi
         Invocations.Add((executableName, argv));
 
         return Task.FromResult(new ExternalToolResult(
-            executableName, argv, exitCode, standardOutput, string.Empty, TimeSpan.Zero));
+            executableName, argv, exitCode, standardOutput, string.Empty, TimeSpan.Zero, processId));
+    }
+}
+
+/// <summary>
+/// A process table that answers each snapshot from a fixed list of tables, the last repeating; by default
+/// the given processes, created at time 1, running throughout.
+/// </summary>
+internal sealed class FakeProcessTable : IProcessTable
+{
+    private readonly IReadOnlyDictionary<int, ProcessImage>[] _snapshots;
+
+    public FakeProcessTable(params (int ProcessId, string Image)[] processes)
+        : this([processes.ToDictionary(p => p.ProcessId, p => new ProcessImage(1, p.Image))])
+    {
+    }
+
+    public FakeProcessTable(IReadOnlyDictionary<int, ProcessImage>[] snapshots) => _snapshots = snapshots;
+
+    public int Taken { get; private set; }
+
+    public IReadOnlyDictionary<int, ProcessImage> Snapshot() => _snapshots[Math.Min(Taken++, _snapshots.Length - 1)];
+}
+
+/// <summary>Answers for a process's services and critical flag from fixed values, counting each question.</summary>
+internal sealed class FakeProtectionProbe : IProcessProtectionProbe
+{
+    public Dictionary<int, IReadOnlyList<string>> Services { get; } = [];
+
+    public bool Critical { get; init; }
+
+    public Exception? ServicesFailure { get; init; }
+
+    public int Calls { get; private set; }
+
+    public IReadOnlyList<string> ServicesHostedBy(int processId)
+    {
+        Calls++;
+        if (ServicesFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        return Services.TryGetValue(processId, out var services) ? services : [];
+    }
+
+    public bool IsCritical(System.Diagnostics.Process process)
+    {
+        Calls++;
+        return Critical;
     }
 }

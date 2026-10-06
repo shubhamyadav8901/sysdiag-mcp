@@ -71,6 +71,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+. "$PSScriptRoot\windiag-acl.ps1"
+
 $repo = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $PSScriptRoot 'sysinternals.json'
 $cacheDir = Join-Path $repo 'artifacts\sysinternals'
@@ -523,6 +525,16 @@ if ($script:UseHttp) {
     # per-file hash check in the staging loop below (file_signatures on the target's own copy) is a
     # stronger drift signal than the manifest anyway: it compares the file that is actually there
     # against the one about to be sent, rather than a record of what was sent last time.
+    #
+    # put_file writes into the server's own folder only with the self-update grant -- a file planted
+    # there is run or loaded as the service's account -- so without it every chunk below would be
+    # refused. Said once, up front, with the two ways forward.
+    $preflight = & (Join-Path $PSScriptRoot 'mcp-call.ps1') -Address $address -Token $Token -Tool capabilities -Raw
+    if ($preflight -and -not (@(($preflight | ConvertFrom-Json).tools.tool) -contains 'update_self')) {
+        throw "$Target was started without WINDIAG_ALLOW_SELF_UPDATE, so put_file cannot stage into " +
+              "$RemotePath. Re-run with -Smb to stage over the admin share, or restart the server with " +
+              "WINDIAG_ALLOW_SELF_UPDATE=1 (--allow-self-update on --install-service)."
+    }
     Write-Step "Staging to $RemotePath on $Target over the server's own channel (no SMB)"
 }
 else {
@@ -531,8 +543,10 @@ else {
     Write-Step "Checking $remoteShare"
 
     if (-not (Test-Path $remoteShare)) {
-        New-Item -ItemType Directory -Force $remoteShare | Out-Null
-        Write-Note 'created'
+        # Made restricted to SYSTEM and Administrators, not left to inherit from C:\: there a new folder
+        # gets "Authenticated Users: Modify", and the SYSTEM service will run what it finds in it.
+        Protect-WinDiagDirectory $remoteShare
+        Write-Note 'created, writable by SYSTEM and Administrators only'
     }
 
     if (Test-Path $stagedManifest) {
@@ -664,7 +678,7 @@ if (-not $hasUpdateSelf) {
     Write-Host "    (stop the server)"
     Write-Host "    cd `"$RemotePath`""
     Write-Host "    move /y WinDiag.Mcp.new.exe WinDiag.Mcp.exe"
-    Write-Host "    set WINDIAG_TOKEN=$Token"
+    Write-Host "    set WINDIAG_TOKEN=<the token you passed as -Token>"
     Write-Host "    set WINDIAG_ALLOW_SELF_UPDATE=1    (so future updates need no console step)"
     Write-Host "    WinDiag.Mcp.exe --http http://${Target}:${Port}"
     Write-Host ""

@@ -323,43 +323,88 @@ public sealed class RelayFileScopeTests
     private static Hashtable Environment(string? roots) =>
         roots is null ? [] : new Hashtable { [RelayFileScope.RootsVariable] = roots };
 
+    // A home directory and the places a relay is ordinarily put, none of which need to exist: the layout
+    // decision is made on names alone, so these are pure and portable.
+    private static readonly string Home = Path.Combine(Path.GetTempPath(), "relay-home", "someone");
+
     [Fact]
     public void Defaults_to_the_build_and_artifact_directories()
     {
         var roots = RelayFileScope.Roots(Environment(null));
 
-        Assert.Contains(RelayFileScope.DefaultBuildRoot, roots);
+        Assert.Equal(RelayFileScope.DefaultRoots, roots);
         Assert.Contains(RelayFileScope.DefaultArtifactRoot, roots);
     }
 
     [Fact]
-    public void The_default_build_root_is_the_tree_the_relay_sits_in_not_a_directory_below_it()
+    public void The_published_layout_gives_the_artifacts_tree_the_builds_sit_in()
     {
         // The relay ships at artifacts/diagrelay/ and sends builds from artifacts/win-x64/, so the root has
         // to be the level above the executable. A first version appended "artifacts" to the executable's
         // own directory, yielding artifacts/relay/artifacts -- a default that existed nowhere, so every
         // push of a build was refused until the environment variable was set.
-        var root = RelayFileScope.DefaultBuildRoot;
-        var executableDirectory = Path.GetDirectoryName(System.Environment.ProcessPath)
-                                  ?? System.Environment.CurrentDirectory;
+        var artifacts = Path.Combine(Home, "src", "sysdiag", "artifacts");
 
-        Assert.True(
-            PathScope.IsUnder(executableDirectory, root),
-            $"the executable's directory '{executableDirectory}' should sit inside the default build " +
-            $"root, but the root is '{root}'.");
-
-        Assert.True(Directory.Exists(root), $"the default build root '{root}' does not exist.");
+        Assert.Equal(artifacts, RelayFileScope.BuildRootFor(Path.Combine(artifacts, "diagrelay"), Home));
+        Assert.Equal(artifacts, RelayFileScope.BuildRootFor(Path.Combine(artifacts, "diagrelay-osx-arm64"), Home));
     }
 
     [Fact]
-    public void The_default_build_root_never_hands_out_a_whole_drive()
+    public void A_relay_directly_in_the_home_directory_gets_no_build_root()
     {
-        // Climbing one level is bounded on purpose: a relay dropped at a drive root must not default to
-        // the entire drive. Asserted against the real value rather than a contrived one, since this is
-        // the property that has to hold wherever the tests happen to run.
-        var root = RelayFileScope.DefaultBuildRoot;
+        // Climbing one level from ~/DiagRelay.Mcp handed out /home or /Users -- every user's files.
+        Assert.Null(RelayFileScope.BuildRootFor(Home, Home));
+    }
 
-        Assert.NotNull(Directory.GetParent(root));
+    [Fact]
+    public void A_relay_in_home_bin_gets_no_build_root()
+    {
+        // ~/bin/DiagRelay.Mcp climbed to $HOME: ~/.ssh, cloud credentials, and ~/.sysdiag-targets.json with
+        // every target's bearer token, one push_file away from a target over plaintext HTTP.
+        Assert.Null(RelayFileScope.BuildRootFor(Path.Combine(Home, "bin"), Home));
+    }
+
+    [Fact]
+    public void A_flat_unpacked_release_folder_gets_no_build_root()
+    {
+        // A release zip unpacks to a folder of its own; its parent is wherever the operator happened to
+        // unpack it -- Downloads, the desktop -- not a build tree.
+        Assert.Null(RelayFileScope.BuildRootFor(Path.Combine(Home, "Downloads", "diagrelay-linux-x64"), Home));
+    }
+
+    [Fact]
+    public void Another_folder_under_some_artifacts_directory_gets_no_build_root()
+    {
+        // "artifacts" is a common name -- a CI job's output, another project's build -- so the parent's
+        // name alone does not say this is sysdiag's tree. The relay's own publish folder has to be there too.
+        Assert.Null(RelayFileScope.BuildRootFor(Path.Combine(Home, "ci", "artifacts", "bin"), Home));
+    }
+
+    [Fact]
+    public void An_artifacts_tree_that_holds_the_home_directory_is_refused()
+    {
+        // The layout matches by name, so a home that is itself called artifacts -- or sits under one --
+        // must still not be handed out whole.
+        var artifactsHome = Path.Combine(Path.GetTempPath(), "relay-home", "artifacts");
+
+        Assert.Null(RelayFileScope.BuildRootFor(Path.Combine(artifactsHome, "diagrelay"), artifactsHome));
+        Assert.Null(RelayFileScope.BuildRootFor(
+            Path.Combine(artifactsHome, "diagrelay"), Path.Combine(artifactsHome, "diagrelay", "me")));
+    }
+
+    [Fact]
+    public void The_real_default_roots_never_include_the_home_directory_or_anything_above_it()
+    {
+        // Asserted against the real value as well as the contrived ones. Under the test host the executable
+        // is dotnet itself, which a per-user SDK install puts at ~/.dotnet/dotnet -- exactly the shape that
+        // used to climb to $HOME.
+        var home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+
+        foreach (var root in RelayFileScope.DefaultRoots)
+        {
+            Assert.False(PathScope.IsUnder(home, root), $"the default root '{root}' contains the home directory '{home}'.");
+            Assert.NotNull(Directory.GetParent(root));
+        }
     }
 
     [WindowsFact]
@@ -368,7 +413,7 @@ public sealed class RelayFileScopeTests
         var roots = RelayFileScope.Roots(Environment(@"C:\builds;C:\dumps"));
 
         Assert.Equal([@"C:\builds", @"C:\dumps"], roots);
-        Assert.DoesNotContain(RelayFileScope.DefaultBuildRoot, roots);
+        Assert.DoesNotContain(RelayFileScope.DefaultArtifactRoot, roots);
     }
 
     [WindowsFact]

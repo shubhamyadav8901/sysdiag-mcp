@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Diag.Mcp.Server;
 
@@ -21,19 +22,22 @@ public sealed class BearerTokenGate
 
     private readonly RequestDelegate _next;
     private readonly byte[] _expected;
+    private readonly RejectedRequestLog _rejected;
 
-    public BearerTokenGate(RequestDelegate next, string token)
+    public BearerTokenGate(RequestDelegate next, string token, ILogger<BearerTokenGate> logger, TimeProvider time)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
 
         _next = next;
         _expected = Encoding.UTF8.GetBytes(token);
+        _rejected = new RejectedRequestLog(logger, time);
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
         if (!IsAuthorized(context.Request.Headers.Authorization, _expected))
         {
+            _rejected.Record(context.Connection.RemoteIpAddress);
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers.WWWAuthenticate = "Bearer";
             await context.Response.WriteAsync("Missing or invalid bearer token.");

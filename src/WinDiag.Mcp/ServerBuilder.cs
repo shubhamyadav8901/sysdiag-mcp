@@ -65,7 +65,10 @@ public static class ServerBuilder
           --account <spec>            LocalSystem (default), NetworkService, LocalService, or
                                       DOMAIN\user with --password
           --password <value>          Required for an account that is not built in
-          --token <value>             Default: a new 256-bit token, printed once on success
+          --token-stdin               Read the token from standard input, so it never appears on
+                                      this machine's command line. Needs an elevated terminal
+          --token <value>             Default: a new 256-bit token, printed once on success.
+                                      Visible in process listings while the installer runs
           --artifacts <dir>           Pin WINDIAG_ARTIFACT_DIR. As SYSTEM, %TEMP% is
                                       C:\Windows\SystemTemp, so captures and dumps move without it
           --allow-self-update         Carry the grants across; a service registered without them
@@ -77,8 +80,18 @@ public static class ServerBuilder
                                       uninstall. Scoped to an address, never a subnet
           --no-restart-on-failure     Default is to let the SCM restart it if the process dies
 
-          The token is written to the service's own registry key, which only SYSTEM and
-          Administrators can read -- never to a machine-wide variable, which every local user can.
+          An option not listed here is refused, and nothing is installed. So is an option whose value
+          is missing, empty or another option (--token --read-only).
+
+          The token is written to the service's own registry key, which the installer first restricts
+          to SYSTEM and Administrators -- never to a machine-wide variable, which every local user can
+          read. The server's own directory and --artifacts are restricted the same way when anyone
+          else can write them or anything in them, and what they hold is handed to Administrators,
+          because the service runs what it finds there; install from a directory of its own, since one
+          that also holds other files is refused instead. So is one that is, or is reached through, a
+          link, one below a directory others could rename, and one others can write that holds a link.
+          A service also checks on every start, restricts what it can, and refuses to start from a
+          directory it cannot.
 
           Each grant flag above becomes its WINDIAG_* variable (below) in that same per-service key:
           --allow-self-update -> WINDIAG_ALLOW_SELF_UPDATE=1, and so on. Flags and variables are two
@@ -88,17 +101,25 @@ public static class ServerBuilder
           WINDIAG_READ_ONLY                       1/true to drop all state-changing tools (default: false)
           WINDIAG_ALLOW_COMMAND_EXECUTION         1/true to register run_command, an arbitrary shell
                                                   as the server's account (default: false; read-only wins)
-          WINDIAG_ALLOW_ARBITRARY_WRITE           1/true to let put_file write outside the server's own
-                                                  directories (default: false; put_file itself is always
-                                                  available on a writable server, scoped to those dirs)
+          WINDIAG_ALLOW_ARBITRARY_WRITE           1/true to let put_file write anywhere, the server's own
+                                                  directory included (default: false; put_file itself is
+                                                  always available on a writable server, scoped to the
+                                                  artifact directory)
           WINDIAG_ALLOW_ARBITRARY_READ            1/true to let the read tools open files outside those
-                                                  directories (default: false). WINDIAG_READ_ONLY does
+                                                  directories, and a network share or device path
+                                                  (default: false; put_file reaches a share only with
+                                                  arbitrary write). WINDIAG_READ_ONLY does
                                                   NOT override this one -- reading is what a read-only
                                                   server is for, so --read-only --allow-arbitrary-read
                                                   is the deliberate combination for a look-but-do-not-
-                                                  touch target
+                                                  touch target. The artifact directory is always
+                                                  readable, so a capture_dump of any process is readable
+                                                  without it; lsass, lsaiso and csrss are never dumped.
+                                                  Also opens HKLM\SAM, HKLM\SECURITY and other users'
+                                                  HKU hives to registry_read
           WINDIAG_ALLOW_SELF_UPDATE               1/true to register update_self, which replaces this
-                                                  executable and restarts (default: false)
+                                                  executable and restarts, and to let put_file write into
+                                                  the server's own directory to stage it (default: false)
           WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS   Budget per external tool call, 1..3600 (default: 120)
           WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS    How long update_self waits for running calls before
                                                   restarting anyway, 1..86400 (default: 1800)
@@ -107,9 +128,13 @@ public static class ServerBuilder
           WINDIAG_TOKEN                           Bearer token for HTTP. Generated and printed if unset.
           WINDIAG_ARTIFACT_DIR                    Where dumps and traces are written (default: %TEMP%\windiag)
 
-        HTTP mode always requires a bearer token. The token is read from the environment only, never
-        from a command-line argument, because this server's own process_list exposes command lines to
-        every local user on the machine.
+        Started by hand, the server takes --http and nothing else: the grants are WINDIAG_*
+        variables, and --read-only or --allow-* on that command line is refused rather than ignored.
+
+        HTTP mode always requires a bearer token. The running server reads it from the environment
+        only, never from a command-line argument, because this server's own process_list exposes
+        command lines to every local user on the machine. For the same reason the installer takes it
+        best through --token-stdin; --token puts it on the installer's command line while it runs.
 
         Diagnostics are written to stderr. In stdio mode, stdout carries the MCP protocol only.
         """;
@@ -153,9 +178,17 @@ public static class ServerBuilder
         // The surface every server in the family shares -- the two call-tool filters, file transfer and
         // capabilities, the activity tracker and the shutdown window -- registered by the kit in one
         // call. This server's own tools follow, on the builder it returns.
+        //
+        // The server's own folder is writable only with the self-update grant. Left open, it made the
+        // token alone code execution as SYSTEM: put_file could plant handle64.exe there, which
+        // ToolLocator prefers to any installed copy, or a DLL the process loads from its own folder,
+        // and the next path_handle_search or capture_dump ran it -- with run_command and update_self
+        // both off. Staging a build for update_self is the only reason to write there.
         var files = new FileTransferOptions(
             options.ArtifactDirectory, options.AllowArbitraryWrite, options.AllowArbitraryRead,
-            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1");
+            "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1",
+            ServerDirectoryWritable: options.AllowSelfUpdate,
+            ServerDirectorySetting: "WINDIAG_ALLOW_SELF_UPDATE=1");
         var update = new SelfUpdateOptions(options.ArtifactDirectory, options.UpdateDrainTimeout);
 
         var mcp = services
@@ -212,6 +245,7 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<IToolLocator, ToolLocator>();
         services.AddSingletonIfMissing<IExternalToolRunner, ExternalToolRunner>();
         services.AddSingletonIfMissing<ILockInspector, RestartManagerLockInspector>();
+        services.AddSingletonIfMissing<IProcessTable, NativeProcessTable>();
         services.AddSingletonIfMissing<IHandleInspector, HandleExeInspector>();
         services.AddSingletonIfMissing<IAutostartInspector, AutorunscInspector>();
         services.AddSingletonIfMissing<ISystemInspector, WindowsSystemInspector>();
@@ -237,6 +271,8 @@ public static class ServerBuilder
         services.AddSingletonIfMissing<Diagnostics.Modules.IModuleInspector, Diagnostics.Modules.WindowsModuleInspector>();
         // Fully qualified: Diagnostics.Control.IServiceController would otherwise collide with
         // System.ServiceProcess.ServiceController, which the services inspector already brings in.
+        services.AddSingletonIfMissing<
+            Diagnostics.Control.IProcessProtectionProbe, Diagnostics.Control.WindowsProcessProtectionProbe>();
         services.AddSingletonIfMissing<
             Diagnostics.Control.IProcessController, Diagnostics.Control.WindowsProcessController>();
         services.AddSingletonIfMissing<

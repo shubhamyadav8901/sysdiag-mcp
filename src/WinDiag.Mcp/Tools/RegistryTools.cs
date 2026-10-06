@@ -39,7 +39,10 @@ public sealed class RegistryTools
         "On 64-bit Windows the same path names two different keys: view defaults to 'native', what " +
         "regedit shows, and view='32' reads the WOW6432Node copy a 32-bit product writes to. The view " +
         "that was read is always stated in the result, because an answer that does not say is ambiguous. " +
-        "This reads only. To find out why a key cannot be read, use effective_access on the same path.")]
+        "This reads only. To find out why a key cannot be read, use effective_access on the same path. " +
+        "HKLM\\SAM, HKLM\\SECURITY and other users' hives under HKU need the server's arbitrary-read grant, " +
+        "and a value named like a credential (a *TOKEN, a password or a secret, including NAME=value entries " +
+        "in a service's Environment) is always returned redacted, with its size.")]
     public RegistryReadResult RegistryRead(
         [Description(@"Key path, for example HKLM\SOFTWARE\Vendor\Product. HKLM, HKCU, HKCR, HKU and HKCC are accepted.")]
         string path,
@@ -60,7 +63,7 @@ public sealed class RegistryTools
 
         // "view: x" rather than "[x view]": the descriptions are noun phrases, and gluing a word on
         // the end of one produced "[32-bit Windows, single view view]" on the target.
-        builder.Append(contents.Path).Append("  [view: ").Append(contents.View).AppendLine("]");
+        builder.Append(RenderLimits.Printable(contents.Path)).Append("  [view: ").Append(RenderLimits.Printable(contents.View)).AppendLine("]");
 
         if (contents.Values.Count == 0)
         {
@@ -71,11 +74,13 @@ public sealed class RegistryTools
             foreach (var value in contents.Values.Take(RenderLimits.MaxRenderedRows))
             {
                 // The unnamed default value has an empty name in the API; printing nothing there would
-                // read as a blank line rather than as the default.
+                // read as a blank line rather than as the default. Names and data are escaped: any user
+                // can write a REG_SZ under HKCU, and a newline in one would otherwise start a line of
+                // this summary that reads as the server's own.
                 builder.Append("  ")
-                    .Append(value.Name.Length == 0 ? "(Default)" : value.Name)
-                    .Append("  ").Append(value.Kind)
-                    .Append("  = ").Append(value.Value);
+                    .Append(value.Name.Length == 0 ? "(Default)" : RenderLimits.Printable(value.Name))
+                    .Append("  ").Append(RenderLimits.Printable(value.Kind))
+                    .Append("  = ").Append(RenderLimits.Printable(value.Value));
 
                 if (value.Truncated)
                 {
@@ -96,7 +101,7 @@ public sealed class RegistryTools
             // and at the current row cap this was one unwrapped line of well over a million characters.
             builder.Append(contents.TotalSubKeys)
                 .Append(contents.TotalSubKeys == 1 ? " subkey: " : " subkeys: ")
-                .AppendLine(RenderLimits.Join(contents.SubKeyNames));
+                .AppendLine(RenderLimits.Join(contents.SubKeyNames.Select(n => RenderLimits.Printable(n)).ToList()));
         }
         else if (valueName is null)
         {

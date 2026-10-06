@@ -33,6 +33,26 @@ public sealed class ToolNotFoundException : ExternalToolException
     public string ExecutableName { get; }
 }
 
+/// <summary>A tool was found beside the server, but Microsoft did not sign it, so it is not run.</summary>
+/// <remarks>
+/// Distinct from <see cref="ToolNotFoundException"/>: the file is there, and "install it" would send the
+/// operator looking for something they can see. Every Sysinternals binary Microsoft ships is signed, so an
+/// unsigned or foreign-signed one in the server's folder is a corrupt copy or a planted one.
+/// </remarks>
+public sealed class UntrustedToolException : ExternalToolException
+{
+    public UntrustedToolException(string path, string verdict)
+        : base($"'{path}' is beside the server but is not signed by Microsoft ({verdict}), so it was not " +
+               "run: anything in the server's folder runs as the server's account, and every Sysinternals " +
+               "binary is Microsoft-signed. Replace it with the copy from download.sysinternals.com -- " +
+               "tools/deploy-target.ps1 stages and verifies one -- or delete it to use an installed copy.")
+    {
+        Path = path;
+    }
+
+    public string Path { get; }
+}
+
 /// <summary>
 /// A caller-supplied argument was shaped like a command-line flag and was refused.
 /// </summary>

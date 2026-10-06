@@ -31,27 +31,8 @@ public static partial class MacServiceInstaller
         ArgumentNullException.ThrowIfNull(options);
 
         var source = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot determine this executable's path.");
-
-        OwnedDirectory(InstallDirectory, Executable);
-        if (!string.Equals(Path.GetFullPath(source), InstalledExecutable, StringComparison.Ordinal))
-        {
-            // Copied beside the target and renamed over it, so a running daemon's binary is replaced atomically
-            // rather than written into while it executes.
-            var temp = InstalledExecutable + ".installing";
-            CopyFresh(source, temp, Executable);
-            File.Move(temp, InstalledExecutable, overwrite: true);
-        }
-
-        OwnedDirectory(SettingsDirectory, OwnerOnlyDirectory);
-        WriteFresh(options.EnvironmentFilePath, options.EnvironmentFile(), OwnerOnlyFile);
-        ArtifactDirectory(options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory);
-        OwnedDirectory(LogDirectory, OwnerOnlyDirectory);
-
-        // The same check the server makes at startup, made now, so a bad tree is reported here and not as a
-        // daemon that silently never comes up.
-        StartupPermissions.Require(options.EnvironmentFilePath, InstalledExecutable);
-
-        WriteFresh(options.PlistPath, options.Plist(InstalledExecutable), PlistMode);
+        PutFilesInPlace(options, source, MachineFiles.Instance);
+        Console.Error.WriteLine($"[macdiag] {options.EnvironmentFilePath}: {options.GrantSummary()}");
 
         var target = $"system/{options.LabelName}";
         var oldPid = Loaded(target, out var pid) ? pid : null;
@@ -95,6 +76,80 @@ public static partial class MacServiceInstaller
         }
 
         return code;
+    }
+
+    /// <summary>What the install changes on disk before launchd is told anything, and the checks that can refuse it.</summary>
+    internal interface IInstallFiles
+    {
+        void RequireRootOnlyDirectory(string path, string setting);
+
+        bool DirectoryExists(string path);
+
+        void OwnedDirectory(string path, UnixFileMode mode);
+
+        void ReplaceExecutable(string source);
+
+        void WriteFresh(string path, string text, UnixFileMode mode);
+
+        void RequireStartupPermissions(string envFile, string executable);
+    }
+
+    /// <summary>Puts the binary, settings, directories and plist in place, refusing before the first write wherever it can.</summary>
+    internal static void PutFilesInPlace(MacServiceInstallOptions options, string source, IInstallFiles files)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(files);
+
+        // Checked before anything is written. Refused after the binary and env file were replaced, it left the old
+        // daemon running on settings that named this directory, which the server refuses at startup: the next
+        // restart failed, launchd retried it every 10 s for good, and the machine went quiet long after the install.
+        var artifacts = options.ArtifactDirectory ?? MacDiagOptions.DefaultArtifactDirectory;
+        files.RequireRootOnlyDirectory(artifacts, options.ArtifactDirectory is null ? "The artifact directory" : "--artifacts");
+
+        files.OwnedDirectory(InstallDirectory, Executable);
+        if (!string.Equals(Path.GetFullPath(source), InstalledExecutable, StringComparison.Ordinal))
+        {
+            files.ReplaceExecutable(source);
+        }
+
+        files.OwnedDirectory(SettingsDirectory, OwnerOnlyDirectory);
+        files.WriteFresh(options.EnvironmentFilePath, options.EnvironmentFile(), OwnerOnlyFile);
+        if (!files.DirectoryExists(artifacts))
+        {
+            files.OwnedDirectory(artifacts, OwnerOnlyDirectory);
+        }
+
+        files.OwnedDirectory(LogDirectory, OwnerOnlyDirectory);
+
+        // The same check the server makes at startup, made now, so a bad tree is reported here and not as a
+        // daemon that silently never comes up.
+        files.RequireStartupPermissions(options.EnvironmentFilePath, InstalledExecutable);
+
+        files.WriteFresh(options.PlistPath, options.Plist(InstalledExecutable), PlistMode);
+    }
+
+    private sealed class MachineFiles : IInstallFiles
+    {
+        public static readonly MachineFiles Instance = new();
+
+        public void RequireRootOnlyDirectory(string path, string setting) => StartupPermissions.RequireRootOnlyDirectory(path, setting);
+
+        public bool DirectoryExists(string path) => Directory.Exists(path);
+
+        public void OwnedDirectory(string path, UnixFileMode mode) => MacServiceInstaller.OwnedDirectory(path, mode);
+
+        public void ReplaceExecutable(string source)
+        {
+            // Copied beside the target and renamed over it, so a running daemon's binary is replaced atomically
+            // rather than written into while it executes.
+            var temp = InstalledExecutable + ".installing";
+            CopyFresh(source, temp, Executable);
+            File.Move(temp, InstalledExecutable, overwrite: true);
+        }
+
+        public void WriteFresh(string path, string text, UnixFileMode mode) => MacServiceInstaller.WriteFresh(path, text, mode);
+
+        public void RequireStartupPermissions(string envFile, string executable) => StartupPermissions.Require(envFile, executable);
     }
 
     public static int Uninstall(string label, bool purge)
@@ -175,29 +230,6 @@ public static partial class MacServiceInstaller
             .Select(line => int.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) ? pid : (int?)null)
             .OfType<int>()
             .ToList();
-
-    /// <summary>Why an artifact directory cannot be used, or null. One the installer just created is always fine.</summary>
-    /// <remarks>
-    /// An existing directory is used as it is, never chmodded: --artifacts /tmp once made /private/tmp 0700 and
-    /// broke every other account on the Mac. It must already be root's alone, because put_file writes there freely
-    /// and a root daemon then reads back what it finds.
-    /// </remarks>
-    internal static string? ArtifactDirectoryProblem(bool existed, StartupPermissions.StatEntry entry)
-    {
-        ArgumentNullException.ThrowIfNull(entry);
-        if (!existed)
-        {
-            return null;
-        }
-
-        const int Sticky = 0b1_000_000_000;
-        const int GroupOrOtherWrite = 0b000_010_010;
-        return entry.Kind != StartupPermissions.EntryKind.Directory ? $"{entry.Path} is not a directory."
-            : entry.Uid != 0 ? $"{entry.Path} is owned by uid {entry.Uid}, not root."
-            : (entry.Mode & Sticky) != 0 ? $"{entry.Path} is a shared sticky directory, such as /tmp."
-            : (entry.Mode & GroupOrOtherWrite) != 0 ? $"{entry.Path} is writable by its group or by everyone."
-            : null;
-    }
 
     /// <summary>Where to connect to see the daemon listening: loopback for a wildcard bind.</summary>
     internal static (string Host, int Port) ProbeAddress(string bind)
@@ -301,26 +333,8 @@ public static partial class MacServiceInstaller
         }
     }
 
-    /// <summary>Creates the artifact directory root-only, or uses an existing one root alone controls -- never re-chmodded.</summary>
-    private static void ArtifactDirectory(string path)
-    {
-        var existed = Directory.Exists(path) || File.Exists(path);
-        if (!existed)
-        {
-            OwnedDirectory(path, OwnerOnlyDirectory);
-            return;
-        }
-
-        var entry = StartupPermissions.Inspect([StartupPermissions.RealPath(path)]).Single();
-        if (ArtifactDirectoryProblem(existed, entry) is { } problem)
-        {
-            throw new ConfigurationException(
-                $"--artifacts {path} cannot be used: {problem} Choose a directory only root can write, or let the installer create one.");
-        }
-    }
-
     /// <summary>Creates the directory, or tightens an existing one: CreateDirectory leaves an existing mode alone.</summary>
-    /// <remarks>Only for the installer's own fixed directories; an operator-chosen one goes through <see cref="ArtifactDirectory"/>.</remarks>
+    /// <remarks>Only for the installer's own fixed directories, and for an artifact directory only once it is known not to exist.</remarks>
     private static void OwnedDirectory(string path, UnixFileMode mode)
     {
         Directory.CreateDirectory(path, mode);

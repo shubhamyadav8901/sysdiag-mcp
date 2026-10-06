@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Files;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics.Network;
 using WinDiag.Mcp.Diagnostics.Signatures;
@@ -28,11 +29,13 @@ public sealed class InventoryTools
 {
     private readonly INetworkInspector _network;
     private readonly ISignatureInspector _signatures;
+    private readonly FileTransferOptions _files;
 
-    public InventoryTools(INetworkInspector network, ISignatureInspector signatures)
+    public InventoryTools(INetworkInspector network, ISignatureInspector signatures, FileTransferOptions files)
     {
         _network = network;
         _signatures = signatures;
+        _files = files;
     }
 
     [McpServerTool(
@@ -92,6 +95,12 @@ public sealed class InventoryTools
             throw new ArgumentException("Provide at least one file path.", nameof(paths));
         }
 
+        // Every path is checked before any is inspected, so a refused call has opened nothing at all.
+        foreach (var path in paths)
+        {
+            LocalPathGuard.RequireLocal(path, nameof(paths), _files);
+        }
+
         var result = _signatures.Inspect(paths, cancellationToken);
 
         return new FileSignaturesResult(RenderSignatures(result), result.Files, result.NotFound);
@@ -146,10 +155,10 @@ public sealed class InventoryTools
 
             if (endpoint.State is { } state)
             {
-                builder.Append(" [").Append(state).Append(']');
+                builder.Append(" [").Append(RenderLimits.Printable(state)).Append(']');
             }
 
-            builder.Append(" owned by ").Append(endpoint.ProcessName ?? "(unknown process)")
+            builder.Append(" owned by ").Append(RenderLimits.Printable(endpoint.ProcessName) ?? "(unknown process)")
                 .Append(" (PID ").Append(endpoint.OwningProcessId).Append(')');
 
             builder.AppendLine();
@@ -172,14 +181,14 @@ public sealed class InventoryTools
 
         foreach (var missing in result.NotFound)
         {
-            builder.Append("NOT FOUND: ").AppendLine(missing);
+            builder.Append("NOT FOUND: ").AppendLine(RenderLimits.Printable(missing));
         }
 
         foreach (var file in result.Files)
         {
-            builder.Append(file.Path).AppendLine();
+            builder.Append(RenderLimits.Printable(file.Path)).AppendLine();
             builder.Append("  ").Append(file.Verdict.ToString().ToUpperInvariant()).Append(" - ")
-                .AppendLine(file.Detail);
+                .AppendLine(RenderLimits.Printable(file.Detail));
 
             if (file.CatalogSigned)
             {
@@ -188,10 +197,10 @@ public sealed class InventoryTools
 
             if (file.Signer is { } signer)
             {
-                builder.Append("  Signer: ").Append(signer);
+                builder.Append("  Signer: ").Append(RenderLimits.Printable(signer));
                 if (file.Issuer is { } issuer)
                 {
-                    builder.Append(" (issued by ").Append(issuer).Append(')');
+                    builder.Append(" (issued by ").Append(RenderLimits.Printable(issuer)).Append(')');
                 }
 
                 if (file.CertificateNotAfter is { } notAfter)
@@ -203,15 +212,15 @@ public sealed class InventoryTools
                 builder.AppendLine();
             }
 
-            builder.Append("  Version: ").Append(file.FileVersion ?? "(none)");
+            builder.Append("  Version: ").Append(RenderLimits.Printable(file.FileVersion) ?? "(none)");
             if (file.ProductVersion is { } product && product != file.FileVersion)
             {
-                builder.Append(" (product ").Append(product).Append(')');
+                builder.Append(" (product ").Append(RenderLimits.Printable(product)).Append(')');
             }
 
             if (file.CompanyName is { } company)
             {
-                builder.Append(", ").Append(company);
+                builder.Append(", ").Append(RenderLimits.Printable(company));
             }
 
             builder.AppendLine();
@@ -221,19 +230,22 @@ public sealed class InventoryTools
             {
                 // A mismatch here means the file was renamed after build, which is worth noticing when
                 // chasing a DLL that is not the one you think it is.
-                builder.Append("  Original filename was '").Append(original)
+                builder.Append("  Original filename was '").Append(RenderLimits.Printable(original))
                     .AppendLine("', so this file has been renamed.");
             }
 
             builder.Append("  ").Append(file.SizeBytes.ToString("N0", CultureInfo.InvariantCulture))
                 .Append(" bytes, modified ")
                 .Append(file.LastWriteTime.ToString("u", CultureInfo.InvariantCulture)).AppendLine();
-            builder.Append("  SHA-256: ").AppendLine(file.Sha256);
+            builder.Append("  SHA-256: ").AppendLine(RenderLimits.Printable(file.Sha256));
         }
 
         return builder.ToString().TrimEnd();
     }
 
-    private static string Format(string address, int port) =>
-        address.Contains(':') ? $"[{address}]:{port}" : $"{address}:{port}";
+    private static string Format(string address, int port)
+    {
+        var printable = RenderLimits.Printable(address);
+        return address.Contains(':') ? $"[{printable}]:{port}" : $"{printable}:{port}";
+    }
 }

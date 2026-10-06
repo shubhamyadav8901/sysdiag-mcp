@@ -17,8 +17,17 @@
     a strange thing to need for a tool whose whole point is that you have rights on the target rather
     than on your own workstation. PsExec needs nothing configured locally.
 
-    Credentials are used once, to open an authenticated IPC$ session. PsExec then rides that session
-    and runs the installer as SYSTEM (-s), so the password never reaches any command line.
+    Credentials are used once, in this process, to open an authenticated IPC$ session through
+    WNetAddConnection2 -- not `net use`, whose command line would carry the password into process
+    auditing and EDR on this machine. PsExec then rides that session and runs the installer as SYSTEM
+    (-s), so the password never reaches any command line.
+
+    The token does not reach one either. It travels to the target as a file in the install directory,
+    which is first restricted to SYSTEM and Administrators, is fed to the installer's --token-stdin by a
+    small .cmd beside it, and both are deleted as soon as the installer returns. Both are named afresh
+    for each run and created with an ACL only SYSTEM and Administrators can open, so no file or handle
+    a user prepared can be at that name. Passed as --token, it would sit in the target's
+    process-creation log, PSEXESVC's command line and windiag's own process_list.
 
 .PARAMETER Target
     Target IP or host name. Needs 445 and 135 reachable, and 4024 free.
@@ -66,6 +75,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. "$PSScriptRoot\windiag-acl.ps1"
+
 function Step { param($m) Write-Host "==> $m" -ForegroundColor Cyan }
 function Warn { param($m) Write-Host "    $m" -ForegroundColor Yellow }
 
@@ -85,7 +96,28 @@ if (-not $Credential) {
 }
 
 $user = $Credential.UserName
-$password = $Credential.GetNetworkCredential().Password
+
+# WNetAddConnection2 is what `net use` calls; calling it here keeps the password inside this process.
+# Guarded because Add-Type refuses to redefine a type, and the fleet example runs this script in a loop.
+if (-not ('WinDiagBootstrap.Net' -as [type])) {
+    Add-Type -Namespace WinDiagBootstrap -Name Net -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public class NetResource
+{
+    public int Scope; public int Type; public int DisplayType; public int Usage;
+    public string LocalName; public string RemoteName; public string Comment; public string Provider;
+}
+
+[DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+public static extern int WNetAddConnection2(NetResource resource, string password, string user, int flags);
+
+[DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+public static extern int WNetCancelConnection2(string name, int flags, bool force);
+'@
+}
+
+# Forced, which is what `net use /delete /y` did: the cancel otherwise fails while handles are open.
+function Close-IpcSession { param([string] $Server) [void][WinDiagBootstrap.Net]::WNetCancelConnection2("\\$Server\IPC$", 0, $true) }
 
 # Resolved once, and everything downstream uses the address rather than the name. Find-NetRoute takes
 # only an IP literal, and binding the listener to a name that resolves differently on the target than
@@ -128,10 +160,15 @@ Step "authenticating to $targetIp"
 
 # Dropped first because Windows allows only one set of credentials per server: a session left over
 # from earlier work fails the new one with error 1219 rather than replacing it.
-Invoke-Native { net use "\\$targetIp\IPC$" /delete /y } | Out-Null
+Close-IpcSession $targetIp
 
-Invoke-Native { net use "\\$targetIp\IPC$" $password /user:$user } | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Could not authenticate to $targetIp as $user (net use exited $LASTEXITCODE)." }
+$ipc = New-Object 'WinDiagBootstrap.Net+NetResource'
+$ipc.RemoteName = "\\$targetIp\IPC$"
+$result = [WinDiagBootstrap.Net]::WNetAddConnection2($ipc, $Credential.GetNetworkCredential().Password, $user, 0)
+if ($result -ne 0) {
+    throw ("Could not authenticate to $targetIp as ${user}: " +
+           "$((New-Object System.ComponentModel.Win32Exception $result).Message) (error $result).")
+}
 
 try {
     # --- architecture ------------------------------------------------------------------------------
@@ -149,6 +186,17 @@ try {
 
     $arch = if (Test-Path "\\$targetIp\ADMIN$\SysWOW64") { 'x64' } else { 'x86' }
     Step "target is $arch"
+
+    # Before anything is copied in, not after: deploy-target restricts only a directory it creates, and
+    # an existing C:\WinDiag -- made by a local user, or left by an older bootstrap -- is writable by
+    # every user. Restricted only afterwards, the build and the Sysinternals tools would have sat there,
+    # writable, until PsExec ran them as SYSTEM. A missing directory is created restricted; one that
+    # exists is used only if it already is, and is refused otherwise, with nothing changed -- see
+    # windiag-acl.ps1. This also comes before the token file is written. The installer judges both
+    # directories again.
+    Step "restricting $RemotePath and $ArtifactPath to SYSTEM and Administrators"
+    Protect-WinDiagDirectory $share
+    Protect-WinDiagDirectory ("\\$targetIp\" + ($ArtifactPath -replace '^([A-Za-z]):', '$1$'))
 
     if (-not $SkipStaging) {
         # Delegated rather than reimplemented: deploy-target.ps1 already verifies every file by SHA-256
@@ -186,7 +234,7 @@ try {
         '--artifacts'; $ArtifactPath
         '--firewall-from'; $FirewallFrom
     )
-    if ($Token) { $installArgs += @('--token', $Token) }
+    if ($Token) { $installArgs += '--token-stdin' }
     switch ($Grants) {
         'Standard' { $installArgs += @('--allow-self-update', '--allow-command-execution') }
         'All'      { $installArgs += @('--allow-self-update', '--allow-command-execution',
@@ -194,17 +242,45 @@ try {
         'None'     { $installArgs += '--read-only' }
     }
 
+    # The installer is started by a .cmd rather than by PsExec directly, because cmd can feed it the
+    # token file on stdin: PsExec documents forwarding typed console input, not a pipe, and the token
+    # must not be an argument. Every argument is quoted for cmd, with % doubled so none is expanded.
+    #
+    # Both files are named afresh for each run. At a fixed name a user who could write $RemotePath before
+    # it was restricted could have left a file there, or held a handle open on one, and had the token
+    # written into it: restricting the directory does not close a handle already open.
+    $run = [guid]::NewGuid().ToString('N')
+    $tokenFile = "install-token-$run.tmp"
+    $installCmd = "install-windiag-$run.cmd"
+    $line = (@("$RemotePath\WinDiag.Mcp.exe") + $installArgs | ForEach-Object {
+        if ("$_" -match '"') { throw "An install argument contains a double quote, which cmd cannot carry: $_" }
+        '"' + ("$_" -replace '%', '%%') + '"'
+    }) -join ' '
+    if ($Token) { $line += " < `"$RemotePath\$tokenFile`"" }
+
     Step "registering '$ServiceName' on $targetIp"
 
-    # -s runs the installer as SYSTEM, riding the IPC$ session opened above rather than taking the
-    # password on a command line where the operator's own process list and any PowerShell transcript
-    # would capture it. SYSTEM is also unconditionally elevated, which matters for more than tidiness:
-    # with a filtered admin token the installer would call its own UAC relaunch and then block on
-    # WaitForExit for a prompt in session 0 that nobody can answer.
-    $output = Invoke-Native {
-        psexec "\\$targetIp" -s -accepteula -nobanner "$RemotePath\WinDiag.Mcp.exe" @installArgs
+    try {
+        if ($Token) { New-WinDiagRestrictedFile -Path "$share\$tokenFile" -Content $Token }
+        New-WinDiagRestrictedFile -Path "$share\$installCmd" -Content "@echo off`r`n$line`r`nexit /b %errorlevel%`r`n"
+
+        # -s runs the installer as SYSTEM, riding the IPC$ session opened above. SYSTEM is also
+        # unconditionally elevated, which matters for more than tidiness: with a filtered admin token
+        # the installer would call its own UAC relaunch and then block on WaitForExit for a prompt in
+        # session 0 that nobody can answer.
+        $output = Invoke-Native {
+            psexec "\\$targetIp" -s -accepteula -nobanner cmd.exe /c "$RemotePath\$installCmd"
+        }
+        $installExit = $LASTEXITCODE
     }
-    $installExit = $LASTEXITCODE
+    finally {
+        # As soon as the installer is done with it, success or not: from here the token lives only in
+        # the service's own restricted registry key.
+        Remove-Item -LiteralPath "$share\$tokenFile", "$share\$installCmd" -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath "$share\$tokenFile") {
+            Warn "could not delete $RemotePath\$tokenFile on the target; delete it by hand."
+        }
+    }
 
     $output | ForEach-Object { Write-Host "    $_" }
 
@@ -260,9 +336,7 @@ try {
     Write-Host "Later builds go through update_self; this script is not needed for it again."
 }
 finally {
-    # Guarded and /y for the same reason as every other native call here: an unguarded stderr line
-    # raised in a finally block REPLACES the exception on its way out, so a real install failure would
-    # be reported as an obscure net use error instead. /y because the delete prompts on stdin when
-    # handles are still open, which in an unattended loop is a hang rather than a failure.
-    Invoke-Native { net use "\\$targetIp\IPC$" /delete /y } | Out-Null
+    # Its result is ignored, and it cannot throw: anything raised in a finally block REPLACES the
+    # exception on its way out, so a real install failure would be reported as a cleanup error instead.
+    Close-IpcSession $targetIp
 }

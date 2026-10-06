@@ -22,6 +22,17 @@ public enum SignatureVerdict
 /// binaries are catalog-signed and have no certificate inside the file, so an embedded-signature-only
 /// check would wrongly call them unsigned.
 /// </param>
+/// <param name="SignerSubject">
+/// The full subject of the certificate WinVerifyTrust itself verified the signature with -- the catalog's
+/// signer for a catalog-signed file. Unlike <see cref="Signer"/>, which names the leaf picked out of the
+/// certificates embedded in the file, this cannot be steered by extra certificates added to that
+/// unsigned bag, which is why every trust decision reads it, through <see cref="VerifiedSigner"/>. Null
+/// when no signature was verified far enough to name one.
+/// </param>
+/// <param name="Signer">
+/// The simple name of the leaf picked from the certificates embedded in the file, for display only: that
+/// bag is unsigned and can be added to, so no decision may rest on it. See <see cref="VerifiedSigner"/>.
+/// </param>
 public sealed record FileSignature(
     string Path,
     SignatureVerdict Verdict,
@@ -36,7 +47,8 @@ public sealed record FileSignature(
     string? OriginalFilename,
     long SizeBytes,
     DateTimeOffset LastWriteTime,
-    string Sha256);
+    string Sha256,
+    string? SignerSubject = null);
 
 /// <summary>Result of inspecting one or more files.</summary>
 public sealed record SignatureQueryResult(IReadOnlyList<FileSignature> Files, IReadOnlyList<string> NotFound);
@@ -45,4 +57,21 @@ public sealed record SignatureQueryResult(IReadOnlyList<FileSignature> Files, IR
 public interface ISignatureInspector
 {
     SignatureQueryResult Inspect(IReadOnlyList<string> paths, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inspects one file while holding it open against writers, so its verdict, signer and hash all
+    /// describe the same bytes.
+    /// </summary>
+    /// <exception cref="IOException">The file is open for writing elsewhere, or could not be opened.</exception>
+    FileSignature InspectHeld(string path, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inspects a file through a handle the caller already holds and has already settled the identity of,
+    /// so the verdict is about that file and not whatever its path names by the time of a second open.
+    /// </summary>
+    /// <param name="path">A path to the held file, for the parts of the check that only take one.</param>
+    /// <param name="held">
+    /// Open for reading, shared for reading only, so nothing can write, rename or delete it meanwhile.
+    /// </param>
+    FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken);
 }

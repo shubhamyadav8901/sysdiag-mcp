@@ -20,7 +20,7 @@ of them behind one MCP registration. Most of this README is about WinDiag, the W
 
 Download the zip for each machine from the [latest release](https://github.com/shubhamyadav8901/sysdiag-mcp/releases/latest):
 `windiag-win-x64` or `windiag-win-x86`, `linuxdiag-linux-x64`, `macdiag-osx-arm64` or `macdiag-osx-x64`, and `diagrelay-<platform>` for the
-relay. Each carries a `SHA256.txt`. Every binary is self-contained, so no .NET install is needed.
+relay. Each carries a `SHA256.txt`, the licence and `THIRD-PARTY-NOTICES.md`. Every binary is self-contained, so no .NET install is needed.
 
 To diagnose the machine you are on, register its server with Claude Code over stdio:
 
@@ -64,22 +64,22 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
 | `capabilities` | — | Which tools work here, and why any do not |
 | `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
-| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLL version actually loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision |
-| `named_pipes` | `NtQueryDirectoryFile` | IPC pipes, and whether any is at its instance limit |
+| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLLs loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision. Version and signature are read from the file the kernel names as behind each mapping, held open while it is read - not from the listed path, which may since hold another file (flagged replaced on disk). The kernel's name is the name the file was opened under and does not follow a rename of a directory above it, so it is trusted only where SYSTEM, Administrators and TrustedInstaller alone can change every directory on the path - a policy judgement, not a proof: a directory moved into place earlier, while permissions were looser, is not caught, and holders of the restore or take-ownership privilege can change any directory. A module whose file cannot be identified that way - under a user profile or temp directory, or on a share - is flagged, names the first directory anyone else can change, and is not verified. The verdict is on that file, not on the code in memory |
+| `named_pipes` | `NtQueryDirectoryFile` + `WaitNamedPipe` | IPC pipes, and whether any has every instance taken and none listening for a client |
 | `network_owners` | IP Helper | Which process owns which socket |
 | `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
 | `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
 | `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
 | `effective_access` | Security descriptors + a real access attempt | Why is this denied |
-| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant |
-| `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg |
+| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant. Available under every grant; HKLM\SAM, HKLM\SECURITY and other users' HKU hives need `--allow-arbitrary-read`, and values named like a credential are always redacted |
+| `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg. Never lsass, lsaiso or csrss (judged by the image in System32): they hold the machine's credentials |
 | `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
 | `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
-| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting |
-| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
+| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting. Terminate and suspend are refused for core processes (lsass, csrss, winlogon…), for any process Windows marks critical, and for the host of any service `service_control` refuses to stop; resume never is |
+| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses to stop or restart a small set of critical ones, by short or display name |
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off. It is also the one tool a draining server still accepts, so calling it again with `force` stops the wait |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
-| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
+| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to the artifact directory unless arbitrary write is enabled, and to the server's own folder only with the self-update grant |
 | `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
 
 ## Requirements
@@ -233,14 +233,17 @@ because an unverified copy is a different artifact from a verified one.
 **These are the first thing the relay does that touches local disk**, so the local side is confined the
 way the target side already confines `put_file` and `get_file` — reusing `FileScope`, not a second copy
 of it. `SYSDIAG_RELAY_FILE_ROOT` is a semicolon-separated list of roots that replaces the default of the
-build tree the relay sits in plus the local artifact directory; a `..` is judged by where it lands.
+per-user artifact folder plus, in a build tree, the tree the relay sits in; a `..` is judged by where it lands,
+and a link by where it leads.
 
-That first default is the directory *above* the relay executable's own, which is what makes
-`push_file` work out of the box: the relay ships in `artifacts/diagrelay` and the builds it exists to send
-sit beside it in `artifacts/win-x64`. The climb is one level and stops short of a drive root, so a relay
-unpacked somewhere odd cannot quietly default to an entire disk. Both defaults resolve against the
-running executable, so under `dotnet run` they point into dotnet's install directory — set the variable
-when developing.
+The per-user folder is `%TEMP%\sysdiag` on Windows and `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag`
+elsewhere. The build tree is added only when the relay runs from `artifacts/diagrelay` (or
+`artifacts/diagrelay-<rid>`): there the root is `artifacts`, so `push_file` can send the builds that sit
+beside it in `artifacts/win-x64` out of the box. Anywhere else — `~/bin`, an unpacked release zip, under
+`dotnet run` — the per-user folder is the only default, because the folder above an ordinary install is
+the home directory or `Downloads`, and one `push_file` from there could send `~/.ssh` or the targets file
+to a target. So with a release zip, copy what you push into the per-user folder, or set the variable to
+a folder that holds only builds.
 
 Use these instead of calling a target's `put_file`/`get_file` yourself for anything but a small file.
 `fetch-from-target.ps1` still works and needs no relay, which is what makes it the right tool from a
@@ -356,7 +359,7 @@ or later, which every distribution .NET 9 supports has.
 | `service_control` | `systemctl start/stop/restart` | Writable server only. Services only, never a pattern. Stopping or restarting a unit the machine needs (journald, logind, udevd, networking, resolver, dbus, polkit, SSH, VPN tunnels such as `tailscaled` and `wg-quick@`), this server's own unit (use `update_self`), or a unit whose stop would take one of those down is refused; starting them is allowed. A service that powers off, reboots or suspends the machine is refused for every action. Waits at most 75 s, then reports "still running" |
 | `event_log_tail` | `journalctl -o json` | `unit`, `minutes`, `levels`, `provider` (the syslog identifier), `match` (`FIELD=value`), `maxEvents` |
 | `file_signatures` | SHA-256; dpkg's lists, md5sums, status and diversions | Valid, Modified, ConfigurationChanged, Unpackaged or Unknown against the dpkg database - integrity, not provenance |
-| `autostart_audit` | enabled units, users' units, systemd generators, cron, rc.local, profile.d, ld.so.preload | `unpackagedOnly` checks the unit, its drop-ins, the program and an interpreter's script against their packages |
+| `autostart_audit` | enabled units, users' units (with the drop-ins of every name a link gives a unit file) and the `environment.d` and `user.conf` files in their homes (variable names only; one another account owns is named, never read), systemd generators, cron, rc.local, profile.d, ld.so.preload | `unpackagedOnly` checks the unit, its drop-ins, the program and an interpreter's script against their packages |
 | `effective_access` | statx, ACL and capability xattrs, mountinfo, `faccessat` | For an `account` or a `processId`: each right with the rule that decides, and the first directory it cannot search |
 
 These tools run `systemctl` and `journalctl` from the system directories only, with a fixed `PATH`, `LC_ALL=C.UTF-8` and no pager, and never pass a caller's value where it could be read as an option. A host without dpkg (a non-Debian distribution) still gets SHA-256 from `file_signatures`, and `capabilities` reports it Degraded, naming the missing database.
@@ -383,9 +386,9 @@ hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the
 
 | Path | What |
 |---|---|
-| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary |
+| `/opt/linuxdiag/LinuxDiag.Mcp` | the binary. `/opt/linuxdiag`, `/etc/linuxdiag` and the default `/var/lib/linuxdiag` are made root's, with these modes, even when they already exist, and so is everything already in them, with group and other write removed. A symbolic link, a hard-linked file, a FIFO or a device inside one is refused instead: remove it and install again |
 | `/etc/linuxdiag/linuxdiag.env` | root-owned `0600`: the token, bind address and grants |
-| `/var/lib/linuxdiag` | `0700`: the artifact directory |
+| `/var/lib/linuxdiag` | `0700`: the artifact directory. `--artifacts` must be an absolute path with no `.` or `..` component. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, every directory above it and every link on the way to it — a link another account owns in `/tmp` is refused wherever it leads — so `/tmp` is refused. A missing one is made `0700` only where root alone controls the directories above it, and nothing is made when it is refused |
 | `/etc/systemd/system/linuxdiag.service` | `Type=notify`, `Restart=on-failure` |
 
 The unit is deliberately **not** sandboxed (no `ProtectSystem` and similar): a diagnostics server has to
@@ -399,7 +402,7 @@ Add it to the relay's `~/.sysdiag-targets.json` like any target:
 ```
 
 Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `update_self`, so both
-need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). Unlike windiag,
+need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). As on windiag,
 `put_file` does not write into the server's own directory without it: that directory holds a root
 service's binary, and staging a build is the only reason to write there. The artifact directory stays
 writable either way -- unless it is placed inside the server's own directory, which gets no exemption:
@@ -445,7 +448,7 @@ It serves:
 | `process_control` | `/bin/kill` after a `ps` name and start-time check, checked again just before the signal | Writable server only. macOS has no pidfd: a window of milliseconds remains between the last check and the signal, and every result says so. Refused for everything but resume: PID 1, the kernel, loginwindow, WindowServer, logd, opendirectoryd, sshd and screen sharing, this server, zombies, and the main process of any job `service_control` protects, including a user's own remote-access or VPN agent, found in that user's launchd domain (`launchctl asuser <uid> sudo -n -u #<uid> launchctl list`) and refused fail-closed if that list cannot be read, is empty, or is the system list again. **That lookup has not yet run on a Mac**; CI's capture checks it. Suspending a direct child of this server is refused: macOS reports a stopped child to .NET's exit watcher, which then spins and hangs the whole server. Apple's per-user agents (Finder, Dock) may be restarted |
 | `event_log_tail` | `log show --style ndjson`, walked backwards in time windows | Defaults to critical (fault) and error: macOS's `default` type, which `warning` maps to, is most of all logging. Looks back at most 7 days. A window too large to read in full is reported as not reached, never as the newest events. `<private>` redaction is the system's |
 | `container_list` | Docker Engine API (`GET /containers/json?all=1`, nothing else) on `/var/run/docker.sock` and each user's Docker Desktop, Colima, OrbStack or Rancher Desktop socket | A socket is asked only when it is a socket, owned by its home directory's owner (root for the system socket), in directories no other account can change; anything else is refused and named. A link into a home is asked under its target's path. Containers run in a VM, so there are no host PIDs. Each engine gets 5 s and at most 8 MiB of answer |
-| `file_signatures` | SHA-256 from `shasum` (a child process, so a file swapped for a FIFO cannot hang the server); `codesign --verify --strict`, `-R 'anchor apple'` and `-dvvv`; `spctl --assess -v` for a file inside an `.app`; `pkgutil --file-info` | At most 200 paths and 120 s per call. "Signed by Apple" means codesign's `anchor apple` requirement holds, which only Apple's own signing satisfies; it is never inferred from a certificate's name, which any signer can choose. Developer ID and App Store chains also end in Apple Root CA, and are reported by their leaf. A valid signature is provenance, not a verdict on the signer |
+| `file_signatures` | SHA-256 from `shasum` (a child process, so a file swapped for a FIFO cannot hang the server); `codesign --verify --strict`, `-R 'anchor apple'`, `-R 'anchor apple generic'` and `-dvvv`; `spctl --assess -v` for a file inside an `.app`; `pkgutil --file-info` | At most 200 paths and 120 s per call. "Signed by Apple" means codesign's `anchor apple` requirement holds, which only Apple's own signing satisfies; it is never inferred from a certificate's name, which any signer can choose. Developer ID and App Store chains also end in Apple Root CA, and are reported by their leaf once `anchor apple generic` confirms Apple issued them; a chain it does not (self-signed or a private CA) is `Untrusted`, however its certificate and team are named, and `autostart_audit` counts it as unsigned. A valid signature is provenance, not a verdict on the signer |
 | `autostart_audit` | launchd plists (`/Library` and `/System` daemons and agents, every user's agents) via `plutil`, `/etc/crontab` and users' crontabs, `/etc/periodic` and `/usr/local/etc/periodic`, loginwindow hooks, SecurityAgent plugins, `systemextensionsctl list`, `kmutil showloaded`, `sfltool dumpbtm` | Each file that decides what runs, the program, the script an interpreter runs, and every directory above them are statted; one another account could change is flagged with the reason. `hideApple` (default on) hides what is on the sealed `/System` volume, never a `com.apple.` label in `/Library` or a job because Apple signed its program (`curl`, `sh -c` run what a planted plist says). An interpreter running code from its arguments counts as unsigned. A plist that is not a regular file is shown and never read. ACL-granted write is not checked. Users' crontabs, root's login hooks and Background Task Management need root |
 | `effective_access` | the kernel's own `access(2)`: `/bin/test -r/-w/-x` as the subject, through `sudo -n -u #<uid>` when the server is root; `stat`, `ls -le` and `mount` to explain it | The answer is the kernel's, so ACLs, nested groups and flags are as macOS applies them. Asking for another account needs root; without it the answer is "not evaluated", never the server's own. Names a deny ACL entry that applies, uchg/schg/restricted flags, a read-only or noexec mount (firmlinks resolved, so `/Users` is on the data volume) and the first directory the subject cannot search. SIP and TCC are named, not evaluated |
 
@@ -476,7 +479,7 @@ That installs:
 |---|---|
 | `/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp` | the binary |
 | `/etc/macdiag/<label>.env` | root-owned `0600`: the token, bind address and grants, read with `--env-file`; one file per label |
-| `/var/db/macdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused unless root alone controls it, so `/tmp` is refused |
+| `/var/db/macdiag` | `0700`: the artifact directory. An existing `--artifacts` directory is never re-chmodded. It is refused, at install before anything is written and when a root server starts, unless root alone controls it and every directory above it, so `/tmp` and anything under a home directory are refused |
 | `/var/log/macdiag` | `0700`: `macdiag.log` (rolled at 10 MiB) and `crash.log` (what the runtime writes before logging starts) |
 | `/Library/LaunchDaemons/<label>.plist` | `KeepAlive` on a failed exit only, `AbandonProcessGroup`, `ProcessType Standard`, `ExitTimeOut` 20 s |
 
@@ -596,6 +599,10 @@ would use, because two copies of a Sysinternals tool on one machine is the norma
 `deploy-target.ps1` stages both builds of every tool, so the refusal only fires on a machine someone
 set up by hand.
 
+A tool found in the server's own folder, which is searched first, is also run only if its Authenticode
+signature is valid and Microsoft's: whatever sits there runs as the service's account. An unsigned or
+foreign-signed copy is refused by name, in the tool's result and in `capabilities`.
+
 ## Verifying on a target
 
 Two capabilities cannot be covered by `dotnet test`, because they need administrator rights and a kernel
@@ -692,6 +699,30 @@ That registers the service, configures the SCM to restart it if the process dies
 256-bit token and stores it where only SYSTEM and Administrators can read it, opens the port to one
 address, and starts it. The token is printed once, because it exists nowhere else a human can read.
 
+It also restricts the executable's directory and the `--artifacts` directory to SYSTEM and
+Administrators whenever anyone else can write them or anything in them, and hands what they already
+hold to Administrators. That is not tidiness: the service runs the Sysinternals binaries it finds
+beside itself and `self-update.cmd` from the artifact directory as SYSTEM, and a folder made under
+`C:\` inherits *Authenticated Users: Modify*. A service repeats the check on every start, writes what
+it changed to the Application event log, and refuses to start from a directory it cannot restrict.
+Either directory being a link — a junction, a symbolic link, a mounted folder — or being reached
+through one is refused: whoever made the link could point it somewhere else after the check. So is
+either directory sitting below one that someone else could rename or empty, such as a folder any user
+made under `C:\` — they could put a directory of their own in its place. Above the two directories, a
+direct member of the local Administrators group counts as an administrator, so a folder the built-in
+Administrator made and owns is fine; an owner outside the group, or in it only through a domain group,
+is not, even when the ACL is restricted. One that others can write is
+refused, rather than taken over, if it holds a link or a hard link, since taking that over would change
+whatever it leads to; links only administrators can change, in a directory only they can write, are
+left alone. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
+that also holds files that are not windiag's — a Downloads folder, a drive root — is refused rather
+than locked down under its owner.
+
+A target installed by an older build has these directories restricted by its next `update_self`, but
+restricting them does not undo what happened while they were open: a file a local user planted is
+still there, and a handle they opened then keeps its access until it is closed. On such a target,
+check the files against `windiag-staged.json` and restart the machine, which closes every such handle.
+
 ```
 WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?
 WinDiag.Mcp.exe --uninstall-service   # removes the service, its token and its firewall rule
@@ -717,15 +748,23 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--start auto\|delayed\|demand` | Default `auto` |
 | `--account <spec>` | `LocalSystem` (default), `NetworkService`, `LocalService`, or `DOMAIN\user` with `--password` |
 | `--password <value>` | Required for an account that is not built in |
-| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
-| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it |
-| `--allow-self-update` | Registers `update_self` |
+| `--token-stdin` | Reads the token from standard input, so it never appears on the target's command line. Needs an already-elevated shell: stdin cannot cross the UAC prompt. The bootstrap scripts use this |
+| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call. Prefer `--token-stdin`: a value here is in the installer's command line, which process auditing records |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. Give windiag a directory of its own: when others can write it, it and everything in it are handed to Administrators, and directories above it that do not exist yet are made the same way. A service refuses it when it is reached through any link, or sits below a directory others could rename — a folder made under a drive root, say — and, run by hand, `get_file` and `put_file` refuse one reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
+| `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
-| `--allow-arbitrary-write` | Lets `put_file` write outside the server's own directories |
+| `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
 | `--allow-arbitrary-read` | Lets the read tools open files outside them |
 | `--read-only` | Drops every state-changing tool |
 | `--firewall-from <address>` | Opens the bind port inbound from one address, removed on uninstall. An address, never a subnet |
 | `--no-restart-on-failure` | Default is to let the SCM restart it if the process dies |
+
+An option not in this table is refused and nothing is installed, so a misspelt `--readonly` cannot
+quietly register a writable service. So is an option whose value is missing, empty or another option:
+Windows PowerShell 5.1 drops an empty `$tok` from `--token $tok`, and the grant after it would otherwise
+have become the token and still been granted. A server started by hand likewise takes only `--http`:
+its grants are the `WINDIAG_*` variables, and `--read-only` on that command line is refused rather than
+ignored.
 
 **Flags and environment variables are two spellings of one setting.** Each grant flag becomes its
 `WINDIAG_*` variable (see [Configuration](#configuration)) in the service's own registry key —
@@ -777,7 +816,7 @@ Both take `-Grants`, and **the preset names are not a security policy — check 
 
 | `-Grants` | Passes | Result |
 |---|---|---|
-| `None` | `--read-only` alone | Services and processes only. **Cannot read a single config file** — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
+| `None` | `--read-only` alone | Services, processes and the registry outside HKLM\SAM, HKLM\SECURITY and other users' hives. **Cannot read a single config file**, and no tool opens a network share — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
 | `Standard` | `--allow-self-update --allow-command-execution` | The usual fleet target |
 | `All` | those two plus `--allow-arbitrary-write --allow-arbitrary-read` | Full diagnostics |
 
@@ -791,6 +830,27 @@ $c = Get-Credential
 # admin shares off, domain-joined, no password needed
 .\tools\bootstrap-winrm.ps1 -Target host.example.com -Token $token -Grants All -Bind 'http://0.0.0.0:4024'
 ```
+
+Neither script puts a secret on a command line. The token reaches the installer on `--token-stdin` —
+piped through the WinRM session, or, for PsExec, from a file in the install directory, named afresh
+for each run, created readable only by SYSTEM and Administrators, and deleted as soon as the installer
+returns — and `bootstrap-target.ps1` opens its `IPC$` session in-process rather than through `net use`,
+whose command line would carry the password. Both create `-RemotePath` and `-ArtifactPath` (default
+`C:\WinDiag` and `C:\WinDiagArtifacts`) restricted to SYSTEM and Administrators before anything is
+copied into them, since a folder made under `C:\` is writable by every user. A directory that already
+exists is used only if it is already restricted that way, and is otherwise refused with nothing
+changed: taking over what someone else could still change needs handles opened without following
+links, which the installer and the service have and a script sent bare to a target does not. Rename
+such a directory aside and run again — or, if windiag already runs from it, let `update_self` bring it
+to this release, whose next start restricts it. A directory that is, or is reached through, a link, or
+sits below one others could rename, is refused too. Who counts as an administrator above the two
+directories depends on where they are judged. `bootstrap-winrm.ps1` judges them on the target, by the
+target's own rule, the installer's: a direct member of its Administrators group counts. `bootstrap-target.ps1`
+and `deploy-target.ps1` judge them from your workstation over the admin share (`\\host\C$\…`), where
+your machine's Administrators group says nothing about the target's, so there only SYSTEM, the
+Administrators group itself and TrustedInstaller count: a folder above that the target's built-in
+Administrator owns is refused over the share although the installer would accept it. Hand it to the group
+(`icacls <dir> /setowner *S-1-5-32-544`) or use `bootstrap-winrm.ps1`.
 
 Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
@@ -808,9 +868,18 @@ sc create windiagsvc binPath= "\"C:\WinDiag\WinDiag.Mcp.exe\" --http http://10.0
 **Put the token in the service's own environment, not a machine-wide variable.** A service has no
 console to inherit `WINDIAG_TOKEN` from, and the obvious fix is the wrong one: machine environment
 variables are readable by *every local user*, and with `run_command` or `update_self` enabled that
-token is code execution as SYSTEM. The per-service key is ACL'd to SYSTEM and Administrators:
+token is code execution as SYSTEM. **`sc create` does not protect the per-service key either** — it
+inherits the Services key's ACL, under which every local user can read its values — so restrict it to
+SYSTEM and Administrators *before* writing the token:
 
 ```powershell
+$acl = New-Object System.Security.AccessControl.RegistrySecurity
+$acl.SetAccessRuleProtection($true, $false)
+'S-1-5-18', 'S-1-5-32-544' | ForEach-Object {   # SYSTEM, Administrators
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.RegistryAccessRule (
+    [Security.Principal.SecurityIdentifier]$_), 'FullControl', 'ContainerInherit', 'None', 'Allow')) }
+Set-Acl -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc -AclObject $acl
+
 New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc `
   -Name Environment -PropertyType MultiString -Force -Value @(
     'WINDIAG_TOKEN=<paste a long random value>',
@@ -871,11 +940,18 @@ level through an ordinary tool call. The token is the whole boundary.
   management segment you already trust, and do not route it across one you do not. If you need
   confidentiality on the wire today, tunnel it — WireGuard, SSH, an mTLS proxy — rather than assuming
   the port being scoped is enough.
-- **The token is never accepted as a command-line argument.** This server's own `process_list` shows
-  command lines to every local user, so a `--token` switch would publish the credential to precisely
-  the audience it excludes. Environment variable only.
+- **The running server never takes the token as a command-line argument.** This server's own
+  `process_list` shows command lines to every local user, so a `--token` switch would publish the
+  credential to precisely the audience it excludes. Environment variable only. The installer's
+  `--token` is the one exception and is visible while the installer runs; `--token-stdin` is not, and
+  is what the bootstrap scripts use.
 - **There is no default bind address.** `--http` with no address and no `WINDIAG_HTTP_BIND` is a
   startup failure, not a guess.
+- **A service's directories and registry key are SYSTEM's and Administrators' alone.** The installer
+  restricts them, and a service re-checks on every start, restricting what it can and refusing to start
+  from a directory it cannot. A target installed before this was the case may have had its token read
+  by a local user: its first start on this build logs that to the Application event log, and the token
+  should then be changed.
 - **A hostname is a wildcard bind, and is warned about as one.** Kestrel's binder falls back to
   "any IP" for any host that is not an IP literal and is not `localhost` — so
   `--http http://target-vm:7777` listens on `0.0.0.0` while looking specific. Verified: that address
@@ -896,8 +972,8 @@ level through an ordinary tool call. The token is the whole boundary.
 
 ## Configuration
 
-The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`
-and `put_file` writes into the server's own directory only with `LINUXDIAG_ALLOW_SELF_UPDATE`. `LinuxDiag.Mcp --help` lists them.
+The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`.
+`LinuxDiag.Mcp --help` lists them.
 
 The macOS server reads them as `MACDIAG_*`, from its `--env-file` laid over the environment. They have the
 same meanings, except:
@@ -911,17 +987,17 @@ same meanings, except:
 | Variable | Default | Meaning |
 |---|---|---|
 | `WINDIAG_READ_ONLY` | `false` | `1`/`true` drops all state-changing tools from registration |
-| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`. Gated separately because it lets the bearer token replace an elevated binary; `WINDIAG_READ_ONLY` still overrides it |
+| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`, and lets `put_file` write into the server's own directory to stage a build. Gated separately because it lets the bearer token replace an elevated binary -- or plant a Sysinternals tool or DLL beside it, which the server would run; `WINDIAG_READ_ONLY` still overrides it |
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
-| `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write outside the server's own directories. `put_file` itself is always available on a writable server, scoped to those dirs; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
+| `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write anywhere, the server's own directory included. `put_file` itself is always available on a writable server, scoped to the artifact directory; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
 | `WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS` | `1800` | How long `update_self` waits for running tool calls to finish before restarting anyway (1–86400). A backstop, not a schedule: on an idle target the wait is milliseconds. 30 minutes clears `capture_activity`'s ~21-minute worst case, which is the call most likely to be running when you update. A full-length `run_command` can exceed it — raise this, or pass `force` |
-| `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
+| `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` and `query_activity` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Without it, every read tool that opens a path it is given (`get_file`, `who_locks_path`, `file_signatures`, `effective_access`, `query_activity`) also refuses a network share or device path — `\\host\share`, `\\?\UNC\`, `\\.\`, a mapped network drive — because opening one makes the server sign in to that host as its machine account. `put_file` reaches one only with `WINDIAG_ALLOW_ARBITRARY_WRITE`, which already lets it write anywhere. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
-| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
-| `SYSDIAG_RELAY_FILE_ROOT` | the directory *above* the relay executable's, plus a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The first default is one level up because the relay ships in `artifacts/diagrelay` while the builds it sends sit beside it in `artifacts/win-x64`; the climb stops short of handing out a whole drive. Both resolve against the running executable, so under `dotnet run` they point into dotnet's install directory — set this when developing |
+| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written. Neither it nor the server's own folder may be reached through a mounted folder, a junction to a device, or a relative symbolic link: `get_file` and `put_file` cannot tell where such a link lands, so they refuse every transfer. Run as a service, windiag goes further and refuses to start when either is, or is reached through, any link, or sits below a directory someone other than SYSTEM and Administrators could rename (see the service section) |
+| `SYSDIAG_RELAY_FILE_ROOT` | a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp`; plus the `artifacts` directory when the relay runs from `artifacts/diagrelay` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The `artifacts` default exists because a relay published to `artifacts/diagrelay` sends the builds beside it in `artifacts/win-x64`; anywhere else — `~/bin`, an unpacked release zip, `dotnet run` — it does not apply, so set this to push builds from another folder |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
 silently defaulting, because the flag removes capability.
@@ -1090,6 +1166,9 @@ split is what lets the tool layer be tested with fakes and no live machine.
 | Symptom | Cause and fix |
 |---|---|
 | `'handle.exe' was not found on this machine` | Sysinternals Suite is not installed. Native-backed tools still work. |
+| `'…\handle64.exe' is beside the server but is not signed by Microsoft` | The copy in the server's folder is damaged or was not Microsoft's. Replace it from `download.sysinternals.com` (or re-run `deploy-target.ps1`), or delete it to use an installed copy. |
+| A service refuses to start: `… can be renamed or removed, or what it holds removed, by accounts other than SYSTEM and Administrators` | The server's or the artifact directory sits below a directory someone else could rename and replace — typically a folder made under `C:\` or `D:\`, which every user inherits *Modify* on, or one whose owner is an account outside the local Administrators group (an owner can grant itself any right, whatever the ACL says). The event log names the directory and who can change it. Remove the rights it names; if it says an account `owns it`, hand the directory to the group with `icacls <dir> /setowner *S-1-5-32-544`. Or move windiag to `C:\WinDiag` and `--artifacts C:\WinDiagArtifacts`. Then start the service again (`sc.exe \\<host> start <service>`): once its restart retries are spent it stays stopped, and nothing over port 4024 can reach it. |
+| `The owned directory '…' cannot be judged` on every `get_file` / `put_file` | The artifact directory or the server's folder sits under a folder a volume is mounted at (a data disk mounted at `C:\Data`), a junction to a device, or a relative symbolic link. .NET does not report where such a link really lands, so nothing under it can be judged owned. Move the directory: give the disk a drive letter and set `--artifacts` to a directory on that letter. |
 | `path_handle_search` warns about partial results | Not elevated. Restart the server from an elevated terminal. |
 | `who_locks_path` finds nothing on a file you know is locked | Expected: Restart Manager is not exhaustive. Run `path_handle_search`. |
 | `handle.exe did not finish within 120s` | Search term too broad. Narrow it, or raise `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS`. |

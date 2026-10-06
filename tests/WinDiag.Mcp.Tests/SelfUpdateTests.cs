@@ -151,6 +151,24 @@ public sealed class SelfUpdateRejectionTests : IDisposable
     }
 
     [Fact]
+    public void The_helper_script_is_a_new_file_never_one_already_at_that_name_rewritten_in_place()
+    {
+        // A self-update.cmd left by a user while the artifact directory was writable stays theirs if it is
+        // truncated and rewritten: same owner, same DACL, and any handle they hold still writes to it -- and
+        // cmd re-reads a batch file as it runs, for minutes while the helper waits for the server to exit.
+        // A handle held on the old file stands in for that user here: it must not see the helper's text.
+        var helper = Path.Combine(_directory, "self-update.cmd");
+        File.WriteAllText(helper, "planted");
+        using var held = new FileStream(helper, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        WindowsRestartHelper.WriteScript(helper, "@echo off\r\n");
+
+        Assert.Equal("@echo off\r\n", File.ReadAllText(helper));
+        using var reader = new StreamReader(held);
+        Assert.Equal("planted", reader.ReadToEnd());
+    }
+
+    [Fact]
     public void A_refused_update_never_stops_the_server_accepting_calls()
     {
         // The server now turns callers away while an update is pending, so it can reach idle before it
@@ -306,5 +324,198 @@ public sealed class SelfUpdateGatingTests
     public void Appears_in_the_startup_summary()
     {
         Assert.Contains("allowSelfUpdate=False", WinDiagOptions.FromEnvironment(new Hashtable()).Describe());
+    }
+}
+
+/// <summary>
+/// What the Windows ratchet accepts, decided from scripted signatures so every case is reachable.
+/// </summary>
+/// <remarks>
+/// The real WinTrust inspector cannot produce most of these on demand -- an expired, untimestamped
+/// signature on the running build, or a validly signed file from a second publisher -- and those are
+/// exactly the cases that were wrong.
+/// </remarks>
+public sealed class WindowsSignatureRatchetTests
+{
+    private const string Live = @"C:\WinDiag\WinDiag.Mcp.exe";
+    private const string Contoso = "CN=Contoso Ltd, O=Contoso Ltd, L=Redmond, S=Washington, C=US";
+    private const string Fabrikam = "CN=Fabrikam Inc, O=Fabrikam Inc, C=US";
+    private const string MicrosoftWindows = "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US";
+
+    private static FileSignature Signature(string path, SignatureVerdict verdict, string? subject) =>
+        new(path, verdict, $"{verdict}.", false, null, null, null, null, null, null, null, 1,
+            DateTimeOffset.UnixEpoch, "AB", subject);
+
+    private static StagedBuild Staged(string verdict, string? signer) =>
+        new(@"C:\WinDiag\next.exe", "AB", 1, verdict, verdict == "Valid" ? null : "detail.", signer);
+
+    private static WindowsSignatureRatchet Ratchet(SignatureVerdict liveVerdict, string? liveSubject) =>
+        new(new ScriptedSignatureInspector(Signature(Live, liveVerdict, liveSubject)),
+            NullLogger<WindowsSignatureRatchet>.Instance);
+
+    [Fact]
+    public void Refuses_a_validly_signed_replacement_from_another_publisher()
+    {
+        // "Validly signed" alone let the token install any publisher's binary -- a verbatim copy of a
+        // catalog-signed Windows executable included -- for the service to run as SYSTEM.
+        var ex = Assert.Throws<SelfUpdateRejectedException>(
+            () => Ratchet(SignatureVerdict.Valid, Contoso)
+                .RequireAcceptable(Live, Staged("Valid", MicrosoftWindows), CancellationToken.None));
+
+        Assert.Contains("same publisher", ex.Message);
+        Assert.Contains(MicrosoftWindows, ex.Message);
+        Assert.Contains("Nothing has been changed", ex.Message);
+    }
+
+    [Fact]
+    public void Refuses_a_validly_signed_replacement_whose_signer_could_not_be_read()
+    {
+        Assert.Throws<SelfUpdateRejectedException>(
+            () => Ratchet(SignatureVerdict.Valid, Contoso)
+                .RequireAcceptable(Live, Staged("Valid", null), CancellationToken.None));
+    }
+
+    [Fact]
+    public void Accepts_a_validly_signed_replacement_from_the_same_publisher()
+    {
+        Ratchet(SignatureVerdict.Valid, Contoso)
+            .RequireAcceptable(Live, Staged("Valid", Contoso), CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(SignatureVerdict.Untrusted)]
+    [InlineData(SignatureVerdict.Unknown)]
+    public void Stays_engaged_when_the_running_builds_signature_no_longer_verifies(SignatureVerdict live)
+    {
+        // It used to switch itself off for anything but Valid, so an expired untimestamped signature, or
+        // one that had stopped matching its file, let an unsigned replacement straight through.
+        Assert.Throws<SelfUpdateRejectedException>(
+            () => Ratchet(live, Contoso).RequireAcceptable(Live, Staged("Unsigned", null), CancellationToken.None));
+        Assert.Throws<SelfUpdateRejectedException>(
+            () => Ratchet(live, Contoso).RequireAcceptable(Live, Staged("Valid", Fabrikam), CancellationToken.None));
+
+        // The way out of an expired certificate is still open: a properly signed build from the same
+        // publisher.
+        Ratchet(live, Contoso).RequireAcceptable(Live, Staged("Valid", Contoso), CancellationToken.None);
+    }
+
+    [Fact]
+    public void Refuses_everything_when_the_running_build_is_signed_by_someone_it_cannot_name()
+    {
+        var ex = Assert.Throws<SelfUpdateRejectedException>(
+            () => Ratchet(SignatureVerdict.Unknown, null)
+                .RequireAcceptable(Live, Staged("Valid", Contoso), CancellationToken.None));
+
+        Assert.Contains("no publisher to hold a replacement to", ex.Message);
+    }
+
+    [Fact]
+    public void Leaves_an_unsigned_development_build_free_to_take_anything()
+    {
+        Ratchet(SignatureVerdict.Unsigned, null)
+            .RequireAcceptable(Live, Staged("Unsigned", null), CancellationToken.None);
+    }
+
+    [Fact]
+    public void Carries_the_signer_read_in_the_same_held_inspection_as_the_hash()
+    {
+        var inspector = new ScriptedSignatureInspector(Signature(Live, SignatureVerdict.Valid, Contoso))
+        {
+            Held = Signature(@"C:\WinDiag\next.exe", SignatureVerdict.Valid, Fabrikam)
+        };
+
+        var staged = new WindowsStagedBuildInspector(inspector).Inspect(@"C:\WinDiag\next.exe", CancellationToken.None);
+
+        Assert.Equal(Fabrikam, staged.SignerIdentity);
+        Assert.Equal(1, inspector.HeldCalls);
+        Assert.Equal(0, inspector.UnheldCalls);
+    }
+
+    [Fact]
+    public void Refuses_a_staged_build_something_still_has_open_for_writing()
+    {
+        var inspector = new ScriptedSignatureInspector(Signature(Live, SignatureVerdict.Valid, Contoso))
+        {
+            HeldFailure = new IOException("The process cannot access the file because it is being used by another process.")
+        };
+
+        var ex = Assert.Throws<SelfUpdateRejectedException>(
+            () => new WindowsStagedBuildInspector(inspector).Inspect(@"C:\WinDiag\next.exe", CancellationToken.None));
+
+        Assert.Contains("writers locked out", ex.Message);
+        Assert.Contains("Nothing has been changed", ex.Message);
+    }
+
+    /// <summary>Answers every unheld inspection with one signature, and a held one as scripted.</summary>
+    private sealed class ScriptedSignatureInspector(FileSignature answer) : ISignatureInspector
+    {
+        public FileSignature? Held { get; init; }
+
+        public Exception? HeldFailure { get; init; }
+
+        public int HeldCalls { get; private set; }
+
+        public int UnheldCalls { get; private set; }
+
+        public SignatureQueryResult Inspect(IReadOnlyList<string> paths, CancellationToken cancellationToken)
+        {
+            UnheldCalls++;
+            return new SignatureQueryResult([answer], []);
+        }
+
+        public FileSignature InspectHeld(string path, CancellationToken cancellationToken)
+        {
+            HeldCalls++;
+            return HeldFailure is { } failure ? throw failure : Held ?? answer;
+        }
+
+        public FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("update_self holds the staged file itself, by path");
+    }
+}
+
+/// <summary>The held inspection against the real WinTrust inspector and a real file. Windows only.</summary>
+public sealed class HeldSignatureInspectionTests
+{
+    [Fact]
+    public void Refuses_to_inspect_a_staged_file_another_handle_has_open_for_writing()
+    {
+        // A sharing violation is the whole mechanism: while this inspection can open the file, nothing
+        // can be writing it, so the verdict and the hash it returns describe the same bytes.
+        var path = Path.Combine(Path.GetTempPath(), $"windiag-held-{Guid.NewGuid():N}.exe");
+        File.WriteAllBytes(path, "not a real build"u8.ToArray());
+
+        try
+        {
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+            {
+                Assert.Throws<SelfUpdateRejectedException>(
+                    () => new WindowsStagedBuildInspector(new WinTrustSignatureInspector())
+                        .Inspect(path, CancellationToken.None));
+            }
+
+            // And once the writer has gone, the same file inspects normally.
+            var staged = new WindowsStagedBuildInspector(new WinTrustSignatureInspector()).Inspect(path, CancellationToken.None);
+            Assert.Equal(Convert.ToHexString(SHA256.HashData("not a real build"u8.ToArray())), staged.Sha256);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Names_the_publisher_of_signed_system_binaries_from_the_verified_signature()
+    {
+        // From WinVerifyTrust's own state, catalog signatures included -- which carry no embedded
+        // certificate at all, so a reading of the file's certificate bag would name nobody.
+        var sample = Directory.EnumerateFiles(Environment.SystemDirectory, "*.dll").Take(30).ToArray();
+
+        var valid = new WinTrustSignatureInspector().Inspect(sample, CancellationToken.None).Files
+            .Where(f => f.Verdict == SignatureVerdict.Valid)
+            .ToList();
+
+        Assert.NotEmpty(valid);
+        Assert.All(valid, f => Assert.Contains("O=Microsoft Corporation", f.SignerSubject));
     }
 }

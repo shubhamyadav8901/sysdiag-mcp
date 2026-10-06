@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Signatures;
@@ -16,6 +15,13 @@ namespace WinDiag.Mcp.Diagnostics.Modules;
 /// one <em>is</em>, from where, at what version — and whether anything unsigned got in. Sysinternals
 /// listdlls covers the same ground, but this needs nothing installed on the target, which matters when
 /// the target is a customer machine.
+/// <para>Version, preferred base and signature can only be read from a file, and the file at a module's
+/// listed path need not be the one that was loaded: NTFS lets a loaded DLL be renamed, and something else
+/// put in its place. So none of them is read from that path. Each comes from the file the kernel says is
+/// behind the module's mapping, held open while it is read, and only where no one but SYSTEM,
+/// Administrators and TrustedInstaller could have moved the directories that name runs through
+/// (<see cref="WindowsModuleImageSource"/>); a module whose file cannot be identified that way gets none
+/// of them, and says why.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsModuleInspector : IModuleInspector
@@ -40,7 +46,7 @@ public sealed class WindowsModuleInspector : IModuleInspector
         using var process = Open(processId);
         var name = SafeName(process);
 
-        var modules = new List<LoadedModule>();
+        var listed = new List<ListedModule>();
         Exception? failure = null;
 
         try
@@ -51,7 +57,11 @@ public sealed class WindowsModuleInspector : IModuleInspector
 
                 using (module)
                 {
-                    modules.Add(Describe(module));
+                    listed.Add(new ListedModule(
+                        module.ModuleName ?? "(unnamed)",
+                        module.FileName ?? string.Empty,
+                        (ulong)module.BaseAddress.ToInt64(),
+                        module.ModuleMemorySize));
                 }
             }
         }
@@ -64,7 +74,7 @@ public sealed class WindowsModuleInspector : IModuleInspector
         // access -- so an empty list here is not a short answer, it is no answer, and returning it with
         // a warning attached would still leave "0 modules" as the headline. Throw instead: the caller
         // gets a refusal that names the fix rather than a result they have to distrust.
-        if (modules.Count == 0)
+        if (listed.Count == 0)
         {
             var message = DescribeTotalFailure(processId, failure);
             throw failure is null
@@ -75,7 +85,34 @@ public sealed class WindowsModuleInspector : IModuleInspector
         // Only now is "partial" the honest word: some modules came back and then enumeration stopped.
         var limitation = failure is null ? null : DescribePartialFailure(failure);
 
-        IEnumerable<LoadedModule> matched = modules;
+        using var images = WindowsModuleImageSource.Open(processId);
+        return Assemble(processId, name, listed, limitation, images, nameFilter, verifySignatures, cancellationToken);
+    }
+
+    /// <summary>
+    /// Filters, pages and describes the listed modules, each from its own held image file. Separate from
+    /// <see cref="List"/> so it can be driven without a process.
+    /// </summary>
+    /// <remarks>
+    /// <para>Every match is identified, not just the returned page, so the replaced and unidentified counts
+    /// cannot lose a module by sorting it past the cap. Only the page is described in full and, on
+    /// request, verified -- Authenticode verification is not cheap and a process can hold several hundred
+    /// modules.</para>
+    /// <para>A module's signature is checked inside the same hold that identified its file, never by a
+    /// second open later. The two used to be minutes apart in the worst case, after the whole list was
+    /// enumerated and sorted, and nothing tied the file verified to the file compared.</para>
+    /// </remarks>
+    internal ModuleListResult Assemble(
+        int processId,
+        string processName,
+        IReadOnlyList<ListedModule> listed,
+        string? limitation,
+        IModuleImageSource images,
+        string? nameFilter,
+        bool verifySignatures,
+        CancellationToken cancellationToken)
+    {
+        IEnumerable<ListedModule> matched = listed;
         if (!string.IsNullOrWhiteSpace(nameFilter))
         {
             matched = matched.Where(m =>
@@ -84,77 +121,134 @@ public sealed class WindowsModuleInspector : IModuleInspector
         }
 
         var ordered = matched.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
-        var truncated = ordered.Count > _options.MaxResults;
-        var page = truncated ? ordered.Take(_options.MaxResults).ToList() : ordered;
+        var pageSize = Math.Min(ordered.Count, _options.MaxResults);
 
-        if (verifySignatures)
+        var described = new List<LoadedModule>(ordered.Count);
+        for (var i = 0; i < ordered.Count; i++)
         {
-            page = Verify(page, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            using var image = images.Open(ordered[i].Path, ordered[i].BaseAddress);
+            var onPage = i < pageSize;
+
+            var module = Describe(ordered[i], image, readFile: onPage);
+            if (verifySignatures && onPage)
+            {
+                module = Verify(module, image, cancellationToken);
+            }
+
+            described.Add(module);
         }
+
+        var page = described.Take(pageSize).ToList();
 
         return new ModuleListResult(
             ProcessId: processId,
-            ProcessName: name,
+            ProcessName: processName,
             Modules: page,
             TotalMatched: ordered.Count,
-            Truncated: truncated,
+            Truncated: ordered.Count > pageSize,
             UnsignedCount: page.Count(m => m.SignatureVerdict is "Unsigned" or "Untrusted"),
             Limitation: limitation,
-            CollisionCount: page.Count(m => m.BaseCollision));
+            CollisionCount: page.Count(m => m.BaseCollision),
+            ReplacedCount: described.Count(m => m.ReplacedOnDisk == true),
+            UnidentifiedCount: described.Count(m => m.ImageFileUnknownReason is not null),
+            NotVerifiedCount: page.Count(m => m.SignatureVerdict == LoadedModule.NotVerified));
     }
 
-    /// <summary>
-    /// Verifies the returned page only, not every module in the process.
-    /// </summary>
+    /// <summary>The verdict on the loaded image's own file, through the handle that identified it.</summary>
     /// <remarks>
-    /// Authenticode verification is not cheap and a process can hold several hundred modules, so this
-    /// is opt-in and scoped to what is actually being reported. Catalog lookup is included, which is
-    /// what stops most of Windows being reported as unsigned.
+    /// A module whose file was not identified is <c>NotVerified</c>, never verified by its path instead.
+    /// That fallback was the hole: an unknown identity -- an image header built not to parse, a file held
+    /// open to make the comparison fail -- still got the verdict of whatever signed file sat at the path,
+    /// and the module dropped out of the unsigned count with nothing marked.
     /// </remarks>
-    private List<LoadedModule> Verify(List<LoadedModule> modules, CancellationToken cancellationToken)
+    private LoadedModule Verify(LoadedModule module, ModuleImageFile image, CancellationToken cancellationToken)
     {
-        var paths = modules.Select(m => m.Path).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToArray();
-        if (paths.Length == 0)
+        if (image.Held is null || image.HeldPath is null)
         {
-            return modules;
+            return module with { SignatureVerdict = LoadedModule.NotVerified, Signer = null };
         }
 
-        var verdicts = _signatures.Inspect(paths, cancellationToken).Files
-            .ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase);
+        FileSignature signature;
+        try
+        {
+            signature = _signatures.InspectHeld(image.HeldPath, image.Held, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return module with { SignatureVerdict = nameof(SignatureVerdict.Unknown), Signer = null };
+        }
 
-        return modules
-            .Select(m => !string.IsNullOrWhiteSpace(m.Path) && verdicts.TryGetValue(m.Path, out var signature)
-                ? m with
-                {
-                    SignatureVerdict = signature.Verdict.ToString(),
-                    Signer = signature.Signer ?? (signature.CatalogSigned ? "(catalog)" : null)
-                }
-                : m)
-            .ToList();
+        return module with
+        {
+            SignatureVerdict = signature.Verdict.ToString(),
+            Signer = signature.Signer ?? (signature.CatalogSigned ? "(catalog)" : null)
+        };
     }
 
-    private static LoadedModule Describe(ProcessModule module)
+    /// <summary>Describes one module from its held image file, or from nothing when there is none.</summary>
+    private static LoadedModule Describe(ListedModule listed, ModuleImageFile image, bool readFile)
     {
-        var info = module.FileVersionInfo;
-        var path = module.FileName ?? string.Empty;
-        var loadedAt = (ulong)module.BaseAddress.ToInt64();
-        var header = PeImageReader.TryRead(path);
-
-        return new LoadedModule(
-            Name: module.ModuleName ?? "(unnamed)",
-            Path: path,
-            BaseAddress: Hex(loadedAt),
-            SizeBytes: module.ModuleMemorySize,
-            FileVersion: NullIfEmpty(info?.FileVersion),
-            CompanyName: NullIfEmpty(info?.CompanyName),
+        var bare = new LoadedModule(
+            Name: listed.Name,
+            Path: listed.Path,
+            BaseAddress: Hex(listed.BaseAddress),
+            SizeBytes: listed.SizeBytes,
+            FileVersion: null,
+            CompanyName: null,
             SignatureVerdict: null,
             Signer: null,
-            PreferredBase: header is { } pe ? Hex(pe.ImageBase) : null,
-            Relocated: header is { } relocated ? relocated.ImageBase != loadedAt : null,
+            ImageFileUnknownReason: image.UnknownReason);
+
+        if (image.Held is null || image.HeldPath is null)
+        {
+            return bare;
+        }
+
+        var identified = bare with
+        {
+            ReplacedOnDisk = image.ListedPathIsOtherFile,
+            ImageFilePath = image.ListedPathIsOtherFile == false ? null : image.HeldPath
+        };
+
+        if (!readFile)
+        {
+            return identified;
+        }
+
+        // The preferred base comes from the file, not the mapping, because the loader writes the base an
+        // image actually got into the header it maps.
+        var header = PeImageReader.TryRead(image.Held);
+        var version = ReadVersion(image.HeldPath);
+
+        return identified with
+        {
+            FileVersion = NullIfEmpty(version?.FileVersion),
+            CompanyName = NullIfEmpty(version?.CompanyName),
+            PreferredBase = header is { } pe ? Hex(pe.ImageBase) : null,
+            Relocated = header is { } relocated ? relocated.ImageBase != listed.BaseAddress : null,
             // ASLR moves nearly every system image every boot, so "relocated" alone is noise. An image
             // that never asked to be moved and was moved anyway is the opposite: something was already
             // sitting in its range, and it has just lost its shareable pages.
-            BaseCollision: header is { DynamicBase: false } fixedBase && fixedBase.ImageBase != loadedAt);
+            BaseCollision = header is { DynamicBase: false } fixedBase && fixedBase.ImageBase != listed.BaseAddress
+        };
+    }
+
+    /// <remarks>
+    /// By path, because the version resource API takes nothing else -- but the path of the held file,
+    /// which while it is held cannot be renamed, replaced or written, so this reads the same bytes.
+    /// </remarks>
+    private static FileVersionInfo? ReadVersion(string path)
+    {
+        try
+        {
+            return FileVersionInfo.GetVersionInfo(path);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private static string Hex(ulong address) =>
@@ -232,3 +326,6 @@ public sealed class WindowsModuleInspector : IModuleInspector
 
     private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 }
+
+/// <summary>A module as the process lists it: the loader's name and path, and where it is mapped.</summary>
+internal sealed record ListedModule(string Name, string Path, ulong BaseAddress, long SizeBytes);

@@ -17,6 +17,11 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Breaking
 
+- WinDiag, LinuxDiag and MacDiag refuse a command-line argument or install option they do not know, naming
+  it and suggesting the right spelling (`--readonly` -> `--read-only`), and exit 2. Before, an unknown
+  option was ignored, so `--install-service ... --readonly` installed a fully writable service and a
+  trailing `--token` installed a generated token. A server started by hand takes only `--http [address]`:
+  set its other options through their `WINDIAG_*`, `LINUXDIAG_*` or `MACDIAG_*` variables.
 - The project is now **sysdiag**: WinDiag, LinuxDiag and MacDiag servers and the DiagRelay relay. The
   Windows server keeps its WinDiag names, `WINDIAG_*` variables and paths.
 - The relay's targets file is `~/.sysdiag-targets.json` (was `~/.windiag-targets.json`). Rename the file;
@@ -29,6 +34,143 @@ release fixed something that had been silently wrong, it says what the wrong ans
 - MacDiag's default launchd label and install folder are `com.sysdiag.macdiag` (was `com.windiag.macdiag`).
 - `put_file` and `get_file` report `scope` `"Owned"` (was `"WinDiag"`) for a path inside the server's
   own directories, on every server.
+
+### Security
+
+- Before, any local user on a Windows target could read the service's bearer token from its registry key
+  (`HKLM\SYSTEM\CurrentControlSet\Services\<name>`, value `Environment`). `sc create` gives the key the
+  Services key's ACL and nothing restricted it, even though the docs said only SYSTEM and Administrators
+  could read it. With the Standard grants that token allows run_command as SYSTEM. Now `--install-service`
+  restricts the key to SYSTEM and Administrators before writing the token, `--service-status` reports
+  anyone else who can read it, and a service restricts its own key on its first start on this build and
+  logs a warning. Change the token on any target installed before this release.
+- Before, `C:\WinDiag` and `C:\WinDiagArtifacts`, the bootstrap defaults, inherited *Authenticated Users:
+  Modify* from `C:\`. Any local user could plant `handle64.exe` and similar binaries, a replacement
+  server, or a changed `self-update.cmd`, all of which the SYSTEM service runs, and could read memory
+  dumps. Now the installer, `deploy-target.ps1` and both bootstrap scripts give the server and artifact
+  directories a protected ACL: SYSTEM and Administrators only, owned by Administrators. The bootstrap
+  scripts do this before copying anything, and hand anything already in an existing directory to
+  Administrators. A service checks again on every start, restricts what it can (with an event-log
+  warning), and refuses to start, writing the reason to the event log, only when it cannot. The installer
+  refuses a drive root, and a server directory that holds files other than windiag's, rather than locking
+  it down; the scripts refuse a directory that is or contains a link.
+- Before, the Windows bootstrap scripts passed `--token <value>` on the target's command line, so it
+  showed up in process-creation auditing, PSEXESVC and `process_list`, and `deploy-target.ps1` printed the
+  real token in its by-hand instructions. Now `WinDiag.Mcp.exe --install-service` accepts `--token-stdin`,
+  both bootstrap scripts deliver the token that way, and `deploy-target.ps1` prints a placeholder.
+- Before, `bootstrap-target.ps1` put the target administrator's password on `net use`'s command line on
+  the operator's machine, despite promising it never reached one. Now it opens the IPC$ session in-process
+  through WNetAddConnection2.
+- WinDiag's `put_file` no longer writes into the server's own folder unless the self-update grant
+  (`WINDIAG_ALLOW_SELF_UPDATE` / `--allow-self-update`) or arbitrary write is on. Before, any writable
+  server's token could put `handle64.exe` or a DLL there, and the server ran it as SYSTEM with
+  `run_command` and `update_self` both off. A put there now gets a refusal that names
+  `WINDIAG_ALLOW_SELF_UPDATE=1`, and `deploy-target.ps1` says so before staging.
+- WinDiag loads `dbghelp.dll`, `wintrust.dll`, `rstrtmgr.dll`, `iphlpapi.dll` and its other imports, plus
+  the event log package's `wevtapi.dll`, only from System32 by absolute path. Before, a copy in the
+  server's folder was loaded first, inside the SYSTEM process. The .NET runtime's own imports are not
+  covered; for those, the server folder's ACL and the self-update grant remain the boundary.
+- A Sysinternals tool found beside WinDiag runs only if its Authenticode signature is valid and
+  Microsoft's. An unsigned or foreign-signed copy is refused by path in the tool result and in
+  `capabilities`. Before, it was run as long as it had the right bitness.
+- A junction or symbolic link inside an owned directory whose target .NET reports without a root now
+  counts as leaving that directory, so `get_file` and `put_file` through it need the arbitrary grant. That
+  covers a mounted folder (`\\?\Volume{guid}\`), a `GLOBALROOT` path, a junction to
+  `\Device\HarddiskVolumeN\` or a shadow copy, and a relative symbolic link. A link to a share now stops
+  the scope check before the check itself connects to the share. Before, such a target was judged a child
+  of the link's folder, so another volume or a shadow copy read as owned. An artifact or server directory
+  reached through such a link is refused with a message saying to move it to a directory on a drive
+  letter.
+- On Windows, `who_locks_path`, `file_signatures`, `effective_access`, `query_activity` and `get_file`
+  refuse network share and device paths (`\\host\share`, `\\?\UNC\`, `\\.\`, `\\?\GLOBALROOT`, and mapped
+  network drives however the letter is spelled, `\\?\Z:\` included) unless `WINDIAG_ALLOW_ARBITRARY_READ`
+  is set, and they refuse before touching the path. `put_file` reaches one only with
+  `WINDIAG_ALLOW_ARBITRARY_WRITE`. Before, even a read-only token could make the SYSTEM service open SMB
+  to any host and sign in as the machine account.
+- `query_activity` reads only captures inside the server's own directories, the same rule as `get_file`,
+  unless `WINDIAG_ALLOW_ARBITRARY_READ` is set. A path outside gets the same refusal whether or not it
+  exists, and a file that is not a capture is rejected by naming the missing column. Before, it read any
+  file as SYSTEM on a read-only server, and its error echoed the file's first line.
+- WinDiag summaries now escape newlines, control characters and bidirectional overrides in text other
+  accounts control: command lines, process, service, module and handle names, registry names and data,
+  event messages, paths, signer names and trace entries. Before, a process started with a newline in its
+  command line, or an HKCU REG_SZ holding one, could write a line into process_list's or registry_read's
+  summary that read as the server's own. The structured content keeps the original text.
+- process_control now refuses to terminate or suspend a process Windows marks critical, or one hosting a
+  service that service_control refuses to stop (RpcSs, DcomLaunch, Winmgmt, EventLog and the rest).
+  Before, ending the right svchost by PID could bugcheck the machine or take RPC and WMI down. It also
+  refuses when it cannot read those facts. Resume is never refused.
+- service_control also checks the service's resolved short name. Before, naming a core service by its
+  display name got past the check.
+- capture_dump refuses lsass, lsaiso and csrss, identified by their image in System32. Before, a writable
+  server's token with no grants could dump them and fetch the file with get_file.
+- registry_read needs WINDIAG_ALLOW_ARBITRARY_READ for HKLM\SAM, HKLM\SECURITY and other users' hives
+  under HKU, and the refusal names the grant. Before, any token, read-only included, could read them.
+- registry_read now redacts values named like a credential under every grant, including NAME=value entries
+  such as WINDIAG_TOKEN in a service's Environment, and keeps their size. Before, a read-only instance's
+  token could read another instance's bearer token from its service key.
+- `autostart_audit`: autorunsc's output used to be split on line breaks before quotes were handled. A Run
+  value name containing a line break plus a complete fake row (which any user can create) dropped the
+  real, unsigned entry as if it were a section header and listed the fake one as a Verified Microsoft
+  entry, so the summary called every entry validly signed. Records are now read quote-aware. A row that
+  cannot be read as a whole entry is counted in `malformedRowCount`, and a non-zero count opens the
+  summary with a warning instead of a clean signature verdict.
+- `path_handle_search` and `process_handles`: a comma in a process image name shifted handle.exe's
+  columns. `a,b.exe` holding a file was dropped, and an elevated search answered 'No open file references
+  matched'; `x,668,File,SYSTEM,0x4,svc.exe` blamed the lock on PID 668. Columns are now located by what
+  they look like (anchored on the requested PID under `-p`). A row that is ambiguous or cannot be read is
+  counted in the new `unparsedRows` field and flagged, and an empty result is never described as nothing
+  matching.
+- `process_modules` read version, PE header and signature from whatever file sits at a module's path now.
+  A DLL renamed away while loaded and replaced by a signed copy was reported as signed. Each module's
+  loaded PE header is now compared with its file. A mismatch is flagged `replacedOnDisk` / [REPLACED ON
+  DISK], its signature is not checked, and no relocation verdict is taken from the other file. The
+  description no longer promises tamper detection.
+- `update_self` on Windows accepted any validly signed replacement from any publisher, and turned its
+  signature check off entirely when the running build's own signature no longer verified (for example,
+  expired without a timestamp). The staged file's signature verdict and its hash also came from two
+  separate file opens, so a `put_file` landing between them could get an unsigned build installed. A
+  signed server now accepts only a validly signed replacement whose verified signer matches its own,
+  refuses everything if its own signer cannot be read, and verifies and hashes the staged file through one
+  handle that blocks writers. `file_signatures` gains `signerSubject`.
+- LinuxDiag `service_control` refuses a stop or restart when `systemctl list-dependencies` fails. Before,
+  a D-Bus timeout or a partial walk read as "nothing depends on this", so the stop ran and could take
+  `ssh.service` or the diagnostics server down with it. It now answers "could not list the services that
+  depend on it ... Nothing has been done."
+- LinuxDiag `autostart_audit` reads users' systemd units the way a user's manager does: by name along the
+  user search path, with every drop-in, keeping only the commands after the last empty `ExecStart=`.
+  Before, an enabled packaged user unit with `~/.config/systemd/user/x.service.d/o.conf` replacing
+  ExecStart was reported with the packaged program, called packaged, and hidden by `unpackagedOnly`. Now
+  the user's program is reported and the drop-in is checked. User timers, sockets and paths now name the
+  program of the unit they start; before, they showed none. Units enabled for every user, including vendor
+  units under `/usr/lib/systemd/user` such as `pipewire.socket`, are listed. They are listed again for any
+  user whose own files change what they run, including the service a socket or timer starts.
+- The LinuxDiag installer makes `/opt/linuxdiag`, `/etc/linuxdiag` and the default `/var/lib/linuxdiag`
+  root-owned with their documented modes even when they already exist, and makes a binary installed from
+  its own path root's. An existing `--artifacts` directory is refused unless root alone controls it and
+  every directory above it, and it is never re-chmodded. A missing one is made only where root alone
+  controls the directories above it, and nothing is made when it is refused. `update_self` also refuses to
+  write its helper script into an artifact directory another account controls. Before, a pre-existing
+  operator-owned or world-writable directory was used as-is, and a local user could get root code
+  execution at the next update.
+- The relay's default `push_file`/`pull_file` root no longer reaches the home directory. It used to be the
+  folder above the relay's executable wherever that was: `~/bin/DiagRelay.Mcp` allowed all of `$HOME`,
+  `~/DiagRelay.Mcp` allowed every user's home, and an unpacked release zip allowed `~/Downloads`. That put
+  `~/.ssh` and `~/.sysdiag-targets.json` one tool call away from a target. Now the default is the per-user
+  `sysdiag` folder (`%TEMP%\sysdiag`, or `$XDG_CACHE_HOME/sysdiag` / `~/.cache/sysdiag`), plus the
+  `artifacts` directory only when the relay runs from `artifacts/diagrelay` or
+  `artifacts/diagrelay-<rid>`. That tree is refused if it holds the user profile. To push builds from
+  anywhere else, copy them into the per-user folder or set `SYSDIAG_RELAY_FILE_ROOT`.
+- The relay's `push_file` and `pull_file` now refuse a local path that leads through a symlink or junction
+  out of the permitted roots. Before, the check went only by the path as written, so `root/keys ->
+  ~/.ssh/id_ed25519`, or a linked directory a pull wrote into, passed. Paths and roots are both resolved
+  with the same realpath-style walk the server's `put_file`/`get_file` use, so a roots folder that is
+  itself a link still works. A link loop or an unreadable link is refused.
+- All servers over HTTP: every request without a valid bearer token used to be logged twice at Information
+  by ASP.NET Core, with no peer address, so any peer could roll MacDiag's 10 MB log or exhaust journald's
+  rate limit without a token. ASP.NET Core's own categories are now logged at Warning and above. The
+  bearer gate writes one Warning per peer address per minute, naming the address, for at most 10 addresses
+  a minute, and then a single summary of what it only counted.
 
 ### Added
 
@@ -62,6 +204,28 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ### Fixed
 
+- `autostart_audit` scanned only the profile of the account it ran as. As a LocalSystem service (the
+  normal deployment) it listed SYSTEM's HKCU Run keys and Startup folder and no real user's, while calling
+  the list complete. It now asks autorunsc for every user profile, and a per-user entry shows the profile
+  it belongs to.
+- `run_command` with the default Cmd shell broke every command containing a double quote: `"C:\Program
+  Files\App\app.exe" --version` failed with 'is not recognized', and `echo "a b"` printed `\"a b\"`.
+  Commands now reach cmd.exe exactly as typed, through `cmd /d /s /c "…"`. Because of `/d`, a target's cmd
+  AutoRun registry commands no longer run first.
+- `named_pipes` flagged every pipe whose instances were all created as 'AT LIMIT' and said a client would
+  block or fail, including single-instance pipes waiting for their first client, which would have accepted
+  one. It now checks such pipes with `WaitNamedPipe` (connecting nothing) and marks BUSY only those with
+  no instance listening. Structured output changed: `activeInstances` is now `instancesCreated`,
+  `exhausted` is now `allInstancesCreated`, and `listening` and `busy` are added.
+- The release workflow no longer publishes Windows builds when the WinDiag test suite fails. Its
+  multi-line build-and-test steps ran under pwsh on Windows, which counts only the last command's exit
+  code. Each dotnet build and test is now its own step, and CI's publish-then-inspect steps check
+  `$LASTEXITCODE`.
+- Release zips now include `LICENSE` and a new `THIRD-PARTY-NOTICES.md`. Before, they shipped only the
+  binary and `SHA256.txt`, although every self-contained binary redistributes the .NET runtime (MIT),
+  ASP.NET Core (servers only, MIT) and the MCP C# SDK (Apache-2.0). The notices file also states that
+  Sysinternals is not redistributed and that WinDiag accepts its EULA on the target when it runs those
+  tools.
 - The LinuxDiag release job now builds the kit's test project before running it with `--no-build`, which
   otherwise found nothing to run.
 - LinuxDiag's `system_overview` could report a healthy mount as not answering when another mount's size

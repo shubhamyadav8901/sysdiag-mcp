@@ -130,6 +130,27 @@ public static class EventLogSink
         }
     }
 
+    /// <summary>Writes one entry if the source can be had, and otherwise nothing. Never throws.</summary>
+    /// <remarks>
+    /// For what happens before the host -- and so before the logging provider -- exists: a refusal to
+    /// start is exactly the line an operator of a service needs, and under the SCM stderr goes nowhere.
+    /// </remarks>
+    public static void TryWrite(string message, EventLogEntryType type)
+    {
+        try
+        {
+            if (TryRegisterSource())
+            {
+                EventLog.WriteEntry(SourceName, message, type);
+            }
+        }
+        catch (Exception)
+        {
+            // Every exception, for the reason TryRegisterSource gives: this channel must never be what
+            // stops the thing it reports on.
+        }
+    }
+
     /// <summary>Creates the source if it is missing, and reports whether it is there afterwards.</summary>
     /// <remarks>
     /// The probe is not merely a proxy for the write path, it removes it: inside

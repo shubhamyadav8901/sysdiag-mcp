@@ -85,7 +85,7 @@ public sealed class ProcessIdentityTests
 public sealed class ProcessControlRefusalTests
 {
     private static WindowsProcessController Controller() =>
-        new(NullLogger<WindowsProcessController>.Instance);
+        new(NullLogger<WindowsProcessController>.Instance, new FakeProtectionProbe());
 
     [Fact]
     public void Refuses_a_pid_whose_name_does_not_match_what_the_caller_expected()
@@ -163,6 +163,161 @@ public sealed class ProcessControlRefusalTests
     }
 }
 
+/// <summary>
+/// process_control refuses what service_control protects, reached by PID instead of by name.
+/// </summary>
+/// <remarks>
+/// The probe is faked, so the child is an ordinary process the test owns: what is under test is that the
+/// controller asks, and refuses on the answer, before anything irreversible. A child of whatever this test host
+/// runs on, so the refusals -- which happen before any Windows-only call -- run off Windows too.
+/// </remarks>
+public sealed class ProcessControlProtectionTests
+{
+    private static WindowsProcessController Controller(FakeProtectionProbe probe) =>
+        new(NullLogger<WindowsProcessController>.Instance, probe);
+
+    private static System.Diagnostics.Process StartIdleChild()
+    {
+        var startInfo = OperatingSystem.IsWindows()
+            ? new System.Diagnostics.ProcessStartInfo("cmd.exe") { ArgumentList = { "/c", "ping -n 30 127.0.0.1" } }
+            : new System.Diagnostics.ProcessStartInfo("/bin/sleep") { ArgumentList = { "30" } };
+        startInfo.UseShellExecute = false;
+        startInfo.CreateNoWindow = true;
+        startInfo.RedirectStandardOutput = true;
+
+        var child = System.Diagnostics.Process.Start(startInfo)!;
+        Thread.Sleep(250);
+        return child;
+    }
+
+    private static void Reap(System.Diagnostics.Process child)
+    {
+        if (!child.HasExited)
+        {
+            child.Kill(entireProcessTree: true);
+        }
+
+        child.Dispose();
+    }
+
+    [Theory]
+    [InlineData(ProcessAction.Terminate)]
+    [InlineData(ProcessAction.Suspend)]
+    public void Refuses_the_svchost_that_hosts_a_service_service_control_refuses_to_stop(ProcessAction action)
+    {
+        // Every svchost is called svchost, so the name list never saw this one. Before, terminating the
+        // host of RpcSs by PID took RPC down -- and with it process_list and the service tools -- while
+        // service_control refused to stop RpcSs by name.
+        var child = StartIdleChild();
+        try
+        {
+            var probe = new FakeProtectionProbe { Services = { [child.Id] = ["Spooler", "RpcSs"] } };
+
+            var ex = Assert.Throws<ProcessControlException>(
+                () => Controller(probe).Control(child.Id, child.ProcessName, action, CancellationToken.None));
+
+            Assert.Contains("RpcSs", ex.Message);
+            Assert.DoesNotContain("Spooler", ex.Message);
+            Assert.Contains("Nothing has been done", ex.Message);
+            child.Refresh();
+            Assert.False(child.HasExited, "the host was ended despite the refusal");
+        }
+        finally
+        {
+            Reap(child);
+        }
+    }
+
+    [Fact]
+    public void Refuses_a_process_windows_marks_critical()
+    {
+        // The DcomLaunch host is one: ending it bugchecks the machine with CRITICAL_PROCESS_DIED.
+        var child = StartIdleChild();
+        try
+        {
+            var probe = new FakeProtectionProbe { Critical = true };
+
+            var ex = Assert.Throws<ProcessControlException>(
+                () => Controller(probe).Control(child.Id, child.ProcessName, ProcessAction.Terminate, CancellationToken.None));
+
+            Assert.Contains("CRITICAL_PROCESS_DIED", ex.Message);
+            child.Refresh();
+            Assert.False(child.HasExited, "a critical process was ended despite the refusal");
+        }
+        finally
+        {
+            Reap(child);
+        }
+    }
+
+    [Fact]
+    public void Refuses_when_it_cannot_tell_which_services_a_process_hosts()
+    {
+        // "Could not tell" is not "safe": acting anyway would be acting blind on exactly the processes the
+        // check exists for.
+        var child = StartIdleChild();
+        try
+        {
+            var probe = new FakeProtectionProbe { ServicesFailure = new System.ComponentModel.Win32Exception(5) };
+
+            var ex = Assert.Throws<ProcessControlException>(
+                () => Controller(probe).Control(child.Id, child.ProcessName, ProcessAction.Terminate, CancellationToken.None));
+
+            Assert.Contains("could not list the services", ex.Message);
+            child.Refresh();
+            Assert.False(child.HasExited);
+        }
+        finally
+        {
+            Reap(child);
+        }
+    }
+
+    [Fact]
+    public void Still_ends_a_process_that_hosts_only_ordinary_services()
+    {
+        // The refusal is for what the machine needs, not for every service host: a hung Spooler host is
+        // exactly what this tool is for.
+        var child = StartIdleChild();
+        try
+        {
+            var probe = new FakeProtectionProbe { Services = { [child.Id] = ["Spooler"] } };
+
+            var result = Controller(probe).Control(child.Id, child.ProcessName, ProcessAction.Terminate, CancellationToken.None);
+
+            Assert.Equal(ProcessAction.Terminate, result.Action);
+            Assert.True(child.WaitForExit(10_000), "the process was not ended");
+        }
+        finally
+        {
+            Reap(child);
+        }
+    }
+
+    [Fact]
+    public void Never_refuses_to_resume_a_protected_host()
+    {
+        // Resume is how a frozen host is thawed. Refusing it would turn a mistake the caller can undo into
+        // one nobody can. Off Windows the resume call itself cannot run; what matters is that no refusal
+        // came first and the probe was not even consulted.
+        var child = StartIdleChild();
+        try
+        {
+            var probe = new FakeProtectionProbe { Services = { [child.Id] = ["RpcSs"] }, Critical = true };
+
+            var ex = Record.Exception(
+                () => Controller(probe).Control(child.Id, child.ProcessName, ProcessAction.Resume, CancellationToken.None));
+
+            Assert.False(ex is ProcessControlException, ex?.Message);
+            Assert.Equal(0, probe.Calls);
+        }
+        finally
+        {
+            Reap(child);
+        }
+    }
+}
+
 public sealed class ServiceControlRefusalTests
 {
     private static WindowsServiceControllerAdapter Controller() =>
@@ -183,6 +338,24 @@ public sealed class ServiceControlRefusalTests
 
         Assert.Contains("core Windows service", ex.Message);
         Assert.Contains("Nothing has been done", ex.Message);
+    }
+
+    [Fact]
+    public void Refuses_to_stop_a_core_service_named_by_its_display_name()
+    {
+        // The SCM opens a service by display name as well, and the check used to compare only what the
+        // caller typed -- so "Remote Procedure Call (RPC)" stopped RpcSs. Read from the machine because
+        // display names are localised.
+        string display;
+        using (var rpc = new System.ServiceProcess.ServiceController("RpcSs"))
+        {
+            display = rpc.DisplayName;
+        }
+
+        var ex = Assert.Throws<ServiceControlException>(
+            () => Controller().Control(display, ServiceAction.Stop, CancellationToken.None));
+
+        Assert.Contains("core Windows service", ex.Message);
     }
 
     [Fact]

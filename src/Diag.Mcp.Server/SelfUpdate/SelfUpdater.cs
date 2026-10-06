@@ -17,8 +17,10 @@ namespace Diag.Mcp.Server.SelfUpdate;
 /// <para><strong>This is the most dangerous code in the project.</strong> It replaces an executable that
 /// runs elevated and starts it again, so a caller holding the bearer token could otherwise run anything
 /// as SYSTEM. Three things constrain it: the tool is not registered unless explicitly enabled, the
-/// caller must state the exact hash they expect, and a signed server will only accept a validly signed
-/// replacement.</para>
+/// caller must state the exact hash they expect, and each server's <see cref="IUpdateGuard"/> -- which
+/// differs by platform. On Windows a signed server accepts only a valid signature from its own
+/// publisher; MacDiag requires a Mach-O the Mac can run and, for arm64, a signature codesign verifies,
+/// ad hoc included; LinuxDiag requires an x86-64 ELF and checks no signature at all.</para>
 /// </remarks>
 public sealed class SelfUpdater : ISelfUpdater
 {

@@ -20,6 +20,8 @@ public sealed class ServiceControlTests
         public string? Id { get; init; }
         public string Extra { get; init; } = "";
         public string Dependents { get; init; } = "";
+        /// <summary>Replaces list-dependencies' whole answer, for a run that fails.</summary>
+        public ExternalResult? DependentsResult { get; init; }
         public ExternalResult Action { get; init; } = FakeCommands.Ok("");
         public bool TimesOut { get; init; }
         public List<IReadOnlyList<string>> Calls { get; } = [];
@@ -30,7 +32,7 @@ public sealed class ServiceControlTests
             Calls.Add(arguments);
             if (arguments.Contains("list-dependencies"))
             {
-                return FakeCommands.Ok(Dependents);
+                return DependentsResult ?? FakeCommands.Ok(Dependents);
             }
 
             if (arguments[0] == "show")
@@ -116,6 +118,29 @@ public sealed class ServiceControlTests
 
         Assert.Contains("would also stop ssh.service", ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(script.Calls, c => c.Contains("stop"));
+    }
+
+    [Theory]
+    [InlineData(ServiceAction.Stop)]
+    [InlineData(ServiceAction.Restart)]
+    public async Task A_stop_whose_dependents_cannot_be_listed_is_refused_rather_than_run_blind(ServiceAction action)
+    {
+        // list-dependencies can exit non-zero with empty or partial output - a D-Bus timeout on a loaded machine,
+        // or one unit's properties failing part-way through the --all walk. Read as "no dependents", that let a
+        // stop through that took ssh.service or this server down with it: an unknown list cannot be shown to be
+        // free of critical units.
+        var script = new Scripted
+        {
+            DependentsResult = new ExternalResult(1, "", "Failed to get properties: Connection timed out\n"),
+        };
+
+        var ex = await Assert.ThrowsAsync<ServiceControlException>(() =>
+            Controller(script.Commands, self: "linuxdiag.service").ControlAsync("app", action, CancellationToken.None));
+
+        Assert.Contains("could not list the services that depend on it", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Connection timed out", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing has been done", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(script.Calls, c => c.Contains("stop") || c.Contains("restart"));
     }
 
     [Theory]
