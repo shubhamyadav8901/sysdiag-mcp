@@ -165,4 +165,15 @@ public sealed class ProtectedAclTests
         adminOnly.AddAccessRule(ProtectedAcl.ServiceAccountRule(networkService));
         Assert.True(ProtectedAcl.GrantsServiceAccount(adminOnly, networkService));
     }
+
+    [Fact]
+    public void A_directory_above_that_others_can_change_is_refused_with_how_to_hand_its_ownership_to_administrators()
+    {
+        // Already restricted by hand but owned by an account outside the group, it was refused with "restrict
+        // it to administrators" -- which the operator had done -- and the owner, the actual cause, unnamed.
+        var remedy = ProtectedAcl.RedirectRemedy(@"D:\Ops");
+
+        Assert.Contains(@"icacls ""D:\Ops"" /setowner *S-1-5-32-544", remedy, StringComparison.Ordinal);
+        Assert.Contains("direct member of the local Administrators group", remedy, StringComparison.Ordinal);
+    }
 }

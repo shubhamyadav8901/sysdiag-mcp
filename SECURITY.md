@@ -57,7 +57,8 @@ follow from that, and which are deliberate rather than oversights:
   directory, and a folder made under `C:\` inherits *Authenticated Users: Modify*. The installer gives
   both directories a protected ACL and hands what they already hold to Administrators, working through
   handles opened without following links; it refuses a directory that is, or is reached through, a link,
-  one below a directory others could rename and replace, and one others can write that holds a link or
+  one below a directory others could rename and replace (above windiag's own directories, a direct member
+  of the local Administrators group counts as an administrator), and one others can write that holds a link or
   hard link. A service checks again on every start and refuses to run from one it cannot restrict. The
   bootstrap scripts create the directories restricted, and refuse, unchanged, one that already exists
   and is not. Restricting a directory a local user could already write does not undo what they did

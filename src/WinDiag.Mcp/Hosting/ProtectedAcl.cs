@@ -108,6 +108,27 @@ public static class ProtectedAcl
     internal static IReadOnlyCollection<SecurityIdentifier> Trusted(SecurityIdentifier? serviceAccount) =>
         serviceAccount is null ? [LocalSystem, Administrators, TrustedInstaller] : [LocalSystem, Administrators, TrustedInstaller, serviceAccount];
 
+    /// <summary>
+    /// <see cref="Trusted"/>, and every direct member of the local Administrators group: who may own or change
+    /// a directory above a server or artifact directory.
+    /// </summary>
+    /// <remarks>
+    /// <para>Wider than for the directory itself because windiag never changes the directories above, so
+    /// nothing it does can repair one. A <c>D:\Ops</c> locked to administrators by hand but made by the
+    /// built-in Administrator account is owned by that account, not the group, and under the group alone it
+    /// read as anybody's to rename: the service refused every start after update_self, which has no way
+    /// back. A member of the group can elevate and do anything SYSTEM can. What this gives up is that the
+    /// member's unelevated programs, which carry its own SID, could rename such a directory too -- a way
+    /// around UAC, which Microsoft does not hold to be a security boundary, and not a way in for anyone
+    /// who is not already an administrator.</para>
+    /// <para>Not for the directory itself or what it holds: those windiag restricts, and an ACE or owner that
+    /// is a user's own SID is also usable from that user's unelevated programs, which it costs nothing to
+    /// shut out there. See <see cref="LocalAdministrators"/> for why members reached through a domain group
+    /// are not counted.</para>
+    /// </remarks>
+    internal static IReadOnlyCollection<SecurityIdentifier> TrustedAbove(SecurityIdentifier? serviceAccount) =>
+        [.. Trusted(serviceAccount).Union(LocalAdministrators.Members())];
+
     /// <summary>Rights over a directory that let someone rename or remove it, or give themselves that right.</summary>
     internal const int RenameRights = GenericAll | (int)(
         FileSystemRights.Delete | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership);
@@ -154,6 +175,7 @@ public static class ProtectedAcl
         RefuseLinks(full);
 
         var trusted = Trusted(serviceAccount);
+        var above = TrustedAbove(serviceAccount);
         var found = new List<string>();
         var parentPath = Path.GetPathRoot(full)!;
         FileSystemSecurity? parent = null;
@@ -181,7 +203,7 @@ public static class ProtectedAcl
 
             if (parent is not null)
             {
-                found.AddRange(Exposures(parent, RemoveChildRights, trusted, "remove what is in")
+                found.AddRange(Exposures(parent, RemoveChildRights, above, "remove what is in")
                     .Select(e => $"{parentPath}, which holds {component}: {e}"));
             }
 
@@ -189,7 +211,7 @@ public static class ProtectedAcl
             {
                 if (own is not null)
                 {
-                    found.AddRange(Exposures(own, RenameRights, trusted, "rename or remove")
+                    found.AddRange(Exposures(own, RenameRights, above, "rename or remove")
                         .Select(e => $"{component}, on the way to it: {e}"));
                 }
 
@@ -546,7 +568,7 @@ public static class ProtectedAcl
                 + @"own, such as C:\WinDiag and C:\WinDiagArtifacts.");
         }
 
-        var trusted = Trusted(serviceAccount);
+        var above = TrustedAbove(serviceAccount);
         var acl = DirectoryAcl(serviceAccount, ownedByAdministrators);
         var descriptor = acl.GetSecurityDescriptorBinaryForm();
         var write = FileObjects.WriteDac | (ownedByAdministrators ? FileObjects.WriteOwner : 0);
@@ -562,7 +584,7 @@ public static class ProtectedAcl
 
             foreach (var component in Components(full))
             {
-                if (parent is not null && Exposures(parent, RemoveChildRights, trusted, "remove what is in") is { Count: > 0 } removable)
+                if (parent is not null && Exposures(parent, RemoveChildRights, above, "remove what is in") is { Count: > 0 } removable)
                 {
                     throw RedirectRefusal(parentPath, full, removable);
                 }
@@ -590,7 +612,7 @@ public static class ProtectedAcl
                 }
 
                 handle.Dispose();
-                if (!made && own is not null && Exposures(own, RenameRights, trusted, "rename or remove") is { Count: > 0 } renamable)
+                if (!made && own is not null && Exposures(own, RenameRights, above, "rename or remove") is { Count: > 0 } renamable)
                 {
                     throw RedirectRefusal(component, full, renamable);
                 }
@@ -633,8 +655,19 @@ public static class ProtectedAcl
         $"{directory} can be renamed or removed, or what it holds removed, by accounts other than SYSTEM and "
         + $"Administrators ({string.Join("; ", who)}), and {full} is {(Same(directory, full) ? "it" : "below it")}: "
         + "they could put a directory of their own in its place, and the service would then run, or write, "
-        + "whatever is there. Nothing below it was created or changed. Restrict it to administrators, or give "
-        + @"windiag directories whose every parent only administrators can change, such as C:\WinDiag and C:\WinDiagArtifacts.");
+        + "whatever is there. Nothing below it was created or changed. " + RedirectRemedy(directory));
+
+    /// <summary>What an operator does about a directory above windiag's that others can change; shared by both refusals.</summary>
+    /// <remarks>
+    /// Names the owner case on its own: a directory already restricted to administrators by hand still fails
+    /// when its owner is an account outside the group, or one in it only through a domain group, and "restrict
+    /// it" alone sent that operator round in circles.
+    /// </remarks>
+    internal static string RedirectRemedy(string directory) =>
+        $"Remove the rights the accounts named hold on {directory}; if one of them owns it, hand it to the "
+        + $"Administrators group (icacls \"{directory}\" /setowner *S-1-5-32-544) -- an account counts as an "
+        + "administrator here only as a direct member of the local Administrators group. Or give windiag "
+        + @"directories whose every parent only administrators can change, such as C:\WinDiag and C:\WinDiagArtifacts.";
 
     /// <summary>
     /// Hands each item the listed directory holds, at any depth, to Administrators, and replaces its ACL

@@ -708,7 +708,10 @@ it changed to the Application event log, and refuses to start from a directory i
 Either directory being a link — a junction, a symbolic link, a mounted folder — or being reached
 through one is refused: whoever made the link could point it somewhere else after the check. So is
 either directory sitting below one that someone else could rename or empty, such as a folder any user
-made under `C:\` — they could put a directory of their own in its place. One that others can write is
+made under `C:\` — they could put a directory of their own in its place. Above the two directories, a
+direct member of the local Administrators group counts as an administrator, so a folder the built-in
+Administrator made and owns is fine; an owner outside the group, or in it only through a domain group,
+is not, even when the ACL is restricted. One that others can write is
 refused, rather than taken over, if it holds a link or a hard link, since taking that over would change
 whatever it leads to; links only administrators can change, in a directory only they can write, are
 left alone. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
@@ -1157,7 +1160,7 @@ split is what lets the tool layer be tested with fakes and no live machine.
 |---|---|
 | `'handle.exe' was not found on this machine` | Sysinternals Suite is not installed. Native-backed tools still work. |
 | `'…\handle64.exe' is beside the server but is not signed by Microsoft` | The copy in the server's folder is damaged or was not Microsoft's. Replace it from `download.sysinternals.com` (or re-run `deploy-target.ps1`), or delete it to use an installed copy. |
-| A service refuses to start: `… can be renamed or removed, or what it holds removed, by accounts other than SYSTEM and Administrators` | The server's or the artifact directory sits below a directory someone else could rename and replace — typically a folder made under `C:\` or `D:\`, which every user inherits *Modify* on. Restrict that directory to administrators, or move windiag to `C:\WinDiag` and `--artifacts C:\WinDiagArtifacts`. The event log names the directory and who can change it. |
+| A service refuses to start: `… can be renamed or removed, or what it holds removed, by accounts other than SYSTEM and Administrators` | The server's or the artifact directory sits below a directory someone else could rename and replace — typically a folder made under `C:\` or `D:\`, which every user inherits *Modify* on, or one whose owner is an account outside the local Administrators group (an owner can grant itself any right, whatever the ACL says). The event log names the directory and who can change it. Remove the rights it names; if it says an account `owns it`, hand the directory to the group with `icacls <dir> /setowner *S-1-5-32-544`. Or move windiag to `C:\WinDiag` and `--artifacts C:\WinDiagArtifacts`. Then start the service again (`sc.exe \\<host> start <service>`): once its restart retries are spent it stays stopped, and nothing over port 4024 can reach it. |
 | `The owned directory '…' cannot be judged` on every `get_file` / `put_file` | The artifact directory or the server's folder sits under a folder a volume is mounted at (a data disk mounted at `C:\Data`), a junction to a device, or a relative symbolic link. .NET does not report where such a link really lands, so nothing under it can be judged owned. Move the directory: give the disk a drive letter and set `--artifacts` to a directory on that letter. |
 | `path_handle_search` warns about partial results | Not elevated. Restart the server from an elevated terminal. |
 | `who_locks_path` finds nothing on a file you know is locked | Expected: Restart Manager is not exhaustive. Run `path_handle_search`. |

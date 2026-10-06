@@ -34,6 +34,9 @@ internal static class PlantedTree
     /// </remarks>
     public static void OwnByAdministrators(string path) => Cmd($"icacls \"{path}\" /setowner *S-1-5-32-544 /L /Q");
 
+    /// <summary>Hands <paramref name="path"/> itself to <paramref name="owner"/>, which needs the restore privilege icacls enables.</summary>
+    public static void SetOwner(string path, SecurityIdentifier owner) => Cmd($"icacls \"{path}\" /setowner *{owner.Value} /L /Q");
+
     /// <summary>
     /// <paramref name="path"/> with every link in it resolved, so a test's own temporary directory does not
     /// read as reached through a link: on macOS it is under /var, which is one.
@@ -93,7 +96,7 @@ internal static class PlantedTree
         }
     }
 
-    private static void Cmd(string command)
+    internal static void Cmd(string command)
     {
         using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c {command}")
         {
@@ -353,6 +356,60 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
     }
 
     [ElevatedFact]
+    public void An_individual_administrator_is_trusted_above_windiags_directories_and_an_ordinary_user_is_not()
+    {
+        using var admin = new TemporaryLocalUser(administrator: true);
+        using var user = new TemporaryLocalUser(administrator: false);
+
+        Assert.Contains(admin.Sid, ProtectedAcl.TrustedAbove(serviceAccount: null));
+        Assert.DoesNotContain(user.Sid, ProtectedAcl.TrustedAbove(serviceAccount: null));
+
+        // Not in the directories themselves, which windiag restricts: there a user's own SID would also admit
+        // that user's unelevated programs.
+        Assert.DoesNotContain(admin.Sid, ProtectedAcl.Trusted(serviceAccount: null));
+    }
+
+    [ElevatedFact]
+    public void Accepts_a_directory_below_one_only_administrators_can_change_though_an_individual_administrator_owns_it()
+    {
+        // D:\Ops, locked to administrators by hand but made by the built-in Administrator on Windows Server,
+        // whose objects are owned by that account and not by the group. Judged by the group alone it read as
+        // that account's to rename, and the service refused every start after update_self, which has no way back.
+        using var admin = new TemporaryLocalUser(administrator: true);
+        var parent = NewDirectory();
+        ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
+        PlantedTree.SetOwner(parent, admin.Sid);
+        var path = Path.Combine(parent, "WinDiagArtifacts");
+
+        ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true);
+
+        Assert.True(Directory.Exists(path));
+        Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+        Assert.Equal(admin.Sid, Acl(parent).GetOwner(typeof(SecurityIdentifier)));
+    }
+
+    [ElevatedFact]
+    public void Refuses_a_directory_below_one_an_ordinary_user_owns_and_says_how_to_hand_it_to_administrators()
+    {
+        // The other side of the line above: an owner outside the Administrators group can grant itself any
+        // right, so restricting the ACL alone is not enough, and the refusal must say the owner is the cause.
+        using var user = new TemporaryLocalUser(administrator: false);
+        var parent = NewDirectory();
+        ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
+        PlantedTree.SetOwner(parent, user.Sid);
+        var path = Path.Combine(parent, "WinDiagArtifacts");
+
+        var ex = Assert.Throws<ConfigurationException>(() => ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true));
+
+        Assert.Contains($"{user.Name} owns it", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"icacls \"{parent}\" /setowner *S-1-5-32-544", ex.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(path));
+
+        Directory.CreateDirectory(path);
+        Assert.Contains(ProtectedAcl.DirectoryExposures(path, serviceAccount: null), e => e.StartsWith($"{parent}, on the way to it:", StringComparison.Ordinal));
+    }
+
+    [ElevatedFact]
     public void Neither_a_link_nor_a_hard_link_only_administrators_can_change_counts_against_a_protected_directory()
     {
         // A server directory beside Git for Windows' hard links, or holding a junction an administrator made,
@@ -602,4 +659,41 @@ public sealed class ReparsePointClassificationTests
         Assert.False(FileObjects.IsLink(Directory, 0));
         Assert.False(FileObjects.IsLink(0, 0));
     }
+}
+
+/// <summary>
+/// A local account made for one test, and deleted after it: an individual administrator, or an ordinary
+/// user, to own a directory the way one made on a real machine is owned.
+/// </summary>
+internal sealed class TemporaryLocalUser : IDisposable
+{
+    public TemporaryLocalUser(bool administrator)
+    {
+        // At most 20 characters, the SAM's limit for a name. The password is at most 14 so net user does not
+        // stop to ask whether to accept one older systems cannot use, and meets the default complexity rule.
+        Name = $"wdt{Guid.NewGuid():N}"[..15];
+        var password = "Aa1!" + Guid.NewGuid().ToString("N")[..10];
+        PlantedTree.Cmd($"net user {Name} {password} /add");
+        try
+        {
+            Sid = (SecurityIdentifier)new NTAccount(Environment.MachineName, Name).Translate(typeof(SecurityIdentifier));
+            if (administrator)
+            {
+                // By its localised name, looked up from the SID, as the server looks the group up.
+                var group = ProtectedAcl.Administrators.Translate(typeof(NTAccount)).Value.Split('\\')[^1];
+                PlantedTree.Cmd($"net localgroup \"{group}\" {Name} /add");
+            }
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+    }
+
+    public string Name { get; }
+
+    public SecurityIdentifier Sid { get; private set; } = null!;
+
+    public void Dispose() => PlantedTree.Cmd($"net user {Name} /delete");
 }
