@@ -190,27 +190,6 @@ public sealed class AutostartTests
         Directory.Delete(directory, recursive: true);
     }
 
-    [LinuxFact]
-    public void A_symlink_loop_in_a_users_wants_directory_is_reported_not_fatal()
-    {
-        // Final review: one self-referencing link made the whole default audit fail.
-        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ld-loop-{Guid.NewGuid():N}")).FullName;
-        try
-        {
-            var link = Path.Combine(directory, "loop.service");
-            File.CreateSymbolicLink(link, link);
-
-            var entry = LinuxAutostartInspector.UserUnitEntry(link, "someone", lingering: false);
-
-            Assert.Equal("loop.service", entry.Entry);
-            Assert.Null(entry.ImagePath);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
     [Fact]
     public void A_packaged_program_with_a_file_that_does_not_match_is_named_and_not_called_unpackaged()
     {

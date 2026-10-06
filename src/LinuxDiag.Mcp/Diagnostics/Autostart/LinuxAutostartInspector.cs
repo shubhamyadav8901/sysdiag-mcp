@@ -289,72 +289,11 @@ public sealed class LinuxAutostartInspector(
             : throw new ExternalCommandException($"systemctl {arguments[0]} failed: {result.StandardError.Trim()}");
     }
 
-    private static IEnumerable<AutostartEntry> UserUnits(List<string> limitations)
-    {
-        var accounts = Passwd.Entries(ReadConfiguration(ProcFiles.Passwd));
-        var places = new List<(string? User, string? Home, string Directory)> { (null, null, "/etc/systemd/user") };
-        places.AddRange(accounts.Where(a => a.Home.Length > 1).Select(a => ((string?)a.Name, (string?)a.Home, Path.Combine(a.Home, ".config/systemd/user"))));
-        var unreadable = 0;
-        foreach (var (user, home, directory) in places)
-        {
-            IEnumerable<string> links;
-            try
-            {
-                // Directory.Exists says false for a directory behind one the server cannot search, so an
-                // unreadable home is looked for explicitly rather than read as "no user units".
-                if (!Directory.Exists(directory))
-                {
-                    if (home is not null && Directory.Exists(home))
-                    {
-                        _ = Directory.EnumerateFileSystemEntries(home).Any();
-                    }
-
-                    continue;
-                }
-
-                links = Directory.EnumerateDirectories(directory, "*.wants").SelectMany(Directory.EnumerateFileSystemEntries).ToList();
-            }
-            catch (UnauthorizedAccessException)
-            {
-                unreadable++;
-                continue;
-            }
-
-            var lingering = user is not null && File.Exists(Path.Combine("/var/lib/systemd/linger", user));
-            foreach (var link in links)
-            {
-                yield return UserUnitEntry(link, user, lingering);
-            }
-        }
-
-        if (unreadable > 0)
-        {
-            limitations.Add($"{unreadable} home directories could not be read, so those users' units are missing; run the server as root.");
-        }
-    }
-
-    /// <summary>One link in a user's *.wants directory, and the unit file it leads to.</summary>
-    internal static AutostartEntry UserUnitEntry(string link, string? user, bool lingering)
-    {
-        // A link loop or a dangling link is the user's to make; it names the entry rather than failing the audit.
-        string target;
-        try
-        {
-            target = LibC.RealPath(link) ?? link;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            target = link;
-        }
-
-        var execStart = ReadConfiguration(target).Split('\n').Select(l => l.Trim())
-            .FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?[10..].TrimStart('-', '@', '+', '!', ':');
-        var (program, script) = execStart is null ? (null, null) : LaunchCommand.Split(execStart);
-        return new AutostartEntry(
-            "userunits", target, Path.GetFileName(link), true, user ?? "(every user)",
-            user is null ? "starts at every user's login" : lingering ? "starts at boot (lingering)" : "starts at the user's login",
-            program, execStart, script, [], null, null, [], program is not null && program.StartsWith('/') && !File.Exists(program));
-    }
+    private static IEnumerable<AutostartEntry> UserUnits(List<string> limitations) =>
+        Autostart.UserUnits.Reading().Audit(
+            Passwd.Entries(ReadConfiguration(ProcFiles.Passwd)),
+            user => File.Exists(Path.Combine("/var/lib/systemd/linger", user)),
+            limitations);
 
     private static IEnumerable<AutostartEntry> Cron(List<string> limitations)
     {
