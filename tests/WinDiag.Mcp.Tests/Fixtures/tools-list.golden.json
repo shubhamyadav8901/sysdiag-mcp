@@ -2,7 +2,7 @@
   {
     "name": "autostart_audit",
     "title": "What starts on its own",
-    "description": "List what is configured to run without anybody starting it - services, drivers, logon items, scheduled tasks, Explorer and Office add-ins, image hijacks - with the file each one points at and who signed it. Use it when something runs that should not, when an uninstall left a hook behind, or when an add-in loads a build you did not ship. categories takes one or more of: all, boot, codecs, appinit, explorer, gadgets, imagehijacks, internetexplorer, knowndlls, logon, wmi, winsock, office, printmonitors, lsaproviders, services, scheduledtasks, winlogon, storeapps. Signature verification is off by default because it costs an Authenticode check per entry and there are hundreds; unsignedOnly turns it on and returns only what failed, which is usually the fastest route to an answer - measured at 59s for every category on a lab VM. Entries whose target file is missing are marked [FILE NOT FOUND]: usually an uninstall that left its hook behind, but also what a hijack looks like before the replacement is dropped in.",
+    "description": "List what is configured to run without anybody starting it - services, drivers, logon items, scheduled tasks, Explorer and Office add-ins, image hijacks - with the file each one points at and who signed it. Every user\u0027s profile is scanned, and a per-user entry names whose it is. Use it when something runs that should not, when an uninstall left a hook behind, or when an add-in loads a build you did not ship. categories takes one or more of: all, boot, codecs, appinit, explorer, gadgets, imagehijacks, internetexplorer, knowndlls, logon, wmi, winsock, office, printmonitors, lsaproviders, services, scheduledtasks, winlogon, storeapps. Signature verification is off by default because it costs an Authenticode check per entry and there are hundreds; unsignedOnly turns it on and returns only what failed, which is usually the fastest route to an answer - measured at 59s for every category on a lab VM. Entries whose target file is missing are marked [FILE NOT FOUND]: usually an uninstall that left its hook behind, but also what a hijack looks like before the replacement is dropped in.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -148,6 +148,10 @@
               "type": "integer"
             },
             "missingImageCount": {
+              "type": "integer",
+              "default": 0
+            },
+            "malformedRowCount": {
               "type": "integer",
               "default": 0
             }
