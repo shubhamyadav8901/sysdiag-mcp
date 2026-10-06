@@ -828,6 +828,13 @@
               },
               "sha256": {
                 "type": "string"
+              },
+              "signerSubject": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
               }
             },
             "required": [

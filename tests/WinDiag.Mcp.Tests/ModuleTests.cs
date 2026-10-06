@@ -469,5 +469,8 @@ public sealed class ModuleReplacedOnDiskTests
                     null, null, null, null, null, null, 1, DateTimeOffset.UnixEpoch, "00")).ToList(),
                 []);
         }
+
+        public FileSignature InspectHeld(string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("module verification never holds a file");
     }
 }
