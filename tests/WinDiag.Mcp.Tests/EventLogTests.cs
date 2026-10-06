@@ -245,11 +245,14 @@ public sealed class EventLogRenderingTests
 
     private static void AssertInert(string summary)
     {
-        var lines = summary.Replace(Environment.NewLine, "\n", StringComparison.Ordinal).Split('\n');
+        // Render ends its own lines with AppendLine, which writes "\r\n" on Windows. Checking the raw summary
+        // for '\r' failed every multi-line summary on CI's Windows runner while passing on Linux and macOS, so
+        // the platform's line ending is taken out first and only a CR the payload smuggled in is left to find.
+        var text = summary.Replace(Environment.NewLine, "\n", StringComparison.Ordinal);
 
-        Assert.DoesNotContain(lines, line => line.TrimStart().StartsWith("FORGED", StringComparison.Ordinal));
-        Assert.DoesNotContain('\u001b', summary);
-        Assert.DoesNotContain('\u202e', summary);
-        Assert.DoesNotContain('\r', summary);
+        Assert.DoesNotContain(text.Split('\n'), line => line.TrimStart().StartsWith("FORGED", StringComparison.Ordinal));
+        Assert.DoesNotContain('\u001b', text);
+        Assert.DoesNotContain('\u202e', text);
+        Assert.DoesNotContain('\r', text);
     }
 }
