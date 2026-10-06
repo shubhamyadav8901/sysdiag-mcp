@@ -825,14 +825,14 @@ $c = Get-Credential
 ```
 
 Neither script puts a secret on a command line. The token reaches the installer on `--token-stdin` —
-piped through the WinRM session, or, for PsExec, from a file in the install directory that is deleted
-as soon as the installer returns — and `bootstrap-target.ps1` opens its `IPC$` session in-process
-rather than through `net use`, whose command line would carry the password. Both restrict `-RemotePath`
-and `-ArtifactPath` (default `C:\WinDiag` and `C:\WinDiagArtifacts`) to SYSTEM and Administrators
-before anything is copied into them, since a folder made under `C:\` is writable by every user. A
-directory that already exists has everything in it handed to Administrators as well, with a warning
-naming what it held, and one that is, is reached through, or contains a link (a hard link included) is
-refused.
+piped through the WinRM session, or, for PsExec, from a file in the install directory, named afresh
+for each run, created readable only by SYSTEM and Administrators, and deleted as soon as the installer
+returns — and `bootstrap-target.ps1` opens its `IPC$` session in-process rather than through `net use`,
+whose command line would carry the password. Both restrict `-RemotePath` and `-ArtifactPath` (default
+`C:\WinDiag` and `C:\WinDiagArtifacts`) to SYSTEM and Administrators before anything is copied into
+them, since a folder made under `C:\` is writable by every user. A directory that already exists has
+everything in it handed to Administrators as well, with a warning naming what it held, and one that
+is, is reached through, or contains a link (a hard link included) is refused.
 
 Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over

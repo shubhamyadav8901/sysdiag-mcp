@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Defines Protect-WinDiagDirectory, shared by the Windows deploy and bootstrap scripts. Dot-source it.
+    Defines Protect-WinDiagDirectory, shared by the Windows deploy and bootstrap scripts, and
+    New-WinDiagRestrictedFile, which bootstrap-target.ps1 uses for the token. Dot-source it.
 
 .DESCRIPTION
     The directories windiag runs from are not safe by default. A folder made under C:\ -- the scripts'
@@ -163,5 +164,49 @@ function Protect-WinDiagDirectory {
                 'handle opened on it before keeps its access until it is closed: staging replaces windiag''s ' +
                 'own files; remove anything else, and restart the target if in doubt.')
         }
+    }
+}
+
+function New-WinDiagRestrictedFile {
+    <#
+    .SYNOPSIS
+        Creates a file that only SYSTEM and Administrators can open, and writes Content into it.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $Content
+    )
+
+    # For the token on its way to the installer, and the .cmd that SYSTEM runs to feed it in. The ACL is
+    # part of the create, not set after it, so no handle can be opened on the file before it is restricted
+    # -- and an open handle keeps the access it was opened with whatever the ACL later says. CreateNew, so
+    # a file or link already at this name fails the run instead of being written into: one a user left
+    # there would be theirs, and so would the token. Callers name the file afresh for each run, so nobody
+    # can have been waiting at the name.
+    $security = New-Object System.Security.AccessControl.FileSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
+    foreach ($sid in 'S-1-5-18', 'S-1-5-32-544') {   # SYSTEM, Administrators
+        $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule (
+            (New-Object System.Security.Principal.SecurityIdentifier $sid), 'FullControl', 'Allow')))
+    }
+
+    $rights = [System.Security.AccessControl.FileSystemRights]::Write
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        Add-Type -AssemblyName System.IO.FileSystem.AccessControl
+        $stream = [System.IO.FileSystemAclExtensions]::Create([System.IO.FileInfo] $Path, [System.IO.FileMode]::CreateNew,
+            $rights, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::None, $security)
+    }
+    else {
+        $stream = New-Object System.IO.FileStream ($Path, [System.IO.FileMode]::CreateNew, $rights,
+            [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::None, $security)
+    }
+
+    try {
+        $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($Content)
+        $stream.Write($bytes, 0, $bytes.Length)
+    }
+    finally {
+        $stream.Dispose()
     }
 }

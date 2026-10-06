@@ -168,6 +168,57 @@ public sealed class BootstrapAclScriptTests
         }
     }
 
+    [ElevatedFact]
+    public void The_token_file_is_created_readable_only_by_system_and_administrators_from_its_first_byte()
+    {
+        // bootstrap-target writes the fleet token into the install directory for --token-stdin. Created and
+        // then restricted, or inheriting from a directory a user could once write, it could be opened in
+        // between -- and an open handle keeps its access whatever the ACL becomes.
+        var directory = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            var file = Path.Combine(directory, "install-token-test.tmp");
+
+            var (exit, output) = RunPowerShell($"New-WinDiagRestrictedFile -Path '{Quote(file)}' -Content 'the-token'");
+
+            Assert.True(exit == 0, output);
+            Assert.Equal("the-token", File.ReadAllText(file));
+            var acl = new FileInfo(file).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+            Assert.True(acl.AreAccessRulesProtected);
+            Assert.Equal(ProtectedAcl.Administrators, acl.GetOwner(typeof(SecurityIdentifier)));
+            Assert.Equal(
+                new HashSet<SecurityIdentifier> { ProtectedAcl.LocalSystem, ProtectedAcl.Administrators },
+                acl.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+                    .Cast<FileSystemAccessRule>().Select(r => (SecurityIdentifier)r.IdentityReference).ToHashSet());
+        }
+        finally
+        {
+            PlantedTree.Remove(directory);
+        }
+    }
+
+    [ElevatedFact]
+    public void The_token_file_is_never_written_into_a_file_already_at_its_name()
+    {
+        // A file left at the name, by a user who could write the directory before it was restricted, is
+        // theirs: writing the token into it, as WriteAllText did, handed them the token.
+        var directory = PlantedTree.UnderSystemDriveRoot();
+        try
+        {
+            var file = Path.Combine(directory, "install-token-test.tmp");
+            File.WriteAllText(file, "planted");
+
+            var (exit, _) = RunPowerShell($"New-WinDiagRestrictedFile -Path '{Quote(file)}' -Content 'the-token'");
+
+            Assert.NotEqual(0, exit);
+            Assert.Equal("planted", File.ReadAllText(file));
+        }
+        finally
+        {
+            PlantedTree.Remove(directory);
+        }
+    }
+
     /// <summary>Each item's owner, whether it inherits, and its explicit and inherited ACEs, by path below <paramref name="root"/>.</summary>
     private static string Describe(string root) =>
         string.Join(
@@ -198,7 +249,13 @@ public sealed class BootstrapAclScriptTests
         Assert.True(exit == 0, $"exit {exit}: {output}");
     }
 
-    private static (int Exit, string Output) RunScript(string path)
+    private static (int Exit, string Output) RunScript(string path) =>
+        RunPowerShell($"Protect-WinDiagDirectory -Path '{Quote(path)}' 3>$null");
+
+    private static string Quote(string value) => value.Replace("'", "''");
+
+    /// <summary>Runs <paramref name="command"/> in Windows PowerShell with tools/windiag-acl.ps1 dot-sourced.</summary>
+    private static (int Exit, string Output) RunPowerShell(string command)
     {
         var script = ScriptPath();
         var start = new ProcessStartInfo("powershell.exe")
@@ -217,7 +274,7 @@ public sealed class BootstrapAclScriptTests
                      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
                      // The refusal's own text, unwrapped: PowerShell's error view wraps at the console width,
                      // which can split the very words a test looks for.
-                     $"$ErrorActionPreference = 'Stop'; try {{ . '{script.Replace("'", "''")}'; Protect-WinDiagDirectory -Path '{path.Replace("'", "''")}' 3>$null }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}",
+                     $"$ErrorActionPreference = 'Stop'; try {{ . '{Quote(script)}'; {command} }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}",
                  })
         {
             start.ArgumentList.Add(arg);
