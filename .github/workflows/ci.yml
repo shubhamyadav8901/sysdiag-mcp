@@ -64,6 +64,9 @@ jobs:
         run: |
           dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x64 `
             --self-contained -p:PublishSingleFile=false -o artifacts/ci-publish-check
+          # pwsh judges a native command only by the last one in the block; a failed publish must stop
+          # here rather than be reported as a missing assembly.
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
           $required = 'System.Threading.AccessControl.dll', 'System.Diagnostics.EventLog.dll'
           $missing = $required | Where-Object { -not (Test-Path "artifacts/ci-publish-check/$_") }
           if ($missing) {
@@ -138,6 +141,7 @@ jobs:
         shell: pwsh
         run: |
           dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -o artifacts/macdiag-smoke
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
           codesign --verify artifacts/macdiag-smoke/MacDiag.Mcp
           if ($LASTEXITCODE -ne 0) { throw 'the published arm64 binary is not validly signed' }
           'smoke-token' | sudo artifacts/macdiag-smoke/MacDiag.Mcp --install-service --http http://127.0.0.1:4025 --token-stdin --allow-self-update
@@ -183,6 +187,7 @@ jobs:
           # update_self end to end: a second build with different bytes, staged in chunks, installed through launchd.
           dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true `
             -p:InformationalVersion=0.0.0-update-smoke -o artifacts/macdiag-smoke2
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish of the update build failed ($LASTEXITCODE)" }
           $bytes = [IO.File]::ReadAllBytes('artifacts/macdiag-smoke2/MacDiag.Mcp')
           $sha = (Get-FileHash artifacts/macdiag-smoke2/MacDiag.Mcp -Algorithm SHA256).Hash
           $staged = '/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp.new'
@@ -241,6 +246,8 @@ jobs:
           $rid = if ($IsMacOS) { 'osx-arm64' } else { 'linux-x64' }
           dotnet publish src/DiagRelay.Mcp -c Release -r $rid --self-contained -p:PublishSingleFile=false `
             -o artifacts/relay-k1
+          # Without this a publish that failed part-way leaves no ASP.NET Core files and passes the check.
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
           $web = Get-ChildItem artifacts/relay-k1 -Filter 'Microsoft.AspNetCore*'
           if ($web) { throw "The relay's publish set contains ASP.NET Core: $($web.Name -join ', ')" }
           Write-Host "relay publish set: no ASP.NET Core"

@@ -27,11 +27,17 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Build and test
-        run: |
-          dotnet build -warnaserror
-          dotnet test tests/WinDiag.Mcp.Tests --no-build
-          dotnet test tests/DiagRelay.Mcp.Tests --no-build
+      # One dotnet command per step. A multi-line run block on a Windows runner is pwsh, which fails the
+      # step on the LAST command's exit code only: a red WinDiag suite followed by a green relay suite
+      # published the build anyway.
+      - name: Build
+        run: dotnet build -warnaserror
+
+      - name: Test WinDiag
+        run: dotnet test tests/WinDiag.Mcp.Tests --no-build
+
+      - name: Test the relay
+        run: dotnet test tests/DiagRelay.Mcp.Tests --no-build
 
       # Self-contained and single-file: a target is a machine with no .NET SDK and often no way to
       # install one. Compression roughly halves the payload for a slow link to a lab VM.
@@ -79,10 +85,12 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Build and test
-        run: |
-          dotnet build tests/DiagRelay.Mcp.Tests -warnaserror
-          dotnet test tests/DiagRelay.Mcp.Tests --no-build
+      # One dotnet command per step, for the reason the publish job gives: this matrix has a Windows leg.
+      - name: Build
+        run: dotnet build tests/DiagRelay.Mcp.Tests -warnaserror
+
+      - name: Test
+        run: dotnet test tests/DiagRelay.Mcp.Tests --no-build
 
       - name: Publish ${{ matrix.rid }}
         run: >
@@ -119,13 +127,19 @@ jobs:
           dotnet-version: '9.0.x'
 
       # The kit's tests are built explicitly: LinuxDiag's test project links the kit's guards as source and
-      # does not reference the kit's test project, so `--no-build` would find nothing to run.
-      - name: Build and test
-        run: |
-          dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
-          dotnet build tests/LinuxDiag.Mcp.Tests -warnaserror
-          dotnet test tests/Diag.Mcp.Server.Tests --no-build
-          dotnet test tests/LinuxDiag.Mcp.Tests --no-build
+      # does not reference the kit's test project, so `--no-build` would find nothing to run. One dotnet
+      # command per step, so a failure cannot hide behind the default shell's rules; see the publish job.
+      - name: Build the server kit
+        run: dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
+
+      - name: Build LinuxDiag
+        run: dotnet build tests/LinuxDiag.Mcp.Tests -warnaserror
+
+      - name: Test the server kit
+        run: dotnet test tests/Diag.Mcp.Server.Tests --no-build
+
+      - name: Test LinuxDiag
+        run: dotnet test tests/LinuxDiag.Mcp.Tests --no-build
 
       - name: Publish linux-x64
         run: >
@@ -166,12 +180,18 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Build and test
-        run: |
-          dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
-          dotnet build tests/MacDiag.Mcp.Tests -warnaserror
-          dotnet test tests/Diag.Mcp.Server.Tests --no-build
-          dotnet test tests/MacDiag.Mcp.Tests --no-build
+      # One dotnet command per step; see the publish job.
+      - name: Build the server kit
+        run: dotnet build tests/Diag.Mcp.Server.Tests -warnaserror
+
+      - name: Build MacDiag
+        run: dotnet build tests/MacDiag.Mcp.Tests -warnaserror
+
+      - name: Test the server kit
+        run: dotnet test tests/Diag.Mcp.Server.Tests --no-build
+
+      - name: Test MacDiag
+        run: dotnet test tests/MacDiag.Mcp.Tests --no-build
 
       - name: Publish ${{ matrix.rid }}
         run: >
