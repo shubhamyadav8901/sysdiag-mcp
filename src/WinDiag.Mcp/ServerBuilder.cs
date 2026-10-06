@@ -65,7 +65,10 @@ public static class ServerBuilder
           --account <spec>            LocalSystem (default), NetworkService, LocalService, or
                                       DOMAIN\user with --password
           --password <value>          Required for an account that is not built in
-          --token <value>             Default: a new 256-bit token, printed once on success
+          --token-stdin               Read the token from standard input, so it never appears on
+                                      this machine's command line. Needs an elevated terminal
+          --token <value>             Default: a new 256-bit token, printed once on success.
+                                      Visible in process listings while the installer runs
           --artifacts <dir>           Pin WINDIAG_ARTIFACT_DIR. As SYSTEM, %TEMP% is
                                       C:\Windows\SystemTemp, so captures and dumps move without it
           --allow-self-update         Carry the grants across; a service registered without them
@@ -77,8 +80,15 @@ public static class ServerBuilder
                                       uninstall. Scoped to an address, never a subnet
           --no-restart-on-failure     Default is to let the SCM restart it if the process dies
 
-          The token is written to the service's own registry key, which only SYSTEM and
-          Administrators can read -- never to a machine-wide variable, which every local user can.
+          An option not listed here is refused, and nothing is installed. So is an option whose value
+          is missing, empty or another option (--token --read-only).
+
+          The token is written to the service's own registry key, which the installer first restricts
+          to SYSTEM and Administrators -- never to a machine-wide variable, which every local user can
+          read. The server's own directory and --artifacts are restricted the same way when anyone
+          else can write them, because the service runs what it finds there; install from a directory
+          of its own, since one that also holds other files is refused instead. A service also checks
+          on every start, restricts what it can, and refuses to start from a directory it cannot.
 
           Each grant flag above becomes its WINDIAG_* variable (below) in that same per-service key:
           --allow-self-update -> WINDIAG_ALLOW_SELF_UPDATE=1, and so on. Flags and variables are two
@@ -115,9 +125,13 @@ public static class ServerBuilder
           WINDIAG_TOKEN                           Bearer token for HTTP. Generated and printed if unset.
           WINDIAG_ARTIFACT_DIR                    Where dumps and traces are written (default: %TEMP%\windiag)
 
-        HTTP mode always requires a bearer token. The token is read from the environment only, never
-        from a command-line argument, because this server's own process_list exposes command lines to
-        every local user on the machine.
+        Started by hand, the server takes --http and nothing else: the grants are WINDIAG_*
+        variables, and --read-only or --allow-* on that command line is refused rather than ignored.
+
+        HTTP mode always requires a bearer token. The running server reads it from the environment
+        only, never from a command-line argument, because this server's own process_list exposes
+        command lines to every local user on the machine. For the same reason the installer takes it
+        best through --token-stdin; --token puts it on the installer's command line while it runs.
 
         Diagnostics are written to stderr. In stdio mode, stdout carries the MCP protocol only.
         """;

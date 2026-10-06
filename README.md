@@ -699,6 +699,16 @@ That registers the service, configures the SCM to restart it if the process dies
 256-bit token and stores it where only SYSTEM and Administrators can read it, opens the port to one
 address, and starts it. The token is printed once, because it exists nowhere else a human can read.
 
+It also restricts the executable's directory and the `--artifacts` directory to SYSTEM and
+Administrators whenever anyone else can write them. That is not tidiness: the service runs the
+Sysinternals binaries it finds beside itself and `self-update.cmd` from the artifact directory as
+SYSTEM, and a folder made under `C:\` inherits *Authenticated Users: Modify*. A service repeats the
+check on every start — so a target installed by an older build is fixed by its next `update_self` —
+writes what it changed to the Application event log, and refuses to start from a directory it cannot
+restrict. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
+that also holds files that are not windiag's — a Downloads folder, a drive root — is refused rather
+than locked down under its owner.
+
 ```
 WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?
 WinDiag.Mcp.exe --uninstall-service   # removes the service, its token and its firewall rule
@@ -724,7 +734,8 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--start auto\|delayed\|demand` | Default `auto` |
 | `--account <spec>` | `LocalSystem` (default), `NetworkService`, `LocalService`, or `DOMAIN\user` with `--password` |
 | `--password <value>` | Required for an account that is not built in |
-| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
+| `--token-stdin` | Reads the token from standard input, so it never appears on the target's command line. Needs an already-elevated shell: stdin cannot cross the UAC prompt. The bootstrap scripts use this |
+| `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call. Prefer `--token-stdin`: a value here is in the installer's command line, which process auditing records |
 | `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. The directory must not be reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
 | `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
@@ -733,6 +744,13 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--read-only` | Drops every state-changing tool |
 | `--firewall-from <address>` | Opens the bind port inbound from one address, removed on uninstall. An address, never a subnet |
 | `--no-restart-on-failure` | Default is to let the SCM restart it if the process dies |
+
+An option not in this table is refused and nothing is installed, so a misspelt `--readonly` cannot
+quietly register a writable service. So is an option whose value is missing, empty or another option:
+Windows PowerShell 5.1 drops an empty `$tok` from `--token $tok`, and the grant after it would otherwise
+have become the token and still been granted. A server started by hand likewise takes only `--http`:
+its grants are the `WINDIAG_*` variables, and `--read-only` on that command line is refused rather than
+ignored.
 
 **Flags and environment variables are two spellings of one setting.** Each grant flag becomes its
 `WINDIAG_*` variable (see [Configuration](#configuration)) in the service's own registry key —
@@ -799,6 +817,15 @@ $c = Get-Credential
 .\tools\bootstrap-winrm.ps1 -Target host.example.com -Token $token -Grants All -Bind 'http://0.0.0.0:4024'
 ```
 
+Neither script puts a secret on a command line. The token reaches the installer on `--token-stdin` —
+piped through the WinRM session, or, for PsExec, from a file in the install directory that is deleted
+as soon as the installer returns — and `bootstrap-target.ps1` opens its `IPC$` session in-process
+rather than through `net use`, whose command line would carry the password. Both restrict `-RemotePath`
+and `-ArtifactPath` (default `C:\WinDiag` and `C:\WinDiagArtifacts`) to SYSTEM and Administrators
+before anything is copied into them, since a folder made under `C:\` is writable by every user. A
+directory that already exists has everything in it handed to Administrators as well, with a warning
+naming what it held, and one that is, or contains, a link is refused.
+
 Adding a target to the relay's `~/.sysdiag-targets.json` does **not** deploy or start anything; it
 only tells the relay where to connect to a server that is already listening. **Prefer hostnames over
 addresses in that file** for the same reason as the bind: a DHCP lease that moves breaks every entry
@@ -815,9 +842,18 @@ sc create windiagsvc binPath= "\"C:\WinDiag\WinDiag.Mcp.exe\" --http http://10.0
 **Put the token in the service's own environment, not a machine-wide variable.** A service has no
 console to inherit `WINDIAG_TOKEN` from, and the obvious fix is the wrong one: machine environment
 variables are readable by *every local user*, and with `run_command` or `update_self` enabled that
-token is code execution as SYSTEM. The per-service key is ACL'd to SYSTEM and Administrators:
+token is code execution as SYSTEM. **`sc create` does not protect the per-service key either** — it
+inherits the Services key's ACL, under which every local user can read its values — so restrict it to
+SYSTEM and Administrators *before* writing the token:
 
 ```powershell
+$acl = New-Object System.Security.AccessControl.RegistrySecurity
+$acl.SetAccessRuleProtection($true, $false)
+'S-1-5-18', 'S-1-5-32-544' | ForEach-Object {   # SYSTEM, Administrators
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.RegistryAccessRule (
+    [Security.Principal.SecurityIdentifier]$_), 'FullControl', 'ContainerInherit', 'None', 'Allow')) }
+Set-Acl -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc -AclObject $acl
+
 New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc `
   -Name Environment -PropertyType MultiString -Force -Value @(
     'WINDIAG_TOKEN=<paste a long random value>',
@@ -878,11 +914,18 @@ level through an ordinary tool call. The token is the whole boundary.
   management segment you already trust, and do not route it across one you do not. If you need
   confidentiality on the wire today, tunnel it — WireGuard, SSH, an mTLS proxy — rather than assuming
   the port being scoped is enough.
-- **The token is never accepted as a command-line argument.** This server's own `process_list` shows
-  command lines to every local user, so a `--token` switch would publish the credential to precisely
-  the audience it excludes. Environment variable only.
+- **The running server never takes the token as a command-line argument.** This server's own
+  `process_list` shows command lines to every local user, so a `--token` switch would publish the
+  credential to precisely the audience it excludes. Environment variable only. The installer's
+  `--token` is the one exception and is visible while the installer runs; `--token-stdin` is not, and
+  is what the bootstrap scripts use.
 - **There is no default bind address.** `--http` with no address and no `WINDIAG_HTTP_BIND` is a
   startup failure, not a guess.
+- **A service's directories and registry key are SYSTEM's and Administrators' alone.** The installer
+  restricts them, and a service re-checks on every start, restricting what it can and refusing to start
+  from a directory it cannot. A target installed before this was the case may have had its token read
+  by a local user: its first start on this build logs that to the Application event log, and the token
+  should then be changed.
 - **A hostname is a wildcard bind, and is warned about as one.** Kestrel's binder falls back to
   "any IP" for any host that is not an IP literal and is not `localhost` — so
   `--http http://target-vm:7777` listens on `0.0.0.0` while looking specific. Verified: that address

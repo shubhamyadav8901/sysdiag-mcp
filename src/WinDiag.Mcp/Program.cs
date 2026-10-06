@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
 using WinDiag.Mcp;
 using WinDiag.Mcp.Configuration;
@@ -26,23 +27,39 @@ if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--servic
 {
     try
     {
+        // Before elevation, so a typo is reported here rather than in a UAC window that closes on exit.
+        ServiceInstallOptions.CheckArguments(args);
+
         // The SCM refuses an unelevated caller, so ask Windows rather than failing at the first
         // sc.exe call with an access-denied nobody can act on.
         if (!ServiceInstaller.IsElevated())
         {
+            // The elevated copy is started through ShellExecute, which cannot hand it this process's
+            // standard input: it would read an empty stdin and refuse, after the operator had already
+            // approved the prompt.
+            if (args.Any(a => string.Equals(a, "--token-stdin", StringComparison.OrdinalIgnoreCase)))
+            {
+                Console.Error.WriteLine(
+                    "[windiag] --token-stdin needs an already-elevated terminal: standard input cannot be "
+                    + "passed through the UAC prompt. Nothing was changed.");
+                return 3;
+            }
+
             Console.Error.WriteLine("[windiag] this needs administrator rights; requesting elevation...");
             return ServiceInstaller.RelaunchElevated(args);
         }
 
         if (args.Any(a => a is "--service-status"))
         {
-            return ServiceInstaller.Status(ServiceName(args));
+            return ServiceInstaller.Status(ServiceInstallOptions.ManagedServiceName(args));
         }
 
         if (args.Any(a => a is "--uninstall-service"))
         {
-            return ServiceInstaller.Uninstall(
-                new ServiceInstallOptions { Name = ServiceName(args), Bind = "http://unused", Token = "unused" });
+            return ServiceInstaller.Uninstall(new ServiceInstallOptions
+            {
+                Name = ServiceInstallOptions.ManagedServiceName(args), Bind = "http://unused", Token = "unused"
+            });
         }
 
         return ServiceInstaller.Install(ServiceInstallOptions.Parse(args));
@@ -73,31 +90,35 @@ if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--servic
     }
 }
 
-static string ServiceName(string[] arguments)
-{
-    for (var i = 0; i < arguments.Length - 1; i++)
-    {
-        if (string.Equals(arguments[i], "--service-name", StringComparison.OrdinalIgnoreCase))
-        {
-            return arguments[i + 1];
-        }
-    }
-
-    return "windiag";
-}
-
 WinDiagOptions options;
 string? bind;
 try
 {
+    CommandLine.RejectUnknownServerArguments(args);
     options = WinDiagOptions.FromEnvironment();
     bind = CommandLine.ResolveHttpBind(args, options);
+
+    // Only under the SCM. A by-hand server runs as whoever started it, from wherever they put it, and
+    // re-ACLing a developer's bin directory on `dotnet run` would be a surprise with no security gain.
+    if (WindowsServiceHelpers.IsWindowsService())
+    {
+        ServiceHardening.Apply(options.ArtifactDirectory);
+    }
 }
 catch (ConfigurationException ex)
 {
     // Fail at startup rather than on the first tool call: a misconfigured server that answers
-    // questions is worse than one that refuses to start.
-    Console.Error.WriteLine($"[windiag] configuration error: {ex.Message}");
+    // questions is worse than one that refuses to start. As a service the event log is the only place
+    // anyone will read why.
+    if (WindowsServiceHelpers.IsWindowsService())
+    {
+        ServiceHardening.Refuse($"configuration error: {ex.Message}");
+    }
+    else
+    {
+        Console.Error.WriteLine($"[windiag] configuration error: {ex.Message}");
+    }
+
     return 2;
 }
 

@@ -62,6 +62,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
+. "$PSScriptRoot\windiag-acl.ps1"
+
 function Step { param($m) Write-Host "==> $m" -ForegroundColor Cyan }
 function Warn { param($m) Write-Host "    $m" -ForegroundColor Yellow }
 function Note { param($m) Write-Host "    $m" }
@@ -129,8 +131,11 @@ try {
         if (-not (Test-Path $f.Local)) { throw "Missing locally: $($f.Local)" }
     }
 
-    Invoke-Command -Session $session -ScriptBlock {
-        $null = New-Item -ItemType Directory -Path $using:RemotePath -Force
+    # Restricted to SYSTEM and Administrators before anything lands in them: under C:\ both would
+    # inherit "Authenticated Users: Modify", and the SYSTEM service runs what it finds there. The
+    # function is sent whole, because nothing from this repo exists on the target yet.
+    foreach ($directory in $RemotePath, $ArtifactPath) {
+        Invoke-Command -Session $session -ScriptBlock ${function:Protect-WinDiagDirectory} -ArgumentList $directory
     }
 
     # --- send, and verify every byte ---------------------------------------------------------------
@@ -161,7 +166,9 @@ try {
         '--artifacts'; $ArtifactPath
         '--firewall-from'; $FirewallFrom
     )
-    if ($Token) { $installArgs += @('--token', $Token) }
+    # On stdin, never as --token: an argument lands in the target's process-creation log and in
+    # windiag's own process_list, readable by the local users the token exists to keep out.
+    if ($Token) { $installArgs += '--token-stdin' }
     switch ($Grants) {
         'Standard' { $installArgs += @('--allow-self-update', '--allow-command-execution') }
         'All'      { $installArgs += @('--allow-self-update', '--allow-command-execution',
@@ -175,7 +182,13 @@ try {
     # the remote side merges the streams itself and hands back plain strings. Left to PowerShell's
     # remoting error stream instead, a successful install arrives as a pile of RemoteExceptions.
     $install = Invoke-Command -Session $session -ScriptBlock {
-        $out = & "$using:RemotePath\WinDiag.Mcp.exe" @using:installArgs 2>&1 | ForEach-Object { "$_" }
+        $exe = "$using:RemotePath\WinDiag.Mcp.exe"
+        $out = if ($using:Token) {
+            $using:Token | & $exe @using:installArgs 2>&1 | ForEach-Object { "$_" }
+        }
+        else {
+            & $exe @using:installArgs 2>&1 | ForEach-Object { "$_" }
+        }
         [pscustomobject]@{ Output = $out; ExitCode = $LASTEXITCODE }
     }
 

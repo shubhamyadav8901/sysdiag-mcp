@@ -39,15 +39,18 @@ public sealed class RequiresElevatedHandleExeFactAttribute : FactAttribute
 }
 
 /// <summary>A fact that reports itself as skipped unless the session is elevated.</summary>
-/// <remarks>For a test that must change the machine to set up its case, such as mounting a volume.</remarks>
-public sealed class RequiresElevationFactAttribute : FactAttribute
+/// <remarks>
+/// For tests that do what the installer does -- set an owner to Administrators, create a service -- and
+/// would otherwise fail unelevated with an access-denied that reads like a product bug.
+/// </remarks>
+public sealed class RequiresElevatedFactAttribute : FactAttribute
 {
-    public RequiresElevationFactAttribute()
+    public RequiresElevatedFactAttribute()
     {
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
         {
-            Skip = "Requires an elevated session.";
+            Skip = "Requires an elevated session, as --install-service does.";
         }
     }
 }

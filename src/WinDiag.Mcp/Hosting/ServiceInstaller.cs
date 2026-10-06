@@ -118,7 +118,23 @@ public static class ServiceInstaller
                 + "service will run without event log output. Tools are unaffected.");
         }
 
+        // Before the service exists, so a refusal leaves nothing registered. The server runs Sysinternals
+        // binaries from beside itself and self-update.cmd from the artifact directory, as SYSTEM; under
+        // C:\ both directories would otherwise inherit "Authenticated Users: Modify".
+        var account = ProtectedAcl.AccountSid(options.Account);
+        ProtectIfExposed("server directory", Path.GetDirectoryName(exe)!, account, ownedByWindiag: true);
+        if (!string.IsNullOrWhiteSpace(options.ArtifactDirectory))
+        {
+            // Not checked for foreign files: the operator named it for windiag's artifacts, and put_file
+            // writes there under any name a caller chooses.
+            ProtectIfExposed("artifact directory", options.ArtifactDirectory, account, ownedByWindiag: false);
+        }
+
         Run("sc.exe", options.CreateArguments(exe), "create the service");
+
+        // Restricted before the token is written, not after: sc.exe creates the key with the Services
+        // key's ACL, which lets every local user read its values, Environment included.
+        ProtectedAcl.ProtectServiceKey(options.Name);
 
         // Written after creation because the key does not exist until the service does.
         WriteEnvironment(options);
@@ -137,8 +153,15 @@ public static class ServiceInstaller
 
         Console.Error.WriteLine($"[windiag] installed '{options.Name}' and started it on {options.Bind}.");
 
+        // Printed so a grant that did not make it -- the failure mode the install flags have always had --
+        // is on the screen at the moment it can still be corrected.
+        Console.Error.WriteLine(
+            $"[windiag] read-only: {YesNo(options.ReadOnly)}; self-update: {YesNo(options.AllowSelfUpdate)}; "
+            + $"command execution: {YesNo(options.AllowCommandExecution)}; arbitrary write: "
+            + $"{YesNo(options.AllowArbitraryWrite)}; arbitrary read: {YesNo(options.AllowArbitraryRead)}.");
+
         // Printed once, here, because a generated token exists nowhere a human can read it: the
-        // registry value is ACL'd and the server never logs it. Losing it means reinstalling.
+        // registry key was restricted above and the server never logs it. Losing it means reinstalling.
         if (!options.TokenWasSupplied)
         {
             Console.Error.WriteLine();
@@ -212,6 +235,36 @@ public static class ServiceInstaller
         // the token is not casually readable, and printing it here would undo that.
         Console.Error.WriteLine($"  token     {(hasToken ? "configured (per-service key)" : "NOT configured")}");
 
+        // Installs made before the key was restricted are still out there, and this is the one command
+        // an operator runs on a target to ask how it is set up.
+        // Restricted here rather than left to the service: status runs elevated, while a service running as
+        // NetworkService or LocalService cannot change its own key's DACL, so "restart it" would leave the
+        // token readable for those accounts.
+        var exposed = ProtectedAcl.ServiceKeyExposures(serviceName);
+        if (exposed.Count == 0)
+        {
+            Console.Error.WriteLine("  key ACL   SYSTEM and Administrators only");
+        }
+        else
+        {
+            string outcome;
+            try
+            {
+                ProtectedAcl.ProtectServiceKey(serviceName);
+                outcome = ProtectedAcl.ServiceKeyExposures(serviceName).Count == 0
+                    ? "Restricted it to SYSTEM and Administrators now"
+                    : "Tried to restrict it, but it is still exposed";
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+            {
+                outcome = $"Could not restrict it ({ex.Message})";
+            }
+
+            Console.Error.WriteLine(
+                $"  key ACL   WARNING: {string.Join("; ", exposed)}. {outcome}. Any local user may already have "
+                + "the token: change it - --uninstall-service, then --install-service --token-stdin with a new one.");
+        }
+
         foreach (var value in environment.Where(v => !v.StartsWith("WINDIAG_TOKEN=", StringComparison.OrdinalIgnoreCase)))
         {
             Console.Error.WriteLine($"  env       {value}");
@@ -219,6 +272,51 @@ public static class ServiceInstaller
 
         key?.Dispose();
         return 0;
+    }
+
+    private static string YesNo(bool value) => value ? "yes" : "no";
+
+    /// <summary>Protects a directory only when someone other than an administrator can write it.</summary>
+    /// <remarks>
+    /// Conditional, so a server installed from Program Files keeps the ACL Windows gave it rather than
+    /// being rewritten to an equivalent one. The drive-root refusal lives in ProtectDirectory.
+    /// </remarks>
+    private static void ProtectIfExposed(
+        string what, string path, System.Security.Principal.SecurityIdentifier? account, bool ownedByWindiag)
+    {
+        var exposures = Directory.Exists(path) ? ProtectedAcl.DirectoryExposures(path, account) : [];
+        if (Directory.Exists(path) && exposures.Count == 0)
+        {
+            // Already restricted -- by the bootstrap scripts, or an earlier LocalSystem install -- but a service
+            // running as another account still needs its own ACE, or the SCM cannot start the image and the
+            // service cannot write its artifacts. Added to the ACL as it is: nothing else needs rewriting.
+            if (account is not null && account != ProtectedAcl.LocalSystem
+                && !ProtectedAcl.GrantsServiceAccount(new DirectoryInfo(path).GetAccessControl(System.Security.AccessControl.AccessControlSections.Access), account))
+            {
+                ProtectedAcl.GrantServiceAccount(path, account);
+                Console.Error.WriteLine($"[windiag] gave {account.Translate(typeof(System.Security.Principal.NTAccount))} access to the {what} {path}.");
+            }
+
+            return;
+        }
+
+        var foreign = ownedByWindiag && Directory.Exists(path)
+            ? ServiceInstallOptions.ForeignToServerDirectory(Directory.EnumerateFileSystemEntries(path).Select(e => Path.GetFileName(e)))
+            : [];
+        if (foreign.Count > 0)
+        {
+            throw new ConfigurationException(
+                $"The {what} {path} can be changed by accounts other than SYSTEM and Administrators "
+                + $"({string.Join("; ", exposures)}), and the service would run what it finds there with its "
+                + "own rights. It also holds files that are not windiag's "
+                + $"({string.Join(", ", foreign.Take(3))}{(foreign.Count > 3 ? ", ..." : string.Empty)}), so it "
+                + @"is not restricted for you: copy WinDiag.Mcp.exe into a directory of its own, such as C:\WinDiag, "
+                + "and install from there. Nothing was installed.");
+        }
+
+        // Elevated, so it can make Administrators the owner, which takes the directory from whoever made it.
+        ProtectedAcl.ProtectDirectory(path, account, ownedByAdministrators: true);
+        Console.Error.WriteLine($"[windiag] restricted the {what} {path} to SYSTEM and Administrators.");
     }
 
     private static bool Exists(string name) =>

@@ -218,4 +218,177 @@ public sealed class ServiceInstallationTests
         // services on one machine are indistinguishable in Services.msc.
         Assert.Equal("windiag-lab", Parse("--http", "http://x:1", "--service-name", "windiag-lab").DisplayName);
     }
+    [Fact]
+    public void Reads_a_pinned_token_from_standard_input_so_it_never_reaches_the_targets_command_line()
+    {
+        // The bootstrap scripts used to pass --token <value>, which lands in the target's process
+        // creation audit (event 4688), in PSEXESVC's command line, and in this server's own
+        // process_list -- one log reader then holds the fleet's token. stdin is in none of those.
+        var options = ServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://x:1", "--token-stdin"], new StringReader("  t0k  \r\nignored\r\n"));
+
+        Assert.Equal("t0k", options.Token);
+        Assert.True(options.TokenWasSupplied);
+    }
+
+    [Fact]
+    public void Refuses_an_empty_token_on_standard_input_rather_than_generating_one_nobody_sees()
+    {
+        // Generating one here would install a service whose token was printed into a pipe or a log, so
+        // the operator would hold a token the target does not accept and not know why every call 401s.
+        var ex = Assert.Throws<ConfigurationException>(() => ServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://x:1", "--token-stdin"], new StringReader("\r\n")));
+
+        Assert.Contains("--token-stdin", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Refuses_a_token_on_both_standard_input_and_the_command_line_rather_than_one_silently_winning()
+    {
+        var ex = Assert.Throws<ConfigurationException>(() => ServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://x:1", "--token-stdin", "--token", "other"], new StringReader("t0k\n")));
+
+        Assert.Contains("--token-stdin", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--readonly", "--read-only")]
+    [InlineData("--read_only", "--read-only")]
+    [InlineData("--allow-arbitary-read", null)]
+    [InlineData("--tokn", null)]
+    public void Refuses_an_install_option_it_does_not_know_rather_than_installing_without_it(string typo, string? suggestion)
+    {
+        // Ignored, `--readonly` installed and started a fully writable LocalSystem service -- put_file,
+        // service_control, process_kill -- with nothing on screen to say the restriction was dropped.
+        var ex = Assert.Throws<ConfigurationException>(() => Parse("--http", "http://x:1", typo));
+
+        Assert.Contains($"'{typo}'", ex.Message, StringComparison.Ordinal);
+        if (suggestion is not null)
+        {
+            Assert.Contains($"'{suggestion}'", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Refuses_an_option_whose_value_is_missing_rather_than_generating_a_token_in_its_place()
+    {
+        // A trailing `--token` used to be read as "no token given": the install generated one, and the
+        // relay's targets file -- holding the token the operator meant -- then 401'd on every call.
+        var ex = Assert.Throws<ConfigurationException>(() => Parse("--http", "http://x:1", "--token"));
+
+        Assert.Contains("--token", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--token", "--allow-command-execution")]
+    [InlineData("--token", "--read-only")]
+    [InlineData("--artifacts", "--read-only")]
+    [InlineData("--password", "--allow-self-update")]
+    [InlineData("--token", "")]
+    [InlineData("--account", " ")]
+    public void Refuses_an_option_whose_value_was_dropped_rather_than_taking_the_next_option_as_it(string option, string next)
+    {
+        // Windows PowerShell 5.1 drops an empty string argument to a native exe, so `--token $tok` with
+        // an empty $tok arrives as `--token --allow-command-execution`: read that way, the install had
+        // command execution granted AND a bearer token anyone could guess. An empty value is refused too,
+        // because PowerShell 7 does pass it, and a token of "" is no token at all.
+        var ex = Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", option, next, "--service-name", "w"));
+
+        Assert.Contains($"{option} needs a value", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Still_accepts_a_value_that_merely_begins_with_a_single_dash()
+    {
+        // Only "--" marks an option: every option windiag has is spelled that way, while a password or a
+        // pinned token is free to begin with one dash.
+        var options = Parse("--http", "http://x:1", "--token", "-abc123", "--account", @".\diag", "--password", "-p4ss");
+
+        Assert.Equal("-abc123", options.Token);
+        Assert.Equal("-p4ss", options.Password);
+    }
+
+    [Fact]
+    public void Refuses_an_option_given_twice_rather_than_silently_using_the_first()
+    {
+        var ex = Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", "--artifacts", @"C:", "--artifacts", @"C:"));
+
+        Assert.Contains("--artifacts", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Accepts_every_option_the_help_text_documents()
+    {
+        // The other half of refusing unknown options: a documented one refused would be a regression
+        // nobody could work around.
+        var options = ServiceInstallOptions.Parse(
+            [
+                "--install-service", "--http", "http://x:1", "--service-name", "n", "--display-name", "d",
+                "--start", "demand", "--account", "LocalService", "--token", "t", "--artifacts", @"C:",
+                "--firewall-from", "10.0.0.1", "--allow-self-update", "--allow-command-execution",
+                "--allow-arbitrary-write", "--allow-arbitrary-read", "--read-only", "--no-restart-on-failure"
+            ],
+            stdin: null);
+
+        Assert.True(options.ReadOnly);
+        Assert.False(options.RestartOnFailure);
+    }
+
+    [Fact]
+    public void Treats_a_directory_holding_only_windiag_files_as_its_own_and_anything_else_as_somebody_elses()
+    {
+        // The installer restricts the server's directory to SYSTEM and Administrators. Run from the
+        // Downloads folder -- the README does say "run it from any shell" -- that would take the user's
+        // own Downloads away from them, so a directory holding anything else is refused instead.
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
+        [
+            "WinDiag.Mcp.exe", "WinDiag.Mcp.new.exe", "handle64.exe", "Procmon64.exe", "autorunsc64.exe",
+            "handle.exe", "windiag-staged.json", "install-token.tmp", "install-windiag.cmd",
+
+            // The documented Procmon filter override, read from beside the server.
+            "windiag.pmc"
+        ]));
+
+        Assert.Equal(
+            ["holiday.jpg", "setup.msi"],
+            ServiceInstallOptions.ForeignToServerDirectory(["WinDiag.Mcp.exe", "holiday.jpg", "setup.msi"]));
+    }
+
+    [Fact]
+    public void Every_install_option_the_parser_accepts_is_documented_in_the_help_text()
+    {
+        // Now that an unknown option is refused, an accepted one missing from --help is an option nobody
+        // can discover -- and the operator's only recourse is reading this file.
+        foreach (var option in ServiceInstallOptions.InstallOptions)
+        {
+            Assert.Contains(option, ServerBuilder.HelpText, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("--uninstall-service")]
+    [InlineData("--service-status")]
+    public void Service_management_takes_only_a_service_name(string command)
+    {
+        Assert.Equal("lab", ServiceInstallOptions.ManagedServiceName([command, "--service-name", "lab"]));
+        Assert.Equal("windiag", ServiceInstallOptions.ManagedServiceName([command]));
+
+        // A typo here would otherwise act on the default service rather than the one meant -- and for
+        // uninstall that is deleting the wrong service.
+        var ex = Assert.Throws<ConfigurationException>(
+            () => ServiceInstallOptions.ManagedServiceName([command, "--servicename", "lab"]));
+        Assert.Contains("'--servicename'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'--service-name'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Refuses_two_service_commands_at_once()
+    {
+        Assert.Throws<ConfigurationException>(
+            () => ServiceInstallOptions.ManagedServiceName(["--service-status", "--uninstall-service"]));
+        Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", "--uninstall-service"));
+    }
 }

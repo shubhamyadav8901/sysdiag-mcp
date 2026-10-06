@@ -41,13 +41,22 @@ intended, documented, and the reason both are off unless a deployment explicitly
 The server runs elevated, so a local unprivileged user is inside the threat model too. Things that
 follow from that, and which are deliberate rather than oversights:
 
-- **The token is read from the environment only, never a command-line argument.** Each server's own
-  `process_list` shows command lines to every local user on the machine; a token passed as an
-  argument would be readable by the people it is meant to exclude.
+- **A running server reads the token from the environment only, never a command-line argument.** Each
+  server's own `process_list` shows command lines to every local user on the machine; a token passed as
+  an argument would be readable by the people it is meant to exclude. The installers accept `--token`
+  for convenience, which is visible while the installer runs; `--token-stdin` is not, and is what every
+  bootstrap script uses.
 - **As a Windows service, the token belongs in the service's own registry `Environment` value**, which
-  is ACL'd to SYSTEM and Administrators. A machine-wide environment variable is readable by every local
-  user and is *not* an acceptable substitute. LinuxDiag and MacDiag keep it in a root-owned `0600` env
-  file instead (`/etc/linuxdiag/linuxdiag.env`, `/etc/macdiag/<label>.env`).
+  `--install-service` restricts to SYSTEM and Administrators before writing it — `sc create` alone
+  leaves the key readable by every local user, and a service restricts its own key on start if it
+  finds it that way. A machine-wide environment variable is readable by every local user and is *not*
+  an acceptable substitute. LinuxDiag and MacDiag keep it in a root-owned `0600` env file instead
+  (`/etc/linuxdiag/linuxdiag.env`, `/etc/macdiag/<label>.env`).
+- **The directories a Windows service runs code from are writable only by SYSTEM and Administrators.**
+  The server runs Sysinternals binaries from beside itself and `self-update.cmd` from its artifact
+  directory, and a folder made under `C:\` inherits *Authenticated Users: Modify*. The installer and the
+  bootstrap scripts give both directories a protected ACL, and a service checks again on every start and
+  refuses to run from one it cannot restrict.
 - **There is no default bind address.** `--http` with nothing to bind to is refused rather than
   quietly listening on `0.0.0.0`.
 - **File access is confined** to directories the server owns, on both the read and write sides, through

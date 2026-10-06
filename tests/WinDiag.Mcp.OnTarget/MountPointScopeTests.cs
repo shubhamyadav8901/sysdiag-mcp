@@ -45,7 +45,7 @@ public sealed class MountPointScopeTests : IDisposable
         return output.Trim();
     }
 
-    [RequiresElevationFact]
+    [RequiresElevatedFact]
     public void Get_file_through_a_mount_of_the_system_volume_in_the_artifact_directory_needs_arbitrary_read()
     {
         var systemDrive = Path.GetPathRoot(Environment.SystemDirectory)!;
