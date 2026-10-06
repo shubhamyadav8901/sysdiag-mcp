@@ -133,7 +133,8 @@ public sealed class HandleExeInspector : IHandleInspector
             .RunAsync(executable, arguments, ExternalToolPolicy.ConsoleTool, cancellationToken)
             .ConfigureAwait(false);
 
-        var images = new PrintedImageWitness(before, _processes.Snapshot());
+        var printer = result.ProcessId is { } pid ? (pid, Path.GetFileName(result.Executable)) : ((int, string)?)null;
+        var images = new PrintedImageWitness(before, _processes.Snapshot(), ExternalToolRunner.ConsoleToolEncoding, printer);
 
         // handle.exe reports "no matches" via empty output, not an exit code, and writes access-denied
         // diagnostics to stdout alongside data. Only treat it as failed when nothing usable came back.

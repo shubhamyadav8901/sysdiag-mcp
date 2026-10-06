@@ -129,7 +129,7 @@ internal sealed class FakeAutostartInspector(AutostartAuditResult result) : IAut
 /// Asserting on <see cref="Invocations"/> is how the suite proves that no destructive switch can be
 /// composed -- checking the parsed result alone would pass even if the wrong flags were sent.
 /// </remarks>
-internal sealed class StubExternalToolRunner(string standardOutput = "", int exitCode = 0) : IExternalToolRunner
+internal sealed class StubExternalToolRunner(string standardOutput = "", int exitCode = 0, int? processId = null) : IExternalToolRunner
 {
     public List<(string Executable, IReadOnlyList<string> Arguments)> Invocations { get; } = [];
 
@@ -145,7 +145,7 @@ internal sealed class StubExternalToolRunner(string standardOutput = "", int exi
         Invocations.Add((executableName, argv));
 
         return Task.FromResult(new ExternalToolResult(
-            executableName, argv, exitCode, standardOutput, string.Empty, TimeSpan.Zero));
+            executableName, argv, exitCode, standardOutput, string.Empty, TimeSpan.Zero, processId));
     }
 }
 

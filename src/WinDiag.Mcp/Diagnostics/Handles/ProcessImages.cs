@@ -1,5 +1,8 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace WinDiag.Mcp.Diagnostics.Handles;
 
@@ -29,17 +32,124 @@ public interface IProcessTable
 /// after handle.exe exits, a process that had printed a row and exited could have its PID taken by one
 /// whose name is whatever the row said; read once before, a process could start, print and exit unseen.
 /// So the table is read on both sides of the run, and a row is confirmed only when its PID names the
-/// same process -- same creation time -- in both, under exactly the name printed.</para>
+/// same process -- same creation time -- in both, under the name printed.</para>
+/// <para>"The name printed" is the name as handle.exe could write it. It writes its pipe in the ANSI code
+/// page, and a character that page lacks arrives as '?', as a best-fit letter, or not at all -- which of
+/// these is not measured, so each run of such characters may be printed as up to as many characters, of
+/// any kind but a control character. Compared exactly, a process named in Chinese on a Western install was
+/// never confirmed, on any run, and cost every row printed before it. Every character the page has must
+/// match exactly. What makes a name whole is that it holds no line break, so a name holding a control
+/// character or a line or paragraph separator is never confirmed, whatever was printed for it.</para>
+/// <para>The search tool's own rows are the exception: it is in neither reading, since it starts after the
+/// first and is gone by the second, but its PID was its own for the whole run that printed the rows, and its
+/// name is the file the server started.</para>
 /// </remarks>
+/// <param name="console">The encoding handle.exe's output was decoded with.</param>
+/// <param name="printer">The PID and image name of the handle.exe run that printed the rows, when known.</param>
 internal sealed class PrintedImageWitness(
-    IReadOnlyDictionary<int, ProcessImage> before, IReadOnlyDictionary<int, ProcessImage> after)
+    IReadOnlyDictionary<int, ProcessImage> before,
+    IReadOnlyDictionary<int, ProcessImage> after,
+    Encoding console,
+    (int ProcessId, string ImageName)? printer = null)
 {
-    public bool IsWhole(int processId, string printedImage) =>
-        before.TryGetValue(processId, out var first) &&
-        after.TryGetValue(processId, out var last) &&
-        first == last &&
-        first.ImageName is { } name &&
-        string.Equals(name, printedImage, StringComparison.Ordinal);
+    private readonly Encoding _strict = Strict(console);
+    private readonly Dictionary<(int, string), bool> _answers = [];
+
+    public bool IsWhole(int processId, string printedImage)
+    {
+        if (printer is { } self && processId == self.ProcessId)
+        {
+            // A name the server chose, matched as Windows matches file names.
+            return string.Equals(printedImage, self.ImageName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!before.TryGetValue(processId, out var first) ||
+            !after.TryGetValue(processId, out var last) ||
+            first != last ||
+            first.ImageName is not { } name)
+        {
+            return false;
+        }
+
+        if (!_answers.TryGetValue((processId, printedImage), out var whole))
+        {
+            whole = CouldPrintAs(name, printedImage);
+            _answers[(processId, printedImage)] = whole;
+        }
+
+        return whole;
+    }
+
+    private bool CouldPrintAs(string name, string printed)
+    {
+        if (name.Any(BreaksALine))
+        {
+            return false;
+        }
+
+        if (string.Equals(name, printed, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // Each run of characters the page lacks becomes a bounded wildcard; everything else must be as named.
+        var pattern = new StringBuilder("^");
+        var missing = 0;
+        foreach (var rune in name.EnumerateRunes())
+        {
+            if (InCodePage(rune))
+            {
+                Flush();
+                pattern.Append(Regex.Escape(rune.ToString()));
+            }
+            else
+            {
+                missing += rune.Utf16SequenceLength;
+            }
+        }
+
+        Flush();
+        pattern.Append('$');
+
+        // NonBacktracking: the name is chosen by whoever named the image, and adjacent bounded wildcards
+        // over the same characters are what makes a backtracking engine take exponential time.
+        return Regex.IsMatch(printed, pattern.ToString(), RegexOptions.NonBacktracking | RegexOptions.CultureInvariant);
+
+        void Flush()
+        {
+            if (missing > 0)
+            {
+                pattern.Append(CultureInfo.InvariantCulture, $@"[^\p{{Cc}}\p{{Zl}}\p{{Zp}}]{{0,{missing}}}");
+                missing = 0;
+            }
+        }
+    }
+
+    private bool InCodePage(Rune rune)
+    {
+        var text = rune.ToString();
+        try
+        {
+            return string.Equals(_strict.GetString(_strict.GetBytes(text)), text, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is EncoderFallbackException or DecoderFallbackException)
+        {
+            return false;
+        }
+    }
+
+    private static bool BreaksALine(char c) =>
+        char.IsControl(c) ||
+        CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
+
+    /// <summary>The same code page, failing on a character it lacks instead of substituting one.</summary>
+    private static Encoding Strict(Encoding console)
+    {
+        var strict = (Encoding)console.Clone();
+        strict.EncoderFallback = EncoderFallback.ExceptionFallback;
+        strict.DecoderFallback = DecoderFallback.ExceptionFallback;
+        return strict;
+    }
 }
 
 /// <summary>Reads the process table with <c>NtQuerySystemInformation</c>, the source handle.exe names processes from.</summary>

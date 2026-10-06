@@ -123,6 +123,28 @@ public sealed class FileLockCoverageTests(ITestOutputHelper output) : IDisposabl
     }
 
     [RequiresElevatedHandleExeFact]
+    public async Task A_search_for_the_tools_own_working_directory_is_fully_attributed()
+    {
+        // handle64.exe runs in the directory it inherits -- C:\Windows\System32 under the SCM -- and may list
+        // its own handle on it, and its console host's. Neither is in either reading of the process table: the
+        // tool is confirmed by the PID it was started as, but the console host is not. If this goes red,
+        // UnparsedRows says which rows a search for System32 loses on a real service, on every run.
+        var directory = Environment.CurrentDirectory;
+
+        var result = await Handles().SearchAsync(directory, includeAllObjectTypes: false, CancellationToken.None);
+
+        foreach (var entry in result.Entries)
+        {
+            output.WriteLine($"{entry.ProcessName}/{entry.ProcessId} {entry.Type} unproven={entry.Unproven} {entry.Name}");
+        }
+
+        output.WriteLine($"unattributable rows: {result.UnparsedRows}; unconfirmed image: {result.UnconfirmedImage}");
+        Assert.Contains(result.Entries, e => e.ProcessId == Environment.ProcessId);
+        Assert.Equal(0, result.UnparsedRows);
+        Assert.False(result.UnconfirmedImage);
+    }
+
+    [RequiresElevatedHandleExeFact]
     public async Task A_line_break_in_an_object_name_never_puts_a_row_on_another_pid()
     {
         // The parser cannot see whether handle.exe escapes a line break in a name; this asks the real

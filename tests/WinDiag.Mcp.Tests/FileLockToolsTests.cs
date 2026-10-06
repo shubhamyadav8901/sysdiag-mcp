@@ -320,6 +320,28 @@ public sealed class FileLockToolsTests
     }
 
     [Fact]
+    public async Task The_search_tools_own_row_is_confirmed_by_the_pid_the_runner_started_it_as()
+    {
+        // handle64.exe can list its own handles, and under the SCM its working directory is C:\Windows\System32,
+        // so a search for that folder printed a row for a process in neither reading of the table. Left
+        // unconfirmed, it made every row before it unattributable, on every run of that search. (The row
+        // before it has no name, so that this machine's lack of an NTFS C: does not doubt the line after it.)
+        var csv = "Process,PID,User,Handle,Type,Share Flags,Name,Access\r\n" +
+                  "app.exe,7,File,CONTOSO\\u,0x9,\r\n" +
+                  $"{ExpectedHandleBuild},9,File,NT AUTHORITY\\SYSTEM,0x4,C:\\Windows\\System32\r\n";
+        var inspector = new HandleExeInspector(
+            new StubExternalToolRunner(csv, processId: 9), Locator(), new FakePrivilegeProbe(true), new WinDiagOptions(),
+            new FakeProcessTable((7, "app.exe")));
+
+        var result = await inspector.SearchAsync("System32", includeAllObjectTypes: false, CancellationToken.None);
+
+        Assert.Equal(2, result.Entries.Count);
+        Assert.All(result.Entries, entry => Assert.False(entry.Unproven));
+        Assert.Equal(0, result.UnparsedRows);
+        Assert.False(result.UnconfirmedImage);
+    }
+
+    [Fact]
     public async Task A_row_of_a_process_that_ran_throughout_under_its_printed_name_is_listed()
     {
         var inspector = new HandleExeInspector(
