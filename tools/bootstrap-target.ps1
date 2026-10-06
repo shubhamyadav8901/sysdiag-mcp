@@ -186,6 +186,15 @@ try {
     $arch = if (Test-Path "\\$targetIp\ADMIN$\SysWOW64") { 'x64' } else { 'x86' }
     Step "target is $arch"
 
+    # Before anything is copied in, not after: deploy-target restricts only a directory it creates, and
+    # an existing C:\WinDiag -- made by a local user, or left by an older bootstrap -- is writable by
+    # every user. Restricted only afterwards, the build and the Sysinternals tools would have sat there,
+    # writable, until PsExec ran them as SYSTEM. This also comes before the token file is written. The
+    # installer restricts both directories again.
+    Step "restricting $RemotePath and $ArtifactPath to SYSTEM and Administrators"
+    Protect-WinDiagDirectory $share
+    Protect-WinDiagDirectory ("\\$targetIp\" + ($ArtifactPath -replace '^([A-Za-z]):', '$1$'))
+
     if (-not $SkipStaging) {
         # Delegated rather than reimplemented: deploy-target.ps1 already verifies every file by SHA-256
         # on both sides, stages the Sysinternals binaries, and records a manifest so a machine someone
@@ -213,12 +222,6 @@ try {
     if (-not (Test-Path "$share\WinDiag.Mcp.exe")) {
         throw "$RemotePath\WinDiag.Mcp.exe is not on the target. Staging did not leave a build behind."
     }
-
-    # Before the token file is written into it, and before the installer runs from it. The installer
-    # restricts both directories too; doing it here first closes the window in between.
-    Step "restricting $RemotePath and $ArtifactPath to SYSTEM and Administrators"
-    Protect-WinDiagDirectory $share
-    Protect-WinDiagDirectory ("\\$targetIp\" + ($ArtifactPath -replace '^([A-Za-z]):', '$1$'))
 
     # --- register ----------------------------------------------------------------------------------
     $installArgs = @(
