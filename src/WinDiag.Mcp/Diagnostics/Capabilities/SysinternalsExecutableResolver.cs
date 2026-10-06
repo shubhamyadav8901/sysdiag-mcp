@@ -33,7 +33,17 @@ public sealed class SysinternalsExecutableResolver : IExecutableResolver
 
     public ExecutableResolution Resolve(string baseName)
     {
-        var choice = SysinternalsArchitecture.Choose(_locator, baseName, ArchitectureSymptom);
+        SysinternalsArchitecture.ToolChoice choice;
+        try
+        {
+            choice = SysinternalsArchitecture.Choose(_locator, baseName, ArchitectureSymptom);
+        }
+        catch (UntrustedToolException ex)
+        {
+            // The tool call would refuse the same file with the same words; "not installed" would not be true.
+            return new(null, ex.Message);
+        }
+
         return choice.ExecutableName is null ? new(null, choice.Problem) : new(choice.Path, null);
     }
 }

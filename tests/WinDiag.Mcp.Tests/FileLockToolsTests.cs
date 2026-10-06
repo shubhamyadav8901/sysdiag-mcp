@@ -17,7 +17,9 @@ public sealed class FileLockToolsTests
         return new FileLockTools(
             new FakeLockInspector(locks ?? new LockQueryResult("x", [], Exhaustive: false)),
             new FakeHandleInspector(handles ?? new HandleSearchResult("x", [], elevated, false, 0, false)),
-            new FakePrivilegeProbe(elevated));
+            new FakePrivilegeProbe(elevated),
+            new Diag.Mcp.Server.Files.FileTransferOptions(
+                Path.GetTempPath(), false, false, "WINDIAG_ALLOW_ARBITRARY_WRITE=1", "WINDIAG_ALLOW_ARBITRARY_READ=1"));
     }
 
     private static LockHolder Holder(int pid = 1234, string name = "WINWORD.EXE", bool running = true) =>

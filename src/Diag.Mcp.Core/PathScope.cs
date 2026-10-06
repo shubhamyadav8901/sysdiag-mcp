@@ -110,9 +110,11 @@ public static class PathScope
 
     /// <summary>The walk with the link lookup and the OS's rule for relative targets supplied, and no magic links.</summary>
     /// <param name="linkTargetOf">The raw target of the link at a path, or null when it is not a link.</param>
-    /// <param name="relativeTargetsBySpelling">Windows' rule for a relative link target, rather than POSIX's.</param>
-    public static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling) =>
-        Walk(fullPath, linkTargetOf, relativeTargetsBySpelling, isMagicLink: null).Path;
+    /// <param name="windowsTargets">
+    /// Windows' rule for a link target, as .NET reports it: one without a root, or one on a share or device, stops the walk.
+    /// </param>
+    public static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets) =>
+        Walk(fullPath, linkTargetOf, windowsTargets, isMagicLink: null).Path;
 
     /// <summary>The real walk on this machine, and whether it crossed a link it could not judge.</summary>
     public static (string Path, bool CrossesMagicLink) Walk(string fullPath) =>
@@ -139,7 +141,7 @@ public static class PathScope
         }
     }
 
-    /// <summary>The walk, with the link lookup, the OS's rule for relative targets and its magic links supplied.</summary>
+    /// <summary>The walk, with the link lookup, the OS's rule for link targets and its magic links supplied.</summary>
     /// <param name="isMagicLink">
     /// Whether the link at a path is one the kernel does not follow by name, or null where there are none.
     /// </param>
@@ -148,7 +150,7 @@ public static class PathScope
     /// path is not judged: see the server's <c>FileScope.Classify</c>.
     /// </returns>
     public static (string Path, bool CrossesMagicLink) Walk(
-        string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling, Func<string, bool>? isMagicLink)
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink)
     {
         var root = Path.GetPathRoot(fullPath);
         if (string.IsNullOrEmpty(root))
@@ -190,8 +192,7 @@ public static class PathScope
             // says where the bytes land, so the walk stops judging here.
             if (isMagicLink?.Invoke(next) == true)
             {
-                var rest = pending.ToArray();
-                return (rest.Length == 0 ? next : Path.Combine([next, .. rest]), true);
+                return Unjudged(next, pending);
             }
 
             if (++hops > MaxLinkHops)
@@ -201,13 +202,20 @@ public static class PathScope
                     "which is a link loop.");
             }
 
-            // Windows and POSIX disagree on a relative target. The NT I/O manager joins it onto the
-            // link's directory and collapses its '..' by spelling, never going through the links the
-            // target names; POSIX walks those components like any others. Walking on Windows judged
-            // 'hop\..\..' by where hop points, while Windows opened the directory two levels up.
-            if (relativeTargetsBySpelling && !Path.IsPathRooted(target))
+            // On Windows the target's text cannot be trusted to say whether it is relative. .NET 9 cuts the
+            // first four characters off every junction and absolute symlink target, assuming them to be
+            // "\??\", and nothing checks: \??\Volume{guid}\ (a mounted folder) comes back as Volume{guid}\,
+            // and a junction any user can point at \Device\HarddiskVolume3\ comes back as
+            // "ice\HarddiskVolume3\". Spliced under the link's folder, either read as owned while the bytes
+            // came from another volume or a shadow copy. Recognising the names was tried, and missed the
+            // \Device\ spelling. Only the reparse tag tells relative from absolute, and .NET does not expose
+            // it, so an unrooted target is never followed: the path is unjudged, as past a procfs magic
+            // link. A real relative symlink -- which needs a privilege to create -- costs the arbitrary grant.
+            // A share is stopped too: walking on would be the SMB connection NetworkPath exists to prevent.
+            if (windowsTargets &&
+                (!Path.IsPathRooted(target) || NetworkPath.IsNetworkOrDevice(target, windows: true, NetworkPath.DriveTypeOf)))
             {
-                target = Path.GetFullPath(Path.Combine(current, target));
+                return Unjudged(next, pending);
             }
 
             // An absolute target starts again from its own root; a relative one carries on from the
@@ -222,6 +230,10 @@ public static class PathScope
         }
 
         return (current, false);
+
+        // Past a link the walk cannot follow, the rest is kept as spelled and marked unjudged.
+        static (string, bool) Unjudged(string link, Stack<string> rest) =>
+            (rest.Count == 0 ? link : Path.Combine([link, .. rest.ToArray()]), true);
     }
 
     /// <summary>The raw target of the link at <paramref name="path"/>, or null when it is not a link or does not exist.</summary>

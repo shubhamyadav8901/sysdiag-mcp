@@ -1,7 +1,9 @@
 using System.ComponentModel;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Files;
 using ModelContextProtocol.Server;
+using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Access;
 
 namespace WinDiag.Mcp.Tools;
@@ -15,10 +17,12 @@ public sealed record EffectiveAccessResult(string Summary, AccessReport Report);
 public sealed class AccessTools
 {
     private readonly IAccessInspector _access;
+    private readonly FileTransferOptions _files;
 
-    public AccessTools(IAccessInspector access)
+    public AccessTools(IAccessInspector access, FileTransferOptions files)
     {
         _access = access;
+        _files = files;
     }
 
     [McpServerTool(
@@ -45,6 +49,10 @@ public sealed class AccessTools
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (!RegistryPath.IsRegistryPath(path))
+        {
+            LocalPathGuard.RequireLocal(path, nameof(path), _files);
+        }
 
         var report = _access.Inspect(path, account, probeWrite, cancellationToken);
         return new EffectiveAccessResult(Render(report), report);

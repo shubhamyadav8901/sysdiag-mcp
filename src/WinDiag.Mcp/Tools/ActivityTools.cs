@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Files;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Configuration;
 using WinDiag.Mcp.Diagnostics.Activity;
@@ -65,11 +66,13 @@ public sealed class ActivityQueryTools
 {
     private readonly IActivityInspector _activity;
     private readonly WinDiagOptions _options;
+    private readonly FileTransferOptions _files;
 
-    public ActivityQueryTools(IActivityInspector activity, WinDiagOptions options)
+    public ActivityQueryTools(IActivityInspector activity, WinDiagOptions options, FileTransferOptions files)
     {
         _activity = activity;
         _options = options;
+        _files = files;
     }
 
     [McpServerTool(
@@ -109,6 +112,12 @@ public sealed class ActivityQueryTools
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(capturePath);
+        LocalPathGuard.RequireLocal(capturePath, nameof(capturePath), _files);
+
+        // get_file's rule, not a looser one of its own: this reads a file's contents as SYSTEM and is
+        // registered on a read-only server. A capture is written to the artifact directory, so a real
+        // one is always inside it.
+        var (fullPath, _) = ReadScope.Require(capturePath, "capture path", _files);
 
         var filter = new ActivityFilter(
             ProcessName: processName,
@@ -119,7 +128,7 @@ public sealed class ActivityQueryTools
             MaxEvents: Math.Clamp(maxEvents, 1, _options.MaxResults),
             DetailContains: detailContains);
 
-        var result = _activity.Query(capturePath, filter, cancellationToken);
+        var result = _activity.Query(fullPath, filter, cancellationToken);
 
         // Pass the server's own ceiling and the caller's raw request so the summary can say when
         // maxEvents was clamped and stop advising "raise maxEvents" when it would change nothing.

@@ -60,9 +60,23 @@ internal static class FileScope
     /// never skip one.
     /// </param>
     internal static (WriteScope Scope, bool InServerDirectory) Classify(
-        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch)
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch) =>
+        Classify(fullPath, options, serverDirectory, replacesFinalLink, looseServerMatch, NetworkPath.IsNetworkOrDevice, Walk);
+
+    /// <param name="isNetworkOrDevice">The network-path rule, supplied so a test can run Windows' on any OS.</param>
+    /// <param name="walk">The real-path walk, supplied so a test can see what was looked up.</param>
+    internal static (WriteScope Scope, bool InServerDirectory) Classify(
+        string fullPath, FileTransferOptions options, string serverDirectory, bool replacesFinalLink, bool looseServerMatch,
+        Func<string, bool> isNetworkOrDevice, Func<string, (string Path, bool CrossesMagicLink)> walk)
     {
-        var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink);
+        // A share or a device is never owned, and walking it to find out is itself the SMB connection
+        // that hands the machine account's credentials to whoever named the host.
+        if (isNetworkOrDevice(fullPath))
+        {
+            return (WriteScope.Arbitrary, false);
+        }
+
+        var (real, crossesMagicLink) = LandingPath(fullPath, replacesFinalLink, walk);
         if (crossesMagicLink)
         {
             // Unjudgeable, so not owned: it needs the arbitrary grant, as any path outside would.
@@ -70,8 +84,8 @@ internal static class FileScope
             return (WriteScope.Arbitrary, false);
         }
 
-        var server = OwnedDirectory(serverDirectory);
-        var artifacts = OwnedDirectory(options.ArtifactDirectory);
+        var server = OwnedDirectory(serverDirectory, walk);
+        var artifacts = OwnedDirectory(options.ArtifactDirectory, walk);
         var inServer = IsUnder(real, server);
         var gated = inServer || (looseServerMatch && LooseIsUnder(real, server));
         return (inServer || IsUnder(real, artifacts) ? WriteScope.Owned : WriteScope.Arbitrary, gated);
@@ -119,14 +133,19 @@ internal static class FileScope
     /// Where a request path crossing a magic link is merely unowned, an owned directory crossing one fails
     /// closed. Kept as spelled, it would quietly own nothing -- and for the server directory "not in it"
     /// is the permissive answer, which let an artifact directory inside it skip the self-update gate.
+    /// "Configure it by its real path" was the old advice, and for a disk mounted only at a folder there
+    /// is none: its \\?\Volume{guid}\ spelling is a device path, refused like a share.
     /// </remarks>
-    private static string OwnedDirectory(string directory)
+    private static string OwnedDirectory(string directory, Func<string, (string Path, bool CrossesMagicLink)> walk)
     {
-        var (real, crossesMagicLink) = Walk(directory);
+        var (real, crossesMagicLink) = walk(directory);
         return crossesMagicLink
             ? throw new FileTransferException(
-                $"The owned directory '{directory}' cannot be judged: it passes through a link on procfs, " +
-                "whose target the kernel does not follow by name. Configure it by its real path.")
+                $"The owned directory '{directory}' cannot be judged: it passes through a link whose target " +
+                "cannot be followed by name -- a link on procfs, or on Windows a folder a volume is mounted " +
+                "at, a junction to a device, or a relative symbolic link. Move it to a directory reached " +
+                "without one: for a disk mounted only at a folder, give the disk a drive letter and use a " +
+                "directory on that drive letter.")
             : real;
     }
 
@@ -138,17 +157,18 @@ internal static class FileScope
     /// as spelled. Judging that write at the link's target let <c>/tmp/x -&gt; /var/lib/linuxdiag/x</c>
     /// pass as owned while root created <c>/tmp/x</c>.
     /// </remarks>
-    internal static (string Path, bool CrossesMagicLink) LandingPath(string fullPath, bool replacesFinalLink)
+    internal static (string Path, bool CrossesMagicLink) LandingPath(
+        string fullPath, bool replacesFinalLink, Func<string, (string Path, bool CrossesMagicLink)> walk)
     {
         var name = Path.GetFileName(fullPath);
         var parent = Path.GetDirectoryName(fullPath);
         if (replacesFinalLink && !string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(parent))
         {
-            var (real, crossesMagicLink) = Walk(parent);
+            var (real, crossesMagicLink) = walk(parent);
             return (Path.Combine(real, name), crossesMagicLink);
         }
 
-        return Walk(fullPath);
+        return walk(fullPath);
     }
 
     /// <summary>How many links one resolution may follow before it is called a loop.</summary>
@@ -158,8 +178,8 @@ internal static class FileScope
     internal static string RealPath(string fullPath) => PathScope.RealPath(fullPath);
 
     /// <inheritdoc cref="PathScope.RealPath(string, Func{string, string?}, bool)"/>
-    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling) =>
-        PathScope.RealPath(fullPath, linkTargetOf, relativeTargetsBySpelling);
+    internal static string RealPath(string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets) =>
+        PathScope.RealPath(fullPath, linkTargetOf, windowsTargets);
 
     private static (string Path, bool CrossesMagicLink) Walk(string fullPath) => PathScope.Walk(fullPath);
 
@@ -168,8 +188,8 @@ internal static class FileScope
 
     /// <inheritdoc cref="PathScope.Walk(string, Func{string, string?}, bool, Func{string, bool}?)"/>
     internal static (string Path, bool CrossesMagicLink) Walk(
-        string fullPath, Func<string, string?> linkTargetOf, bool relativeTargetsBySpelling, Func<string, bool>? isMagicLink) =>
-        PathScope.Walk(fullPath, linkTargetOf, relativeTargetsBySpelling, isMagicLink);
+        string fullPath, Func<string, string?> linkTargetOf, bool windowsTargets, Func<string, bool>? isMagicLink) =>
+        PathScope.Walk(fullPath, linkTargetOf, windowsTargets, isMagicLink);
 
     /// <summary>Names the owned directories, for an error message that says where a path *would* be allowed.</summary>
     public static string Describe(FileTransferOptions options) => Describe(options, ServerDirectory);

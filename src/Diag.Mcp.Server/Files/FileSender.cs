@@ -18,7 +18,8 @@ namespace Diag.Mcp.Server.Files;
 /// again, and a 32-bit target has to hold the encoded form in memory. The caller walks
 /// <see cref="FileReadRequest.Offset"/> forward and asks for the whole-file hash on the last slice.</para>
 /// <para><strong>The scope check is the security boundary</strong>, and it is the shared
-/// <see cref="FileScope"/> so it cannot drift from the write side's. Reading outside a server-owned
+/// <see cref="FileScope"/> so it cannot drift from the write side's, applied through <see cref="ReadScope"/>, which
+/// every other tool that reads a file's contents also goes through. Reading outside a server-owned
 /// directory is arbitrary read as the server's account -- on an elevated server that is exfiltration of
 /// anything it can open -- so it is refused unless explicitly enabled.</para>
 /// </remarks>
@@ -48,17 +49,7 @@ public sealed class FileSender : IFileSender
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var full = FileScope.Resolve(request.Path, "source path");
-        var scope = FileScope.Of(full, _options);
-
-        if (scope == WriteScope.Arbitrary && !_options.AllowArbitraryRead)
-        {
-            throw new FileTransferException(
-                $"'{full}' is outside the directories this server owns ({FileScope.Describe(_options)}), " +
-                $"so reading it needs arbitrary read, which is off. Set {_options.ArbitraryReadSetting} to " +
-                "allow reading anywhere, or copy the file into one of those directories first. " +
-                "(run_command can also read a file out if it is enabled.)");
-        }
+        var (full, scope) = ReadScope.Require(request.Path, "source path", _options);
 
         if (!File.Exists(full))
         {

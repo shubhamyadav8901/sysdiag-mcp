@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.Versioning;
 using System.Text;
+using Diag.Mcp.Server.Files;
 using ModelContextProtocol.Server;
 using WinDiag.Mcp.Diagnostics;
 using WinDiag.Mcp.Diagnostics.Handles;
@@ -32,12 +33,15 @@ public sealed class FileLockTools
     private readonly ILockInspector _locks;
     private readonly IHandleInspector _handles;
     private readonly IPrivilegeProbe _privileges;
+    private readonly FileTransferOptions _files;
 
-    public FileLockTools(ILockInspector locks, IHandleInspector handles, IPrivilegeProbe privileges)
+    public FileLockTools(
+        ILockInspector locks, IHandleInspector handles, IPrivilegeProbe privileges, FileTransferOptions files)
     {
         _locks = locks;
         _handles = handles;
         _privileges = privileges;
+        _files = files;
     }
 
     [McpServerTool(
@@ -62,6 +66,7 @@ public sealed class FileLockTools
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        LocalPathGuard.RequireLocal(path, nameof(path), _files);
 
         var fullPath = Path.GetFullPath(path);
         var exists = File.Exists(fullPath) || Directory.Exists(fullPath);

@@ -79,7 +79,7 @@ and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
 | `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses a small set of critical ones |
 | `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off. It is also the one tool a draining server still accepts, so calling it again with `force` stops the wait |
 | `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
-| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to windiag's own dirs unless arbitrary write is enabled |
+| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to the artifact directory unless arbitrary write is enabled, and to the server's own folder only with the self-update grant |
 | `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
 
 ## Requirements
@@ -402,7 +402,7 @@ Add it to the relay's `~/.sysdiag-targets.json` like any target:
 ```
 
 Later builds go through `push_file` to `/opt/linuxdiag/LinuxDiag.Mcp.new` and `update_self`, so both
-need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). Unlike windiag,
+need the self-update grant (`--allow-self-update`, `LINUXDIAG_ALLOW_SELF_UPDATE=1`). As on windiag,
 `put_file` does not write into the server's own directory without it: that directory holds a root
 service's binary, and staging a build is the only reason to write there. The artifact directory stays
 writable either way -- unless it is placed inside the server's own directory, which gets no exemption:
@@ -599,6 +599,10 @@ would use, because two copies of a Sysinternals tool on one machine is the norma
 `deploy-target.ps1` stages both builds of every tool, so the refusal only fires on a machine someone
 set up by hand.
 
+A tool found in the server's own folder, which is searched first, is also run only if its Authenticode
+signature is valid and Microsoft's: whatever sits there runs as the service's account. An unsigned or
+foreign-signed copy is refused by name, in the tool's result and in `capabilities`.
+
 ## Verifying on a target
 
 Two capabilities cannot be covered by `dotnet test`, because they need administrator rights and a kernel
@@ -721,10 +725,10 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--account <spec>` | `LocalSystem` (default), `NetworkService`, `LocalService`, or `DOMAIN\user` with `--password` |
 | `--password <value>` | Required for an account that is not built in |
 | `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call |
-| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it |
-| `--allow-self-update` | Registers `update_self` |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. The directory must not be reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
+| `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
-| `--allow-arbitrary-write` | Lets `put_file` write outside the server's own directories |
+| `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
 | `--allow-arbitrary-read` | Lets the read tools open files outside them |
 | `--read-only` | Drops every state-changing tool |
 | `--firewall-from <address>` | Opens the bind port inbound from one address, removed on uninstall. An address, never a subnet |
@@ -780,7 +784,7 @@ Both take `-Grants`, and **the preset names are not a security policy — check 
 
 | `-Grants` | Passes | Result |
 |---|---|---|
-| `None` | `--read-only` alone | Services and processes only. **Cannot read a single config file** — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
+| `None` | `--read-only` alone | Services and processes only. **Cannot read a single config file**, and no tool opens a network share — if you want read-only-but-readable, do not use this; pass `--read-only --allow-arbitrary-read` yourself |
 | `Standard` | `--allow-self-update --allow-command-execution` | The usual fleet target |
 | `All` | those two plus `--allow-arbitrary-write --allow-arbitrary-read` | Full diagnostics |
 
@@ -899,8 +903,8 @@ level through an ordinary tool call. The token is the whole boundary.
 
 ## Configuration
 
-The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`
-and `put_file` writes into the server's own directory only with `LINUXDIAG_ALLOW_SELF_UPDATE`. `LinuxDiag.Mcp --help` lists them.
+The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`.
+`LinuxDiag.Mcp --help` lists them.
 
 The macOS server reads them as `MACDIAG_*`, from its `--env-file` laid over the environment. They have the
 same meanings, except:
@@ -914,16 +918,16 @@ same meanings, except:
 | Variable | Default | Meaning |
 |---|---|---|
 | `WINDIAG_READ_ONLY` | `false` | `1`/`true` drops all state-changing tools from registration |
-| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`. Gated separately because it lets the bearer token replace an elevated binary; `WINDIAG_READ_ONLY` still overrides it |
+| `WINDIAG_ALLOW_SELF_UPDATE` | `false` | `1`/`true` registers `update_self`, and lets `put_file` write into the server's own directory to stage a build. Gated separately because it lets the bearer token replace an elevated binary -- or plant a Sysinternals tool or DLL beside it, which the server would run; `WINDIAG_READ_ONLY` still overrides it |
 | `WINDIAG_ALLOW_COMMAND_EXECUTION` | `false` | `1`/`true` registers `run_command`, turning the bearer token into an arbitrary shell as the server's account. The heaviest grant here; `WINDIAG_READ_ONLY` overrides it. Off unless a deployment deliberately needs it |
-| `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write outside the server's own directories. `put_file` itself is always available on a writable server, scoped to those dirs; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
+| `WINDIAG_ALLOW_ARBITRARY_WRITE` | `false` | `1`/`true` lets `put_file` write anywhere, the server's own directory included. `put_file` itself is always available on a writable server, scoped to the artifact directory; this widens it to anywhere as the server's account. `WINDIAG_READ_ONLY` overrides it |
 | `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS` | `120` | Budget per external tool call (1–3600) |
 | `WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS` | `1800` | How long `update_self` waits for running tool calls to finish before restarting anyway (1–86400). A backstop, not a schedule: on an idle target the wait is milliseconds. 30 minutes clears `capture_activity`'s ~21-minute worst case, which is the call most likely to be running when you update. A full-length `run_command` can exceed it — raise this, or pass `force` |
-| `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
+| `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` and `query_activity` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Without it, every read tool that opens a path it is given (`get_file`, `who_locks_path`, `file_signatures`, `effective_access`, `query_activity`) also refuses a network share or device path — `\\host\share`, `\\?\UNC\`, `\\.\`, a mapped network drive — because opening one makes the server sign in to that host as its machine account. `put_file` reaches one only with `WINDIAG_ALLOW_ARBITRARY_WRITE`, which already lets it write anywhere. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
-| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written |
+| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written. Neither it nor the server's own folder may be reached through a mounted folder, a junction to a device, or a relative symbolic link: `get_file` and `put_file` cannot tell where such a link lands, so they refuse every transfer |
 | `SYSDIAG_RELAY_FILE_ROOT` | a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp`; plus the `artifacts` directory when the relay runs from `artifacts/diagrelay` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The `artifacts` default exists because a relay published to `artifacts/diagrelay` sends the builds beside it in `artifacts/win-x64`; anywhere else — `~/bin`, an unpacked release zip, `dotnet run` — it does not apply, so set this to push builds from another folder |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than
@@ -1093,6 +1097,8 @@ split is what lets the tool layer be tested with fakes and no live machine.
 | Symptom | Cause and fix |
 |---|---|
 | `'handle.exe' was not found on this machine` | Sysinternals Suite is not installed. Native-backed tools still work. |
+| `'…\handle64.exe' is beside the server but is not signed by Microsoft` | The copy in the server's folder is damaged or was not Microsoft's. Replace it from `download.sysinternals.com` (or re-run `deploy-target.ps1`), or delete it to use an installed copy. |
+| `The owned directory '…' cannot be judged` on every `get_file` / `put_file` | The artifact directory or the server's folder sits under a folder a volume is mounted at (a data disk mounted at `C:\Data`), a junction to a device, or a relative symbolic link. .NET does not report where such a link really lands, so nothing under it can be judged owned. Move the directory: give the disk a drive letter and set `--artifacts` to a directory on that letter. |
 | `path_handle_search` warns about partial results | Not elevated. Restart the server from an elevated terminal. |
 | `who_locks_path` finds nothing on a file you know is locked | Expected: Restart Manager is not exhaustive. Run `path_handle_search`. |
 | `handle.exe did not finish within 120s` | Search term too broad. Narrow it, or raise `WINDIAG_EXTERNAL_TOOL_TIMEOUT_SECONDS`. |

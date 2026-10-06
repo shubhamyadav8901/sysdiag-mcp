@@ -127,10 +127,12 @@ internal static class ProcmonCsvReader
         {
             if (!map.ContainsKey(required))
             {
+                // The missing column only, never the cells that are there: the header of a file that is
+                // not a capture is its first line, and echoing it handed back a one-line secret verbatim.
                 throw new FormatException(
-                    $"The capture is missing the '{required}' column, so it cannot be read. Columns " +
-                    $"present: {string.Join(", ", map.Keys)}. Re-export the trace with the shipped " +
-                    "Procmon configuration.");
+                    $"The file is not a Procmon capture this server can read: it has no '{required}' " +
+                    "column. Pass the csvPath capture_activity returned, or re-export the trace with the " +
+                    "shipped Procmon configuration.");
             }
         }
 
