@@ -203,6 +203,70 @@ public sealed class UserUnitTests : IDisposable
     }
 
     [UnixFact]
+    public void A_drop_in_under_another_name_linked_to_the_same_unit_file_applies_to_the_enabled_unit()
+    {
+        // Re-check: systemd gives a unit file every name a link in the search path gives it, and reads drop-ins for
+        // all of them -- that is how display-manager.service.d reaches gdm.service. Only the enabled name's drop-ins
+        // were read, so ~/.config/systemd/user/zz.service -> x.service plus zz.service.d/o.conf ran the payload while
+        // the audit reported the packaged program and unpackagedOnly hid it.
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), vendor);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/.cache/p\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal(vendor, entry.Location);
+        Assert.Equal("/home/u/.cache/p", entry.ImagePath);
+        Assert.Equal([dropIn], entry.DropIns);
+    }
+
+    [UnixFact]
+    public void A_users_alias_of_the_service_a_socket_enabled_for_everyone_starts_is_reported_for_that_user()
+    {
+        // The same through a unit enabled for every user: no enable of their own, one link and one drop-in.
+        PackagedSocketEnabledForEveryone();
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), Path.Combine(_root, "usr/lib/systemd/user/pipewire.service"));
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/.p\n");
+
+        var entries = Audit();
+
+        Assert.Equal("/usr/bin/pipewire", entries.Single(e => e.Profile == "(every user)").ImagePath);
+        var mine = entries.Single(e => e.Profile == "u");
+        Assert.Equal("/home/u/.p", mine.ImagePath);
+        Assert.Contains(dropIn, mine.DropIns);
+    }
+
+    [UnixFact]
+    public void A_template_alias_gives_an_instance_its_drop_ins_under_the_aliases_instance_name()
+    {
+        var template = Write(Path.Combine(_root, "usr/lib/systemd/user/w@.service"), "[Service]\nExecStart=/usr/bin/w %i\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/w@one.service"), template);
+        Link(Path.Combine(Home, ".config/systemd/user/zz@.service"), template);
+        var dropIn = Write(Path.Combine(Home, ".config/systemd/user/zz@one.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/w\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal([dropIn], entry.DropIns);
+        Assert.Equal("/home/u/w", entry.ImagePath);
+    }
+
+    [UnixFact]
+    public void A_link_to_another_unit_file_or_of_another_type_is_not_an_alias()
+    {
+        var vendor = Write(Path.Combine(_root, "usr/lib/systemd/user/x.service"), "[Service]\nExecStart=/usr/bin/x\n");
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"), vendor);
+        var other = Write(Path.Combine(_root, "usr/lib/systemd/user/y.service"), "[Service]\nExecStart=/usr/bin/y\n");
+        Link(Path.Combine(Home, ".config/systemd/user/zz.service"), other);
+        Write(Path.Combine(Home, ".config/systemd/user/zz.service.d/o.conf"), "[Service]\nExecStart=\nExecStart=/home/u/nope\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/usr/bin/x", entry.ImagePath);
+        Assert.Empty(entry.DropIns);
+    }
+
+    [UnixFact]
     public void A_socket_enabled_for_everyone_is_not_repeated_for_a_user_whose_files_leave_it_alone()
     {
         PackagedSocketEnabledForEveryone();
