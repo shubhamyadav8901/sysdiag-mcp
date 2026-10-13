@@ -19,3 +19,19 @@ public sealed class UnprivilegedLinuxFactAttribute : FactAttribute
         }
     }
 }
+
+/// <summary>As <see cref="UnprivilegedLinuxFactAttribute"/>, on macOS as well: for a permission only root ignores.</summary>
+public sealed class UnprivilegedUnixFactAttribute : FactAttribute
+{
+    public UnprivilegedUnixFactAttribute()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Skip = "Unix only. Run tools/test-linux.sh.";
+        }
+        else if (Environment.IsPrivilegedProcess)
+        {
+            Skip = "Needs an unprivileged account: root lists any directory.";
+        }
+    }
+}

@@ -358,6 +358,26 @@ internal sealed class UnitNameMap
         return targetType != NameType.Instance || Instance(source) == Instance(target);
     }
 
+    /// <summary>
+    /// A name manager_load_unit() takes: valid, and a plain unit or an instance -- a template is no unit of its own.
+    /// </summary>
+    internal static bool Loadable(string name) => Classify(name) is NameType.Plain or NameType.Instance;
+
+    /// <summary>
+    /// resolve_template() in unit.c: a template that another unit names starts the instance of that unit's own
+    /// instance, or of its prefix when it is no instance -- Unit=w@.service in t.timer starts w@t.service.
+    /// </summary>
+    internal static string ResolveTemplate(string name, string owner) =>
+        Classify(name) != NameType.Template ? name
+            : WithInstance(name, Classify(owner) == NameType.Instance ? Instance(owner) : Prefix(owner));
+
+    /// <summary>unit_name_to_prefix(): foo for foo@bar.socket and foo.socket alike.</summary>
+    internal static string Prefix(string name)
+    {
+        var at = name.IndexOf('@', StringComparison.Ordinal);
+        return at > 0 ? name[..at] : Path.GetFileNameWithoutExtension(name);
+    }
+
     /// <summary>unit_name_is_valid(): a known type after the last dot, valid characters, '@' never first.</summary>
     private static NameType Classify(string name)
     {
