@@ -73,7 +73,8 @@ jobs:
           $missing = $required | Where-Object { -not (Test-Path "artifacts/ci-publish-check/$_") }
           if ($missing) {
             throw "Publish output is missing: $($missing -join ', '). Add a PackageReference; a " +
-                  "transitive dependency alone does not survive to the published set."
+                  "transitive dependency alone does not survive to the published set. If the SDK " +
+                  "refuses it as framework-provided (NU1510), find why the runtime pack dropped it."
           }
           Write-Host "publish set carries: $($required -join ', ')"
 
