@@ -90,5 +90,5 @@ public static class CommandLine
     public const string RemovedRelayMessage =
         "[windiag] --relay was removed: the relay is now its own executable, DiagRelay.Mcp, published to " +
         "artifacts/diagrelay/. Point your MCP registration at it -- keep the entry name 'windiag' and " +
-        "every forwarded tool name stays the same. See the README, under the relay.";
+        "every forwarded tool name stays the same. See docs/relay.md.";
 }

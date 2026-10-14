@@ -25,7 +25,7 @@
     <!--
       Step 3 ships this as a single self-contained exe to copy onto a target machine, published with
       SelfContained, PublishSingleFile and IncludeNativeLibrariesForSelfExtract set on the command
-      line (see README).
+      line (see docs/windows.md).
 
       Deliberately NOT set as project properties: a RID-specific, single-file project referenced by
       the non-RID-specific test projects trips SDK restore errors. Keeping it on the publish command

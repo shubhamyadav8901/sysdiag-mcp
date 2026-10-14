@@ -21,19 +21,41 @@ None of these looked like errors. If a result can be incomplete, say so in the r
 
 ```
 dotnet build -warnaserror
-dotnet test tests/WinDiag.Mcp.Tests
-dotnet test tests/Diag.Mcp.Server.Tests
-dotnet test tests/DiagRelay.Mcp.Tests
+dotnet test tests/WinDiag.Mcp.Tests          # offline; never touches the live machine
+dotnet test tests/Diag.Mcp.Server.Tests      # the shared server kit; also runs on Linux
+dotnet test tests/DiagRelay.Mcp.Tests        # the relay
+dotnet test tests/LinuxDiag.Mcp.Tests        # the Linux server; its [LinuxFact] tests run through tools/test-linux.sh
+dotnet test tests/MacDiag.Mcp.Tests          # the macOS server; its [MacFact] tests run only on a Mac (CI's macos-latest)
+dotnet test tests/WinDiag.Mcp.OnTarget       # creates real locks on this machine
 ```
 
-All must be clean before you push; the last two also run on Linux through `tools/test-linux.sh`. `tests/WinDiag.Mcp.OnTarget` needs a real Windows target and is
-not part of the normal loop.
+All but the last must be clean before you push; the shared kit and the relay also run on Linux through
+`tools/test-linux.sh`. `tests/WinDiag.Mcp.OnTarget` needs a real Windows target and is not part of the
+normal loop. It skips its elevated cases with a stated reason when run unelevated or without
+Sysinternals installed, rather than failing or silently passing.
 
 Run it locally over stdio:
 
 ```
 dotnet run --project src/WinDiag.Mcp
 ```
+
+## Layout
+
+```
+src/WinDiag.Mcp/
+  Program.cs            entry: argv dispatch, logging pinned to stderr
+  ServerBuilder.cs      DI wiring and tool registration (shared with tests)
+  Configuration/        WINDIAG_* parsing, fail-fast validation
+  Diagnostics/          all real work, each domain behind an interface
+    Locks/              Restart Manager interop
+    Handles/            handle.exe shell-out and its parser
+    External/           runner, tool locator, the flag-injection guard
+  Tools/                MCP tool definitions: schema and rendering only
+```
+
+`Tools/` contains no logic — it binds parameters, calls a `Diagnostics/` interface and renders. That
+split is what lets the tool layer be tested with fakes and no live machine.
 
 ## Testing
 
