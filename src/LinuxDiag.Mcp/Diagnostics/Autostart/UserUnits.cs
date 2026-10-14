@@ -31,6 +31,12 @@ internal sealed class UserUnits(
         [".timer"] = "Timer", [".socket"] = "Socket", [".path"] = "Path",
     };
 
+    /// <summary>What systemd's parse_boolean() takes as true, in any case.</summary>
+    private static readonly HashSet<string> True = new(StringComparer.OrdinalIgnoreCase) { "1", "yes", "y", "true", "t", "on" };
+
+    /// <summary>What systemd's parse_boolean() takes as false, in any case.</summary>
+    private static readonly HashSet<string> False = new(StringComparer.OrdinalIgnoreCase) { "0", "no", "n", "false", "f", "off" };
+
     /// <summary>The server's own readers: <see cref="LinuxAutostartInspector.ReadConfiguration"/> and realpath(3).</summary>
     internal static UserUnits Reading(string root = "") =>
         new(LinuxAutostartInspector.ReadConfiguration, LinuxAutostartInspector.ReadConfigurationOwnedBy, SafeRealPath, root);
@@ -44,7 +50,7 @@ internal sealed class UserUnits(
         {
             globalUnits = Enabled(global);
         }
-        catch (UnauthorizedAccessException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // One unreadable directory must not cost the users' own units; it is named instead.
             limitations.Add($"Units enabled for every user could not all be read ({ex.Message}); run the server as root.");
@@ -77,8 +83,9 @@ internal sealed class UserUnits(
                     _ = Directory.EnumerateFileSystemEntries(account.Home).Any();
                 }
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                // IOException too: the user can remove a directory between Directory.Exists and its listing.
                 unreadable++;
                 continue;
             }
@@ -99,7 +106,7 @@ internal sealed class UserUnits(
             {
                 own = Enabled(personal);
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 unreadable++;
                 continue;
@@ -258,7 +265,26 @@ internal sealed class UserUnits(
         return units;
     }
 
+    /// <summary>One enabled unit's entry; never fails the audit, since every file it reads may be a user's.</summary>
     private AutostartEntry Entry(string name, string link, IReadOnlyList<string> path, string? user, string description)
+    {
+        try
+        {
+            return Resolved(name, link, path, user, description);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A drop-in directory root cannot list (a home on NFS with root_squash), or one the user removes between
+            // Directory.Exists and the listing. The unit is still enabled, so it is reported, and what it runs is
+            // unknown rather than missing.
+            return new AutostartEntry(
+                "userunits", RealOr(link), name, true, user ?? "(every user)",
+                $"{description} - its files could not all be read ({ex.Message}), so what it runs is not known",
+                null, null, null, [], null, null, [], false);
+        }
+    }
+
+    private AutostartEntry Resolved(string name, string link, IReadOnlyList<string> path, string? user, string description)
     {
         var files = Resolve(name, path);
 
@@ -268,14 +294,30 @@ internal sealed class UserUnits(
         var dropIns = files.DropIns.ToList();
 
         // A timer, socket or path runs another unit; what runs is that unit's ExecStart, and its own files decide it.
-        var runs = TriggerSections.TryGetValue(Path.GetExtension(name), out var section) ? Triggered(name, section, texts) : null;
-        if (runs is not null)
+        if (TriggerSections.TryGetValue(Path.GetExtension(name), out var section))
         {
-            var runner = Resolve(runs, path);
-            var runnerLocation = runner.Fragment is { } runnerFragment ? RealOr(runnerFragment) : null;
-            texts = Texts(runnerLocation, runner.DropIns);
-            dropIns.AddRange(runner.DropIns.Prepend(runnerLocation ?? string.Empty).Where(f => f.Length > 0));
-            description += $" (runs {runs})";
+            var (runs, note) = Triggered(name, section, texts);
+            texts = [];
+            if (runs is not null && runs.Contains('%', StringComparison.Ordinal))
+            {
+                // Specifiers expand against the manager's own state (%u, %h, %t), which a file audit does not have,
+                // and systemd checks the name only once expanded. Unchecked, it is no path to look anything up by --
+                // "%x/../../x.service" led the drop-in lookup out of the search path -- so it is shown, not resolved.
+                description += $" (runs {runs}, whose specifiers are not expanded here)";
+            }
+            else if (runs is not null)
+            {
+                var runner = Resolve(runs, path);
+                var runnerLocation = runner.Fragment is { } runnerFragment ? RealOr(runnerFragment) : null;
+                texts = Texts(runnerLocation, runner.DropIns);
+                dropIns.AddRange(runner.DropIns.Prepend(runnerLocation ?? string.Empty).Where(f => f.Length > 0));
+                description += $" (runs {runs})";
+            }
+
+            if (note is not null)
+            {
+                description += $" ({note})";
+            }
         }
 
         var execStart = UnitFile.Values(texts, "Service", "ExecStart").FirstOrDefault()?.TrimStart('-', '@', '+', '!', ':');
@@ -288,18 +330,60 @@ internal sealed class UserUnits(
     private List<string> Texts(string? fragment, IEnumerable<string> dropIns) =>
         (fragment is null ? dropIns : dropIns.Prepend(fragment)).Select(read).ToList();
 
-    /// <summary>The unit a timer, socket or path starts: Unit=, or by default the service of the same name.</summary>
-    /// <remarks>A socket with Accept=yes starts an instance per connection, of the template of its own name.</remarks>
-    private static string Triggered(string name, string section, List<string> texts)
+    /// <summary>
+    /// The unit a timer, socket or path starts -- null when it starts none -- and what systemd made of the setting
+    /// that names it, when that is not simply what is written.
+    /// </summary>
+    /// <remarks>
+    /// <para>Every name here is the user's own text, and is checked as systemd checks it before it reaches a path:
+    /// unchecked, Unit=bogus threw out of the whole audit, for every user, and Unit=../../x.service or an absolute
+    /// name had drop-ins read from wherever it pointed.</para>
+    /// <para>A timer or path takes Unit= as load-fragment.c's config_parse_trigger_unit does: the first name it can
+    /// load wins, and anything else -- an invalid name, the unit itself, any later Unit=, a drop-in's -- is ignored
+    /// with a warning, so with none accepted it starts the service of its own name. A template is instantiated as
+    /// unit.c's resolve_template does. Reading the last one let a drop-in's Unit= name a service that never ran.</para>
+    /// <para>A socket has no Unit=; it is Service=, which config_parse_socket_service sets from each assignment in
+    /// turn, with no template resolved. Since bad-setting load states (systemd 236) a name that is not a service it
+    /// can load fails the socket's whole load, as socket_verify does Service= with Accept=yes; older systemd ignored
+    /// the name and started the service of the socket's own name. A socket with Accept=yes starts an instance per
+    /// connection, of the template of its own prefix.</para>
+    /// <para>Accept= is read as config_parse_bool reads it: a value parse_boolean refuses, or an empty one, is
+    /// ignored and the one before it kept, where <see cref="UnitFile.Last"/> would take an empty one as a reset.</para>
+    /// </remarks>
+    private static (string? Runs, string? Note) Triggered(string name, string section, List<string> texts)
     {
-        if (UnitFile.Last(texts, section, "Unit") is { } unit)
+        var stem = Path.GetFileNameWithoutExtension(name);
+        if (section == "Socket")
         {
-            return unit;
+            var accept = UnitFile.Every(texts, section, "Accept").LastOrDefault(v => True.Contains(v) || False.Contains(v)) is { } value
+                && True.Contains(value);
+            var services = UnitFile.Every(texts, section, "Service");
+            if (services.Count == 0)
+            {
+                return (accept ? UnitNameMap.Prefix(name) + "@.service" : stem + ".service", null);
+            }
+
+            if (accept)
+            {
+                return (null, $"systemd refuses to load this socket, since it sets Service={services[0]} with Accept=yes, so it runs nothing");
+            }
+
+            if (services.FirstOrDefault(s => !Specified(s) && !(s.EndsWith(".service", StringComparison.Ordinal) && UnitNameMap.Loadable(s))) is { } refused)
+            {
+                return (null, $"systemd refuses to load this socket, since Service={refused} is no service it can start, so it runs nothing");
+            }
+
+            return (services[^1], null);
         }
 
-        var stem = Path.GetFileNameWithoutExtension(name);
-        var accept = section == "Socket" && UnitFile.Last(texts, section, "Accept") is "yes" or "true" or "on" or "1";
-        return stem + (accept ? "@.service" : ".service");
+        var units = UnitFile.Every(texts, section, "Unit");
+        var chosen = units.ToList().FindIndex(u => Specified(u) || (u != name && UnitNameMap.Loadable(UnitNameMap.ResolveTemplate(u, name))));
+        var ignored = units.Where((u, i) => i != chosen && u.Length > 0).Select(u => "Unit=" + u).ToList();
+        var runs = chosen < 0 ? stem + ".service" : Specified(units[chosen]) ? units[chosen] : UnitNameMap.ResolveTemplate(units[chosen], name);
+        return (runs, ignored.Count == 0 ? null : $"systemd ignores {string.Join(", ", ignored)}");
+
+        // A name with a specifier is checked only after systemd expands it, which this cannot; see Entry.
+        static bool Specified(string unit) => unit.Contains('%', StringComparison.Ordinal);
     }
 
     /// <summary>The unit file loaded for a name, and the drop-ins applied to it, in the order they apply.</summary>
@@ -320,7 +404,7 @@ internal sealed class UserUnits(
         // again from a later directory, and then everything applies in file-name order.
         var directories = names
             .SelectMany(n => path.SelectMany(d => Expansions(n).Select(e => Path.Combine(d, e + ".d"))))
-            .Concat(path.Select(d => Path.Combine(d, Path.GetExtension(name)[1..] + ".d")));
+            .Concat(TypeName(name) is { } type ? path.Select(d => Path.Combine(d, type + ".d")) : []);
         var seen = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var directory in directories)
         {
@@ -348,7 +432,11 @@ internal sealed class UserUnits(
 
     /// <summary>The names a unit's drop-in directories go by: its own, its template's, each dash prefix's, then its type's.</summary>
     internal static IReadOnlyList<string> DropInNames(IReadOnlyList<string> names) =>
-        names.SelectMany(Expansions).Append(Path.GetExtension(names[0])[1..]).Distinct(StringComparer.Ordinal).ToList();
+        names.SelectMany(Expansions).Concat(TypeName(names[0]) is { } type ? [type] : []).Distinct(StringComparer.Ordinal).ToList();
+
+    /// <summary>"service" for x.service; null for a name with no type, which has no type-wide drop-in directory.</summary>
+    /// <remarks>Slicing the extension unchecked threw on a name with none, out of the whole audit.</remarks>
+    private static string? TypeName(string name) => Path.GetExtension(name) is { Length: > 1 } suffix ? suffix[1..] : null;
 
     /// <summary>A name, its template, and its dash prefixes: a-b-c.service also takes a-b-.service.d and a-.service.d.</summary>
     private static IEnumerable<string> Expansions(string name)

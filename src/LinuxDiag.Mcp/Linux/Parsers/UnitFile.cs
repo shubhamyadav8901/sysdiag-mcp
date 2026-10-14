@@ -265,6 +265,17 @@ public static class UnitFile
         }
     }
 
+    /// <summary>Every assignment of a setting in order, the unit file's first, empty ones kept.</summary>
+    /// <remarks>
+    /// For a setting whose parser keeps the first value it accepts, or fails on any bad one, rather than letting an
+    /// empty assignment reset it: what systemd does with those is decided per value, which <see cref="Values"/> hides.
+    /// </remarks>
+    public static IReadOnlyList<string> Every(IEnumerable<string> texts, string section, string key)
+    {
+        ArgumentNullException.ThrowIfNull(texts);
+        return texts.SelectMany(Assignments).Where(a => a.Section == section && a.Key == key).Select(a => a.Value).ToList();
+    }
+
     /// <summary>A single-valued setting: the last assignment wins; null when unset or reset.</summary>
     public static string? Last(IEnumerable<string> texts, string section, string key) =>
         Values(texts, section, key).LastOrDefault();

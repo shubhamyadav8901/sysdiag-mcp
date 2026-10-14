@@ -697,6 +697,202 @@ public sealed class UserUnitTests : IDisposable
         Assert.Contains("runs s@.service", entry.Description, StringComparison.Ordinal);
     }
 
+    /// <summary>A unit of the user's own, enabled, that the audit must still report whatever else they enable.</summary>
+    private void AnotherEnabledUnit() =>
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/other.service"),
+            Write(Path.Combine(Home, ".config/systemd/user/other.service"), "[Service]\nExecStart=/home/u/other\n"));
+
+    [UnixTheory]
+    [InlineData("bogus")]
+    [InlineData(".service")]
+    [InlineData("x.nosuchtype")]
+    [InlineData("@x.service")]
+    [InlineData("t.timer")]
+    [InlineData("/etc/systemd/user/x.service")]
+    [InlineData("../../../../../../etc/x.service")]
+    public void A_timer_whose_Unit_systemd_ignores_runs_the_service_of_its_own_name_and_the_audit_goes_on(string unit)
+    {
+        // Review: Unit=bogus in any user's timer threw out of the whole autostart_audit, for every user and category.
+        // systemd ignores a Unit= that is no name it can load, or the timer itself, and starts t.service.
+        var timer = Write(Path.Combine(Home, ".config/systemd/user/t.timer"), $"[Timer]\nOnCalendar=hourly\nUnit={unit}\n");
+        Link(Path.Combine(Home, ".config/systemd/user/timers.target.wants/t.timer"), timer);
+        Write(Path.Combine(Home, ".config/systemd/user/t.service"), "[Service]\nExecStart=/home/u/t\n");
+        AnotherEnabledUnit();
+
+        var entries = Audit();
+
+        Assert.Equal("/home/u/other", entries.Single(e => e.Entry == "other.service").ImagePath);
+        var entry = entries.Single(e => e.Entry == "t.timer");
+        Assert.Equal("/home/u/t", entry.ImagePath);
+        Assert.Contains("runs t.service", entry.Description, StringComparison.Ordinal);
+        Assert.Contains($"Unit={unit}", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_timer_runs_the_first_Unit_systemd_accepts_and_a_later_one_or_a_drop_in_cannot_change_it()
+    {
+        // config_parse_trigger_unit keeps the first trigger it can add and ignores every later Unit=, a drop-in's too:
+        // the last-wins reading reported third.service while first.service ran.
+        var timer = Write(Path.Combine(Home, ".config/systemd/user/t.timer"),
+            "[Timer]\nOnCalendar=hourly\nUnit=bogus\nUnit=first.service\nUnit=second.service\n");
+        Write(Path.Combine(Home, ".config/systemd/user/t.timer.d/o.conf"), "[Timer]\nUnit=\nUnit=third.service\n");
+        Link(Path.Combine(Home, ".config/systemd/user/timers.target.wants/t.timer"), timer);
+        foreach (var name in new[] { "first", "second", "third", "t" })
+        {
+            Write(Path.Combine(Home, $".config/systemd/user/{name}.service"), $"[Service]\nExecStart=/home/u/{name}\n");
+        }
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/first", entry.ImagePath);
+        Assert.Contains("runs first.service", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixTheory]
+    [InlineData("t.timer", "w@t.service")]
+    [InlineData("t@one.timer", "w@one.service")]
+    public void A_timer_whose_Unit_is_a_template_runs_its_instance_named_after_the_timer(string timerName, string runs)
+    {
+        // unit.c's resolve_template: the timer's own instance, or its prefix when it is no instance.
+        var timer = Write(Path.Combine(Home, ".config/systemd/user", timerName.Replace("@one", "@", StringComparison.Ordinal)),
+            "[Timer]\nOnCalendar=hourly\nUnit=w@.service\n");
+        Link(Path.Combine(Home, ".config/systemd/user/timers.target.wants", timerName), timer);
+        Write(Path.Combine(Home, ".config/systemd/user/w@.service"), "[Service]\nExecStart=/home/u/w %i\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/w", entry.ImagePath);
+        Assert.Contains($"runs {runs}", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_timer_whose_Unit_uses_specifiers_is_named_as_written_and_never_used_as_a_path()
+    {
+        // The name is checked only once systemd expands it, which the audit cannot; used as written, one with a '/'
+        // led the drop-in lookup out of the search path, to a drop-in directory of the user's choosing.
+        var timer = Write(Path.Combine(Home, ".config/systemd/user/t.timer"),
+            "[Timer]\nOnCalendar=hourly\nUnit=%x/../../../../planted.service\n");
+        Link(Path.Combine(Home, ".config/systemd/user/timers.target.wants/t.timer"), timer);
+        Directory.CreateDirectory(Path.Combine(Home, ".config/systemd/user/%x"));
+        var planted = Write(Path.Combine(Home, "planted.service.d/o.conf"), "[Service]\nExecStart=/home/u/planted\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Null(entry.ImagePath);
+        Assert.DoesNotContain(planted, entry.DropIns);
+        Assert.Contains("runs %x/../../../../planted.service, whose specifiers", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_socket_runs_the_service_its_Service_setting_names_and_not_one_a_Unit_line_names()
+    {
+        // A socket has no Unit=; reading one let a user's Service=payload.service be reported as s.service.
+        var socket = Write(Path.Combine(Home, ".config/systemd/user/s.socket"),
+            "[Socket]\nListenStream=%t/s\nUnit=decoy.service\nService=payload.service\n");
+        Link(Path.Combine(Home, ".config/systemd/user/sockets.target.wants/s.socket"), socket);
+        foreach (var name in new[] { "decoy", "payload", "s" })
+        {
+            Write(Path.Combine(Home, $".config/systemd/user/{name}.service"), $"[Service]\nExecStart=/home/u/{name}\n");
+        }
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/payload", entry.ImagePath);
+        Assert.Contains("runs payload.service", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixTheory]
+    [InlineData("Service=bogus\n")]
+    [InlineData("Service=x.timer\n")]
+    [InlineData("Service=w@.service\n")]
+    [InlineData("Service=../../../../../../etc/x.service\n")]
+    [InlineData("Service=s.service\nService=bogus\n")]
+    [InlineData("Accept=yes\nService=s.service\n")]
+    public void A_socket_whose_Service_systemd_refuses_is_reported_running_nothing_and_the_audit_goes_on(string settings)
+    {
+        // config_parse_socket_service fails the socket's load on a Service= that is no service it can load, and
+        // socket_verify refuses Service= with Accept=yes: nothing runs, rather than the service of the socket's name.
+        var socket = Write(Path.Combine(Home, ".config/systemd/user/s.socket"), $"[Socket]\nListenStream=%t/s\n{settings}");
+        Link(Path.Combine(Home, ".config/systemd/user/sockets.target.wants/s.socket"), socket);
+        Write(Path.Combine(Home, ".config/systemd/user/s.service"), "[Service]\nExecStart=/home/u/s\n");
+        AnotherEnabledUnit();
+
+        var entries = Audit();
+
+        Assert.Equal("/home/u/other", entries.Single(e => e.Entry == "other.service").ImagePath);
+        var entry = entries.Single(e => e.Entry == "s.socket");
+        Assert.Equal(socket, entry.Location);
+        Assert.Null(entry.ImagePath);
+        Assert.Contains("systemd refuses to load this socket", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnixTheory]
+    [InlineData("Yes")]
+    [InlineData("TRUE")]
+    [InlineData("y")]
+    [InlineData("t")]
+    [InlineData("On")]
+    public void A_socket_with_Accept_spelled_any_way_systemd_takes_runs_the_template_of_its_own_name(string accept)
+    {
+        var socket = Write(Path.Combine(Home, ".config/systemd/user/s.socket"), $"[Socket]\nListenStream=%t/s\nAccept={accept}\n");
+        Link(Path.Combine(Home, ".config/systemd/user/sockets.target.wants/s.socket"), socket);
+        Write(Path.Combine(Home, ".config/systemd/user/s@.service"), "[Service]\nExecStart=/home/u/serve\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/serve", entry.ImagePath);
+    }
+
+    [UnixFact]
+    public void A_socket_keeps_Accept_yes_when_a_drop_in_sets_it_empty_or_to_no_boolean()
+    {
+        var socket = Write(Path.Combine(Home, ".config/systemd/user/s.socket"), "[Socket]\nListenStream=%t/s\nAccept=yes\n");
+        Write(Path.Combine(Home, ".config/systemd/user/s.socket.d/o.conf"), "[Socket]\nAccept=\nAccept=maybe\n");
+        Link(Path.Combine(Home, ".config/systemd/user/sockets.target.wants/s.socket"), socket);
+        Write(Path.Combine(Home, ".config/systemd/user/s@.service"), "[Service]\nExecStart=/home/u/serve\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Equal("/home/u/serve", entry.ImagePath);
+    }
+
+    [UnixFact]
+    public void An_instance_socket_with_Accept_runs_the_template_of_its_prefix()
+    {
+        var socket = Write(Path.Combine(Home, ".config/systemd/user/s@.socket"), "[Socket]\nListenStream=%t/s-%i\nAccept=yes\n");
+        Link(Path.Combine(Home, ".config/systemd/user/sockets.target.wants/s@one.socket"), socket);
+        Write(Path.Combine(Home, ".config/systemd/user/s@.service"), "[Service]\nExecStart=/home/u/serve\n");
+
+        var entry = Assert.Single(Audit());
+
+        Assert.Contains("runs s@.service", entry.Description, StringComparison.Ordinal);
+    }
+
+    [UnprivilegedUnixFact]
+    public void A_drop_in_directory_that_cannot_be_listed_is_named_in_its_units_entry_and_the_audit_goes_on()
+    {
+        // The audit runs as root, but a home on NFS with root_squash, or a directory removed between the check and the
+        // listing, still fails the listing; one user's directory must not take the audit down for everyone.
+        Link(Path.Combine(Home, ".config/systemd/user/default.target.wants/x.service"),
+            Write(Path.Combine(Home, ".config/systemd/user/x.service"), "[Service]\nExecStart=/home/u/x\n"));
+        var locked = Directory.CreateDirectory(Path.Combine(Home, ".config/systemd/user/x.service.d")).FullName;
+        AnotherEnabledUnit();
+        File.SetUnixFileMode(locked, UnixFileMode.None);
+        try
+        {
+            var entries = Audit();
+
+            Assert.Equal("/home/u/other", entries.Single(e => e.Entry == "other.service").ImagePath);
+            var entry = entries.Single(e => e.Entry == "x.service");
+            Assert.Null(entry.ImagePath);
+            Assert.Contains("could not all be read", entry.Description, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
     [UnixFact]
     public void An_instance_resolves_to_its_template_and_its_template_drop_ins()
     {
@@ -716,6 +912,7 @@ public sealed class UserUnitTests : IDisposable
     [InlineData("a-b-c.service", new[] { "a-b-c.service", "a-b-.service", "a-.service", "service" })]
     [InlineData("w-x@i.service", new[] { "w-x@i.service", "w-x@.service", "w-.service", "service" })]
     [InlineData("-.slice", new[] { "-.slice", "slice" })]
+    [InlineData("bogus", new[] { "bogus" })]
     public void Drop_ins_are_looked_for_under_the_name_its_template_its_dash_prefixes_and_its_type(string name, string[] expected)
     {
         Assert.Equal(expected, UserUnits.DropInNames([name]));
