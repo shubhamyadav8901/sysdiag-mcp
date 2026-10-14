@@ -51,58 +51,48 @@ register the relay locally. See the [Windows](docs/windows.md#deploying-to-a-tar
 [the relay](docs/relay.md). That channel is plaintext HTTP: keep
 it on a network you trust, or tunnel it.
 
-## Status
+## What it answers
 
-**Current release: `v3.0.0`.** Versions before `v1.0.0` were tagged retroactively at the commits
-that shipped something; `v1.0.0` is the first release in which every tool could actually be called
-from an MCP client. See the [changelog](CHANGELOG.md) for what each one changed.
+**Current release: `v3.0.0`.** See the [changelog](CHANGELOG.md) for what each version changed.
 
-**The build order is complete.** Twenty tools plus an opt-in twenty-first (`update_self`), both
-transports (stdio locally, authenticated Streamable HTTP for running on a target), dump capture,
-Procmon-backed activity tracing, the Sysinternals shell-outs, and the process/service control write
-tools.
+The three servers answer the same questions with each platform's own primitives, under the same tool
+names, so an agent asks a Linux box and a Windows box alike.
 
-Most are backed by native Windows APIs. Four shell out to Sysinternals — `path_handle_search` and
-`process_handles` to `handle`, `capture_activity` to `Procmon`, `autostart_audit` to `autorunsc` —
-and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
+| Question | Tool | Windows | Linux | macOS |
+|---|---|:-:|:-:|:-:|
+| Who holds this file open or locked | `who_locks_path`, `path_handle_search` | ✓ | ✓ | ✓ |
+| What one process holds and has loaded | `process_handles`, `process_modules` | ✓ | ✓ | ✓ |
+| What is running, from what command line | `process_list` | ✓ | ✓ | ✓ |
+| Which process owns this socket or pipe | `network_owners`, `named_pipes` | ✓ | ✓ | ✓ |
+| How a service is configured, and its state | `service_config` | ✓ | ✓ | ✓ |
+| What the machine logged | `event_log_tail` | ✓ | ✓ | ✓ |
+| What runs without anyone starting it | `autostart_audit` | ✓ | ✓ | ✓ |
+| Is this the binary we shipped | `file_signatures` | ✓ | ✓ | ✓ |
+| Why is this access denied | `effective_access` | ✓ | ✓ | ✓ |
+| What is this machine, and what can the server see | `system_overview`, `capabilities` | ✓ | ✓ | ✓ |
+| Which containers are running | `container_list` | | ✓ | ✓ |
+| What a registry setting really is | `registry_read` | ✓ | | |
+| Snapshot a process for a debugger | `capture_dump` *(writes)* | ✓ | | |
+| Record and filter file and registry activity | `capture_activity`, `query_activity` | ✓ | | |
+| Start, stop or restart a service; signal a process | `service_control`, `process_control` *(writes)* | ✓ | ✓ | ✓ |
+| Move files to and from the target | `put_file` *(writes)*, `get_file` | ✓ | ✓ | ✓ |
+| Run a command; replace the server itself | `run_command`, `update_self` *(writes, opt-in)* | ✓ | ✓ | ✓ |
 
-| Tool | Backing | Answers |
-|---|---|---|
-| `who_locks_path` | Restart Manager | Who is holding this file or folder open |
-| `path_handle_search` | Sysinternals `handle` | Handle search across every process (files by default; all object types on request) |
-| `process_handles` | Sysinternals `handle -p` | Everything one process holds open — files, keys, sections, mutants, tokens |
-| `autostart_audit` | Sysinternals `autorunsc` | What runs without anybody starting it, and who signed it |
-| `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
-| `capabilities` | — | Which tools work here, and why any do not |
-| `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
-| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLLs loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision. Version and signature are read from the file the kernel names as behind each mapping, held open while it is read - not from the listed path, which may since hold another file (flagged replaced on disk). The kernel's name is the name the file was opened under and does not follow a rename of a directory above it, so it is trusted only where SYSTEM, Administrators and TrustedInstaller alone can change every directory on the path - a policy judgement, not a proof: a directory moved into place earlier, while permissions were looser, is not caught, and holders of the restore or take-ownership privilege can change any directory. A module whose file cannot be identified that way - under a user profile or temp directory, or on a share - is flagged, names the first directory anyone else can change, and is not verified. The verdict is on that file, not on the code in memory |
-| `named_pipes` | `NtQueryDirectoryFile` + `WaitNamedPipe` | IPC pipes, and whether any has every instance taken and none listening for a client |
-| `network_owners` | IP Helper | Which process owns which socket |
-| `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
-| `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
-| `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
-| `effective_access` | Security descriptors + a real access attempt | Why is this denied |
-| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant. Available under every grant; HKLM\SAM, HKLM\SECURITY and other users' HKU hives need `--allow-arbitrary-read`, and values named like a credential are always redacted |
-| `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg. Never lsass, lsaiso or csrss (judged by the image in System32): they hold the machine's credentials |
-| `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
-| `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
-| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting. Terminate and suspend are refused for core processes (lsass, csrss, winlogon…), for any process Windows marks critical, and for the host of any service `service_control` refuses to stop; resume never is |
-| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses to stop or restart a small set of critical ones, by short or display name |
-| `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off. It is also the one tool a draining server still accepts, so calling it again with `force` stops the wait |
-| `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
-| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to the artifact directory unless arbitrary write is enabled, and to the server's own folder only with the self-update grant |
-| `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](docs/relay.md#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
+Write tools disappear under `--read-only`, and the opt-in ones need their own grant. Each server's page
+lists its tools with what backs each one: [Windows](docs/windows.md#tools), [Linux](docs/linux.md),
+[macOS](docs/macos.md).
 
 ## Requirements
 
-| Component | Runs on |
-|---|---|
-| `WinDiag.Mcp` — the diagnostics server | **Windows only**, x64 or x86. Its tools are Windows primitives: the registry, the SCM, the event log, Authenticode, Sysinternals. |
-| `DiagRelay.Mcp` — the local relay | **Windows** and **Linux**: verified end to end against live Windows targets — pre-connect, forwarded calls, and a byte-identical `push_file`/`pull_file` round trip — and the full test suite passes on a real Linux runtime (`tools/test-linux.sh`). **macOS**: its test suite runs on Apple Silicon in CI's `macos-latest` job. |
+| Component | Runs on | For complete answers |
+|---|---|---|
+| `WinDiag.Mcp` | Windows, x64 or x86 | Run elevated; four tools also need Sysinternals, which `tools/deploy-target.ps1` stages |
+| `LinuxDiag.Mcp` | Ubuntu and Debian, x86-64 only | Run as root |
+| `MacDiag.Mcp` | macOS 13 or later, Apple Silicon or Intel | Run as root, with Full Disk Access |
+| `DiagRelay.Mcp` | Windows x64, Linux x64, macOS on Apple Silicon | Nothing: it only forwards calls |
 
-The relay is what lets a Mac or Linux machine drive Windows targets. Build it for the machine you are on:
-
-    dotnet publish src/DiagRelay.Mcp -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o artifacts/diagrelay
+Every binary is self-contained. Run with less, a server still answers, says its answer is partial, and
+`capabilities` names what is missing.
 
 ## Security, in short
 
