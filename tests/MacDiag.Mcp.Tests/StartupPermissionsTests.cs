@@ -84,7 +84,7 @@ public sealed class StartupPermissionsTests
         var tmp = Assert.Single(ParseStat("0 1777 Directory /private/tmp\n"));
 
         Assert.Equal(0b1_111_111_111, tmp.Mode);
-        Assert.Contains("sticky", MacServiceInstaller.ArtifactDirectoryProblem(existed: true, tmp), StringComparison.Ordinal);
+        Assert.Contains("sticky", Assert.Single(RootOnlyDirectoryProblems([tmp], "/private/tmp")), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -115,5 +115,39 @@ public sealed class StartupPermissionsTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [MacFact]
+    [SupportedOSPlatform("macos")]
+    public void A_directory_not_yet_created_is_judged_by_the_directories_above_it_and_refused_under_ones_another_account_owns()
+    {
+        // Before: a new --artifacts directory was created and never checked at all. The test's temp directory belongs to
+        // the account running it, never root, so a directory to be made inside it must be refused before it exists.
+        var mine = Directory.CreateTempSubdirectory("artifacts-").FullName;
+        try
+        {
+            var wanted = Path.Combine(mine, "new", "deeper");
+
+            var refused = Assert.Throws<ConfigurationException>(() => RequireRootOnlyDirectory(wanted, "--artifacts"));
+
+            Assert.Contains($"{RealPath(mine)} is owned by uid ", refused.Message, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(Path.Combine(mine, "new")));
+        }
+        finally
+        {
+            Directory.Delete(mine, recursive: true);
+        }
+    }
+
+    [MacFact]
+    [SupportedOSPlatform("macos")]
+    public void A_directory_not_yet_created_under_root_only_directories_passes_and_is_not_made_by_the_check()
+    {
+        // /var is a link to private/var, and /private/var/db is root's 0755 on every Mac.
+        var wanted = $"/var/db/macdiag-test-{Guid.NewGuid():N}/x";
+
+        RequireRootOnlyDirectory(wanted, "--artifacts");
+
+        Assert.False(Directory.Exists(Path.GetDirectoryName(wanted)));
     }
 }

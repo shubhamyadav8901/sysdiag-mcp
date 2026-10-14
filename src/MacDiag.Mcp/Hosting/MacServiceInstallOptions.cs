@@ -177,6 +177,15 @@ public sealed record MacServiceInstallOptions
         return env.ToString();
     }
 
+    /// <summary>Every grant as the env file now has it, yes or no, printed at install.</summary>
+    /// <remarks>Printed whole, the ones not given included, so a grant that did not make it reads as "no" on the screen
+    /// of the person who meant to give it, not weeks later as a tool that is missing.</remarks>
+    public string GrantSummary() =>
+        $"read-only: {YesNo(ReadOnly)}; self-update: {YesNo(AllowSelfUpdate)}; command execution: {YesNo(AllowCommandExecution)}; " +
+        $"arbitrary write: {YesNo(AllowArbitraryWrite)}; arbitrary read: {YesNo(AllowArbitraryRead)}";
+
+    private static string YesNo(bool value) => value ? "yes" : "no";
+
     /// <summary>The launchd job. World-readable by launchd's rules, so it names the env file and never holds the token.</summary>
     /// <remarks>
     /// <para>KeepAlive restarts only a failed exit: update_self and a deliberate stop exit 0 and must stay down.

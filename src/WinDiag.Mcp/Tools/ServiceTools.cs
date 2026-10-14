@@ -55,14 +55,14 @@ public sealed class ServiceTools
         if (result.Service is not { } service)
         {
             var builder = new StringBuilder();
-            builder.Append("No service named '").Append(result.Query).Append("' exists.");
+            builder.Append("No service named '").Append(RenderLimits.Printable(result.Query)).Append("' exists.");
 
             if (result.Candidates.Count > 0)
             {
                 builder.AppendLine(" Did you mean one of these?");
                 foreach (var candidate in result.Candidates)
                 {
-                    builder.Append("- ").AppendLine(candidate);
+                    builder.Append("- ").AppendLine(RenderLimits.Printable(candidate));
                 }
             }
 
@@ -71,13 +71,13 @@ public sealed class ServiceTools
 
         var text = new StringBuilder();
 
-        text.Append(service.ServiceName);
+        text.Append(RenderLimits.Printable(service.ServiceName));
         if (service.DisplayName is { } display && !string.Equals(display, service.ServiceName, StringComparison.Ordinal))
         {
-            text.Append(" (").Append(display).Append(')');
+            text.Append(" (").Append(RenderLimits.Printable(display)).Append(')');
         }
 
-        text.Append(" - ").Append(service.Status).Append(", start type ").Append(service.StartType);
+        text.Append(" - ").Append(RenderLimits.Printable(service.Status)).Append(", start type ").Append(RenderLimits.Printable(service.StartType));
         if (service.DelayedAutoStart)
         {
             text.Append(" (delayed)");
@@ -97,13 +97,13 @@ public sealed class ServiceTools
             text.AppendLine("NOTE: this service is DISABLED and cannot be started until its start type changes.");
         }
 
-        text.Append("Runs as: ").AppendLine(service.Account ?? "(not recorded)");
-        text.Append("Type: ").AppendLine(service.ServiceType);
-        text.Append("Image: ").AppendLine(service.ImagePath ?? "(not recorded)");
+        text.Append("Runs as: ").AppendLine(RenderLimits.Printable(service.Account) ?? "(not recorded)");
+        text.Append("Type: ").AppendLine(RenderLimits.Printable(service.ServiceType));
+        text.Append("Image: ").AppendLine(RenderLimits.Printable(service.ImagePath) ?? "(not recorded)");
 
         if (service.Description is { } description)
         {
-            text.Append("Description: ").AppendLine(description);
+            text.Append("Description: ").AppendLine(RenderLimits.Printable(description));
         }
 
         AppendList(text, "Depends on", service.DependsOn);
@@ -115,6 +115,6 @@ public sealed class ServiceTools
     private static void AppendList(StringBuilder builder, string label, IReadOnlyList<string> values)
     {
         builder.Append(label).Append(": ")
-            .AppendLine(values.Count == 0 ? "(none)" : string.Join(", ", values));
+            .AppendLine(values.Count == 0 ? "(none)" : string.Join(", ", values.Select(v => RenderLimits.Printable(v))));
     }
 }

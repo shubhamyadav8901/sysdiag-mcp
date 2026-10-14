@@ -9,13 +9,15 @@ namespace WinDiag.Mcp.Diagnostics.Pipes;
 /// </summary>
 /// <remarks>
 /// <para><c>Directory.GetFiles(@"\\.\pipe\")</c> would list the names in one line, but only the names.
-/// The interesting number -- how many instances are in use against how many the server allowed -- is
-/// only available by querying the pipe device directly, where the file-system structure reuses two
-/// fields for it: <c>EndOfFile</c> carries the active instance count and <c>AllocationSize</c> the
-/// maximum.</para>
-/// <para>That number is what distinguishes "the service is wedged" from "the service is fine and the
-/// client cannot get a connection because every instance is taken", which look identical from the
-/// outside.</para>
+/// How many instances exist against how many the server allowed is only available by querying the pipe
+/// device directly, where the file-system structure reuses two fields for it: <c>EndOfFile</c> carries
+/// the number of instances <em>created</em> and <c>AllocationSize</c> the maximum.</para>
+/// <para>Created is not busy. An instance exists from <c>CreateNamedPipe</c> onwards and is listening
+/// until a client takes it, so "all instances created" alone says nothing about whether a client can
+/// connect. For those pipes only, <c>WaitNamedPipe</c> is asked with a 1 ms timeout: it returns at once
+/// when an instance is listening, and times out when none is -- which is what distinguishes "the
+/// service is fine and every instance is taken" from a pipe that would accept a client right now. It
+/// connects nothing, so the server never sees it.</para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public sealed class NamedPipeInspector : INamedPipeInspector
@@ -32,6 +34,14 @@ public sealed class NamedPipeInspector : INamedPipeInspector
     private const int StatusSuccess = 0;
     private const int StatusNoMoreFiles = unchecked((int)0x80000006);
 
+    /// <summary>
+    /// The shortest wait <c>WaitNamedPipe</c> accepts that is not one of its special values: 0 means the
+    /// pipe's default timeout, often 50 ms, and an answer about listening needs no waiting at all.
+    /// </summary>
+    private const uint ProbeTimeoutMilliseconds = 1;
+
+    private const int ErrorSemTimeout = 121;
+
     /// <summary>Buffer for one batch of directory entries. Grown by re-reading, never by guessing.</summary>
     private const int BufferBytes = 64 * 1024;
 
@@ -42,29 +52,69 @@ public sealed class NamedPipeInspector : INamedPipeInspector
         _options = options;
     }
 
-    public NamedPipeListResult List(string? nameFilter, CancellationToken cancellationToken)
-    {
-        var pipes = Enumerate(cancellationToken);
+    public NamedPipeListResult List(string? nameFilter, CancellationToken cancellationToken) =>
+        Arrange(Enumerate(cancellationToken), nameFilter, _options.MaxResults, ProbeListening, cancellationToken);
 
+    /// <summary>Filters, probes and orders an enumeration. Separate so it can be tested without a pipe.</summary>
+    /// <remarks>
+    /// Only pipes with every instance created are probed. A pipe below its limit can still create
+    /// another instance, and probing hundreds of healthy pipes would cost a timer tick each for nothing;
+    /// the probes that do run go in parallel because a single-instance pipe with its client connected --
+    /// Chromium creates hundreds -- times out rather than answering at once.
+    /// </remarks>
+    internal static NamedPipeListResult Arrange(
+        IEnumerable<NamedPipe> pipes,
+        string? nameFilter,
+        int maxResults,
+        Func<string, bool?> probe,
+        CancellationToken cancellationToken)
+    {
         IEnumerable<NamedPipe> matched = pipes;
         if (!string.IsNullOrWhiteSpace(nameFilter))
         {
             matched = matched.Where(p => p.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase));
         }
 
-        // Exhausted pipes first: if any pipe is at its limit, that is almost certainly the answer the
-        // caller came for, and it must not be buried alphabetically among hundreds of healthy ones.
-        var ordered = matched
-            .OrderByDescending(p => p.Exhausted)
+        var probed = matched.ToArray();
+
+        Parallel.For(
+            0,
+            probed.Length,
+            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = cancellationToken },
+            i =>
+            {
+                if (probed[i].AllInstancesCreated)
+                {
+                    probed[i] = probed[i] with { Listening = probe(probed[i].Name) };
+                }
+            });
+
+        // Busy pipes first: one with every instance taken and none listening is almost certainly the
+        // answer the caller came for, and it must not be buried alphabetically among hundreds of
+        // healthy ones. Merely having created every instance is not that, so it does not jump the queue.
+        var ordered = probed
+            .OrderByDescending(p => p.Busy)
             .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var truncated = ordered.Count > _options.MaxResults;
+        var truncated = ordered.Count > maxResults;
 
         return new NamedPipeListResult(
-            Pipes: truncated ? ordered.Take(_options.MaxResults).ToArray() : ordered,
+            Pipes: truncated ? ordered.Take(maxResults).ToArray() : ordered,
             TotalMatched: ordered.Count,
             Truncated: truncated);
+    }
+
+    /// <summary>Whether an instance of the pipe is waiting for a client, without connecting to it.</summary>
+    /// <returns>Null when the pipe went away or the answer was something other than yes or no.</returns>
+    private static bool? ProbeListening(string name)
+    {
+        if (WaitNamedPipe(@"\\.\pipe\" + name, ProbeTimeoutMilliseconds))
+        {
+            return true;
+        }
+
+        return Marshal.GetLastWin32Error() == ErrorSemTimeout ? false : null;
     }
 
     private static List<NamedPipe> Enumerate(CancellationToken cancellationToken)
@@ -127,7 +177,7 @@ public sealed class NamedPipeInspector : INamedPipeInspector
     private static void ReadEntries(IntPtr buffer, List<NamedPipe> pipes)
     {
         const int nextEntryOffsetOffset = 0;
-        const int endOfFileOffset = 40;      // active instances
+        const int endOfFileOffset = 40;      // instances created, connected or not
         const int allocationSizeOffset = 48; // maximum instances
         const int fileNameLengthOffset = 60;
         const int fileNameOffset = 64;
@@ -137,7 +187,7 @@ public sealed class NamedPipeInspector : INamedPipeInspector
         while (true)
         {
             var nextEntryOffset = Marshal.ReadInt32(entry, nextEntryOffsetOffset);
-            var activeInstances = Marshal.ReadInt64(entry, endOfFileOffset);
+            var instancesCreated = Marshal.ReadInt64(entry, endOfFileOffset);
             var maximumInstances = Marshal.ReadInt64(entry, allocationSizeOffset);
             var nameLength = Marshal.ReadInt32(entry, fileNameLengthOffset);
 
@@ -148,7 +198,7 @@ public sealed class NamedPipeInspector : INamedPipeInspector
                 {
                     pipes.Add(new NamedPipe(
                         name,
-                        Clamp(activeInstances),
+                        Clamp(instancesCreated),
                         maximumInstances >= int.MaxValue ? -1 : Clamp(maximumInstances)));
                 }
             }
@@ -293,6 +343,10 @@ public sealed class NamedPipeInspector : INamedPipeInspector
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "WaitNamedPipeW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WaitNamedPipe(string name, uint timeoutMilliseconds);
 }
 
 /// <summary>Raised when named pipes could not be enumerated at all.</summary>

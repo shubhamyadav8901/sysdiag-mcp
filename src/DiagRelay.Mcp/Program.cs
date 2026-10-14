@@ -14,9 +14,10 @@ if (args.Any(a => a is "--help" or "-h" or "/?"))
 
         Environment:
           SYSDIAG_RELAY_FILE_ROOT  semicolon-separated local directories push_file may read from and
-                                   pull_file may write to (default: the parent of this executable's
-                                   directory, plus a per-user 'sysdiag' folder: %TEMP%\sysdiag on
-                                   Windows, $XDG_CACHE_HOME/sysdiag or ~/.cache/sysdiag elsewhere)
+                                   pull_file may write to (default: a per-user 'sysdiag' folder:
+                                   %TEMP%\sysdiag on Windows, $XDG_CACHE_HOME/sysdiag or
+                                   ~/.cache/sysdiag elsewhere; plus the artifacts directory when this
+                                   executable runs from artifacts/diagrelay)
         """);
     return 0;
 }

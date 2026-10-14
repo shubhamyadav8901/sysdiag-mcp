@@ -7,6 +7,10 @@ public enum SignatureVerdict
     Unsigned,
     Invalid,
     Unknown,
+
+    /// <summary>The signature verifies, but its certificate is not one Apple issued: self-signed or a private CA.</summary>
+    /// <remarks>Last, so the values before it keep their numbers. Its name and team are the signer's own claim.</remarks>
+    Untrusted,
 }
 
 /// <param name="ResolvedPath">Where a symlinked path leads; null when the path is the file itself.</param>

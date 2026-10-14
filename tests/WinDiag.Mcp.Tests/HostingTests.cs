@@ -126,6 +126,46 @@ public sealed class CommandLineTests
         Assert.Contains("full URL", ex.Message);
     }
 
+    [Theory]
+    [InlineData("--read-only", "WINDIAG_READ_ONLY=1")]
+    [InlineData("--allow-command-execution", "WINDIAG_ALLOW_COMMAND_EXECUTION=1")]
+    [InlineData("--allow-arbitrary-read", "WINDIAG_ALLOW_ARBITRARY_READ=1")]
+    [InlineData("--artifacts", "WINDIAG_ARTIFACT_DIR")]
+    public void Refuses_an_install_option_on_a_by_hand_run_and_names_the_variable_that_sets_it(string option, string variable)
+    {
+        // `WinDiag.Mcp.exe --http ... --read-only` by analogy with the install flags used to start a
+        // fully writable server: the flag was dropped without a word, because a by-hand server reads its
+        // grants only from the environment.
+        var ex = Assert.Throws<ConfigurationException>(
+            () => CommandLine.RejectUnknownServerArguments(["--http", "http://x:1", option]));
+
+        Assert.Contains(option, ex.Message, StringComparison.Ordinal);
+        Assert.Contains(variable, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--readonly")]
+    [InlineData("--htp")]
+    [InlineData("http://x:1")]
+    public void Refuses_an_argument_a_by_hand_server_does_not_understand(string argument)
+    {
+        var ex = Assert.Throws<ConfigurationException>(
+            () => CommandLine.RejectUnknownServerArguments(["--http", "http://x:1", argument]));
+
+        Assert.Contains($"'{argument}'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Accepts_what_a_by_hand_server_and_a_registered_service_are_started_with()
+    {
+        // The service's binPath is `"exe" --http <url>`, and update_self relaunches with the same
+        // arguments, so refusing either form would take a target down on its next restart.
+        CommandLine.RejectUnknownServerArguments([]);
+        CommandLine.RejectUnknownServerArguments(["--http"]);
+        CommandLine.RejectUnknownServerArguments(["--http", "http://10.0.0.5:4024"]);
+        CommandLine.RejectUnknownServerArguments(["--HTTP", "http://10.0.0.5:4024"]);
+    }
+
     [Fact]
     public void Asking_for_the_removed_relay_is_recognised_so_it_is_refused_rather_than_misread()
     {

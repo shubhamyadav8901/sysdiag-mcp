@@ -19,21 +19,22 @@ public sealed class RealPathTests
         : null;
 
     [Fact]
-    public void Windows_rule_collapses_a_relative_targets_dotdot_by_spelling_against_the_links_directory()
+    public void Windows_rule_stops_at_a_relative_target_instead_of_guessing_where_it_lands()
     {
-        // Windows joins hop\..\.. onto A and collapses it as spelled: the parent of A. It never goes
-        // through hop, so hop pointing deep inside A cannot pull the answer back under A.
-        var real = FileScope.RealPath(Path.Combine(A, "climb", "x"), FakeLinks, relativeTargetsBySpelling: true);
+        // Windows would join hop\..\.. onto A and collapse it as spelled. The walk used to do the same,
+        // but .NET also hands back a junction to \Device\... as an unrooted string, and nothing tells the
+        // two apart -- so an unrooted target is not followed at all, and the path is left unjudged.
+        var (real, unjudged) = FileScope.Walk(Path.Combine(A, "climb", "x"), FakeLinks, windowsTargets: true, isMagicLink: null);
 
-        Assert.Equal(Path.Combine(Path.GetDirectoryName(A)!, "x"), real);
-        Assert.False(FileScope.IsUnder(real, A));
+        Assert.True(unjudged);
+        Assert.Equal(Path.Combine(A, "climb", "x"), real);
     }
 
     [Fact]
     public void Posix_rule_walks_a_relative_target_through_the_links_it_names()
     {
         // The kernel follows hop to A\s\d and climbs twice from there, landing back in A.
-        var real = FileScope.RealPath(Path.Combine(A, "climb", "x"), FakeLinks, relativeTargetsBySpelling: false);
+        var real = FileScope.RealPath(Path.Combine(A, "climb", "x"), FakeLinks, windowsTargets: false);
 
         Assert.Equal(Path.Combine(A, "x"), real);
     }
@@ -48,7 +49,7 @@ public sealed class RealPathTests
     [Fact]
     public void A_chain_of_exactly_the_kernels_link_limit_resolves()
     {
-        var real = FileScope.RealPath(Path.Combine(A, "l0"), Chain(FileScope.MaxLinkHops), relativeTargetsBySpelling: false);
+        var real = FileScope.RealPath(Path.Combine(A, "l0"), Chain(FileScope.MaxLinkHops), windowsTargets: false);
 
         Assert.Equal(Path.Combine(A, $"l{FileScope.MaxLinkHops}"), real);
     }
@@ -57,7 +58,7 @@ public sealed class RealPathTests
     public void One_link_past_the_kernels_limit_is_refused_as_a_loop()
     {
         var ex = Assert.Throws<FileTransferException>(() =>
-            FileScope.RealPath(Path.Combine(A, "l0"), Chain(FileScope.MaxLinkHops + 1), relativeTargetsBySpelling: false));
+            FileScope.RealPath(Path.Combine(A, "l0"), Chain(FileScope.MaxLinkHops + 1), windowsTargets: false));
 
         Assert.Contains("link loop", ex.Message, StringComparison.Ordinal);
     }
@@ -114,16 +115,20 @@ public sealed class WindowsRelativeSymlinkScopeTests : IDisposable
     }
 
     [WindowsSymlinkFact]
-    public void A_relative_symlink_that_climbs_by_spelling_is_judged_where_Windows_lands()
+    public void A_relative_symlink_inside_an_owned_directory_is_not_owned()
     {
-        // The real form of the fake above: Windows opens A\climb\x as the parent of A, outside it.
+        // The real form of the fake above. Windows opens A\climb\x as the parent of A, outside it; and a
+        // relative link that stays inside A looks, by its target text, exactly like a junction to another
+        // volume. Both need the arbitrary grant.
         var owned = Directory.CreateDirectory(Path.Combine(_parent, "A")).FullName;
         Directory.CreateDirectory(Path.Combine(owned, "s", "d"));
         Directory.CreateSymbolicLink(Path.Combine(owned, "hop"), Path.Combine(owned, "s", "d"));
         Directory.CreateSymbolicLink(Path.Combine(owned, "climb"), Path.Combine("hop", "..", ".."));
+        Directory.CreateSymbolicLink(Path.Combine(owned, "near"), "s");
+        var server = Directory.CreateDirectory(Path.Combine(_parent, "server")).FullName;
+        var options = new FileTransferOptions(owned, false, false, "W=1", "R=1");
 
-        var real = FileScope.RealPath(Path.Combine(owned, "climb", "x"));
-
-        Assert.Equal(Path.Combine(_parent, "x"), real, ignoreCase: true);
+        Assert.Equal(WriteScope.Arbitrary, FileScope.Of(Path.Combine(owned, "climb", "x"), options, server));
+        Assert.Equal(WriteScope.Arbitrary, FileScope.Of(Path.Combine(owned, "near", "d", "x"), options, server));
     }
 }

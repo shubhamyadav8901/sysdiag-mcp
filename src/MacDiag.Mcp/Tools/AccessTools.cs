@@ -56,8 +56,15 @@ public sealed class AccessTools(IAccessInspector access)
         builder.Append("Execute: ").Append(Verdict(report.Execute.Allowed)).Append(" - ").AppendLine(RenderLimits.Printable(report.Execute.Reason));
         if (report.BlockedAt is { } blockedAt)
         {
-            builder.Append("BLOCKED at ").Append(RenderLimits.Printable(blockedAt)).Append(": ")
-                .AppendLine(RenderLimits.Printable(report.Traversal.First(s => s.Path == blockedAt).Reason));
+            // The inspector takes BlockedAt from a traversal step, but the summary is the one place the caller sees
+            // the verdict: a report that broke that pairing must still render, not throw instead of answering.
+            builder.Append("BLOCKED at ").Append(RenderLimits.Printable(blockedAt));
+            if (report.Traversal.FirstOrDefault(s => s.Path == blockedAt) is { } step)
+            {
+                builder.Append(": ").Append(RenderLimits.Printable(step.Reason));
+            }
+
+            builder.AppendLine();
         }
 
         builder.Append("Owner ").Append(RenderLimits.Printable(report.Owner)).Append(", group ").Append(RenderLimits.Printable(report.Group))

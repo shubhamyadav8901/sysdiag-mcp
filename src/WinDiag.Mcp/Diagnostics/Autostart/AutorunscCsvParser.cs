@@ -1,4 +1,5 @@
 using System.Globalization;
+using WinDiag.Mcp.Diagnostics.External;
 
 namespace WinDiag.Mcp.Diagnostics.Autostart;
 
@@ -15,7 +16,8 @@ namespace WinDiag.Mcp.Diagnostics.Autostart;
 /// here writes console text. Handled in <c>ExternalToolPolicy.UnicodeConsoleTool</c>, not here.</description></item>
 /// <item><description>A row whose <c>Entry</c> is empty is a <strong>section header</strong> — Autoruns
 /// emits one for every location it examined, including the ones that were empty. In a 254-row capture,
-/// 15 were these. Reported as entries they would read as autostarts with no name and no image.</description></item>
+/// 15 were these. Reported as entries they would read as autostarts with no name and no image. Only a
+/// row that is otherwise empty too is taken for one; see <see cref="IsSectionHeader"/>.</description></item>
 /// </list>
 /// </remarks>
 internal static class AutorunscCsvParser
@@ -53,56 +55,103 @@ internal static class AutorunscCsvParser
     private const string VerifiedPrefix = "(Verified)";
     private const string NotVerifiedPrefix = "(Not verified)";
 
-    public static List<AutostartEntry> Parse(string csv)
+    /// <summary>Reads autorunsc's output into entries, counting the records that did not fit.</summary>
+    /// <remarks>
+    /// <para>Records are read quote-aware, so a quoted field may span lines. Splitting on <c>'\n'</c> first
+    /// is what this replaced, and it was exploitable: a Run value name is any text an unprivileged user
+    /// likes, including a line break followed by a complete row. Split by line, the real record's first
+    /// fragment ended in an open quote, read as a section header and was dropped -- the unsigned entry
+    /// disappeared -- and the smuggled row was reported as a signed Microsoft entry.</para>
+    /// <para>Only the lines <em>before</em> the header are still read one at a time. autorunsc writes
+    /// notes there, and a stray quote in one of them must not swallow the header.</para>
+    /// </remarks>
+    public static AutorunscParseResult Parse(string csv)
     {
         var entries = new List<AutostartEntry>();
 
         if (string.IsNullOrWhiteSpace(csv))
         {
-            return entries;
+            return new AutorunscParseResult(entries, 0);
         }
 
-        Dictionary<string, int>? columns = null;
+        var (columns, headerWidth, body) = FindHeader(csv);
+        var malformed = 0;
 
-        foreach (var line in csv.Split('\n'))
+        foreach (var fields in DelimitedText.ReadRecords(new StringReader(body), CancellationToken.None))
         {
-            var trimmed = line.TrimEnd('\r');
-            if (trimmed.Length == 0)
+            if (fields.Count == 1 && fields[0].Trim().Length == 0)
             {
                 continue;
             }
 
-            var fields = DelimitedLine.Split(trimmed);
-
-            if (columns is null)
+            // A record whose width differs from the header's is not one autorunsc wrote whole: it is a
+            // fragment of a record broken by an unquoted line break, or several run together. Either
+            // way no column of it can be trusted, and neither can the list it came from -- so it is
+            // counted for the caller rather than dropped or guessed at.
+            if (fields.Count != headerWidth)
             {
-                if (!LooksLikeHeader(fields))
-                {
-                    // Autoruns writes progress and access-denied notes to stdout ahead of the header.
-                    continue;
-                }
-
-                columns = MapColumns(fields);
+                malformed++;
                 continue;
             }
 
-            var entry = ReadRow(fields, columns);
-            if (entry is not null)
+            switch (ReadRow(fields, columns))
             {
-                entries.Add(entry);
+                case { } entry:
+                    entries.Add(entry);
+                    break;
+                case null when !IsSectionHeader(fields, columns):
+                    malformed++;
+                    break;
             }
         }
 
-        if (columns is null)
-        {
-            throw new FormatException(
-                "autorunsc produced no recognisable CSV header. Expected a line naming at least " +
-                $"{string.Join(", ", Required)}. This usually means the output was decoded with the " +
-                "wrong encoding -- autorunsc writes UTF-16 -- or that its column set has changed.");
-        }
-
-        return entries;
+        return new AutorunscParseResult(entries, malformed);
     }
+
+    /// <summary>Finds the header line and returns everything after it.</summary>
+    private static (Dictionary<string, int> Columns, int Width, string Body) FindHeader(string csv)
+    {
+        var position = 0;
+
+        while (position < csv.Length)
+        {
+            var end = csv.IndexOf('\n', position);
+            var next = end < 0 ? csv.Length : end + 1;
+            var line = csv[position..(end < 0 ? csv.Length : end)].TrimEnd('\r');
+
+            if (line.Length > 0)
+            {
+                var fields = DelimitedLine.Split(line);
+                if (LooksLikeHeader(fields))
+                {
+                    return (MapColumns(fields), fields.Count, csv[next..]);
+                }
+            }
+
+            // Autoruns writes progress and access-denied notes to stdout ahead of the header.
+            position = next;
+        }
+
+        throw new FormatException(
+            "autorunsc produced no recognisable CSV header. Expected a line naming at least " +
+            $"{string.Join(", ", Required)}. This usually means the output was decoded with the " +
+            "wrong encoding -- autorunsc writes UTF-16 -- or that its column set has changed.");
+    }
+
+    /// <summary>
+    /// True for the row Autoruns writes for a location it examined: a place, and nothing found in it.
+    /// </summary>
+    /// <remarks>
+    /// An empty Entry alone is not enough. The captured section headers carry Time, Location, Category
+    /// and Profile and nothing else; a row with an empty Entry that still names an image, a signer or a
+    /// launch string is something else, and treating it as a header is how a real autostart was hidden.
+    /// </remarks>
+    private static bool IsSectionHeader(List<string> fields, Dictionary<string, int> columns) =>
+        new[]
+        {
+            EntryColumn, EnabledColumn, DescriptionColumn, SignerColumn, CompanyColumn,
+            ImagePathColumn, VersionColumn, LaunchStringColumn
+        }.All(name => Field(fields, columns, name) is null);
 
     private static bool LooksLikeHeader(List<string> fields) =>
         fields.Any(f => string.Equals(f.Trim(), EntryColumn, StringComparison.OrdinalIgnoreCase))
@@ -138,7 +187,8 @@ internal static class AutorunscCsvParser
 
         if (string.IsNullOrWhiteSpace(entry))
         {
-            // A section header for a location Autoruns looked at. Not an autostart.
+            // Not an autostart: a section header, or -- when IsSectionHeader says otherwise -- a row the
+            // caller counts as malformed.
             return null;
         }
 
@@ -274,3 +324,10 @@ internal static class AutorunscCsvParser
         return trimmed.Length == 0 ? null : trimmed;
     }
 }
+
+/// <summary>What one run of autorunsc parsed to.</summary>
+/// <param name="MalformedRows">
+/// Records after the header that were not reported: a width other than the header's, or an empty Entry
+/// on a row that is not a section header. Non-zero means the list cannot be taken as complete.
+/// </param>
+internal sealed record AutorunscParseResult(List<AutostartEntry> Entries, int MalformedRows);

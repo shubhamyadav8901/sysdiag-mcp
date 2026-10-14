@@ -27,6 +27,8 @@ if (args.Any(a => a is "--install-service" or "--uninstall-service" or "--servic
 {
     try
     {
+        // Before the root check, so a typo is reported as one even without sudo.
+        LinuxCommandLine.Require(args);
         if (!Environment.IsPrivilegedProcess)
         {
             Console.Error.WriteLine("[linuxdiag] service management needs root; run it with sudo.");
@@ -61,6 +63,7 @@ LinuxDiagOptions options;
 string? bind;
 try
 {
+    LinuxCommandLine.Require(args);
     options = LinuxDiagOptions.FromEnvironment();
     bind = HttpBind.Resolve(args, options.HttpBind, "LINUXDIAG_HTTP_BIND");
 }

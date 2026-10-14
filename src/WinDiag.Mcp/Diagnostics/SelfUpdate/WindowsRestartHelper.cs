@@ -156,7 +156,11 @@ public sealed class WindowsRestartHelper : IRestartHelper
             .AppendLine($">>\"{log}\" echo [%time%] done")
             .ToString();
 
-        File.WriteAllText(helper, script, Encoding.ASCII);
+        WriteScript(helper, script);
+
+        // Removed rather than left for cmd's ">" to truncate, for the reason WriteScript gives: a log a user
+        // left here would keep their ownership, and a link at that name would aim SYSTEM's writes elsewhere.
+        RemoveExisting(log);
 
         using var process = Process.Start(new ProcessStartInfo
         {
@@ -168,6 +172,47 @@ public sealed class WindowsRestartHelper : IRestartHelper
         });
 
         _logger.LogInformation("self-update helper started, logging to {Log}", log);
+    }
+
+    /// <summary>Writes <paramref name="script"/> to <paramref name="path"/> as a file this call creates.</summary>
+    /// <remarks>
+    /// <para>Deleted and created anew, never opened and truncated. Truncating keeps the file that is
+    /// there -- its owner, its DACL and every handle already open on it -- and an artifact directory an
+    /// older build left writable by every user may hold a self-update.cmd a user made. Its owner can grant
+    /// itself write access whatever the directory says, and cmd re-reads a batch file line by line while
+    /// the helper waits for the server to exit, so a rewrite there runs as SYSTEM.</para>
+    /// <para><see cref="FileMode.CreateNew"/>, so if anything is at that name again by the time the
+    /// file is created -- which needs write access to the directory -- the update fails instead of
+    /// writing into it.</para>
+    /// </remarks>
+    internal static void WriteScript(string path, string script)
+    {
+        RemoveExisting(path);
+        using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        var bytes = Encoding.ASCII.GetBytes(script);
+        file.Write(bytes);
+    }
+
+    /// <summary>Frees <paramref name="path"/>'s name, whatever has the file open.</summary>
+    /// <remarks>
+    /// Renamed aside before it is deleted. A delete alone frees the name at once only where Windows deletes
+    /// with POSIX semantics; elsewhere -- older Windows, or a volume without them -- the name stays taken
+    /// while anyone holds the file open, a virus scanner included, and CreateNew would then fail the update.
+    /// A rename frees it everywhere, and the renamed file goes when its last handle closes.
+    /// </remarks>
+    internal static void RemoveExisting(string path)
+    {
+        var aside = $"{path}.{Guid.NewGuid():N}.old";
+        try
+        {
+            File.Move(path, aside);
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+
+        File.Delete(aside);
     }
 
     private static string Quote(string argument) =>

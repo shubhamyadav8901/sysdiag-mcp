@@ -12,7 +12,7 @@ namespace WinDiag.Mcp.Diagnostics.Commands;
 /// </remarks>
 public sealed class WindowsShellSet : IShellSet
 {
-    /// <summary><c>cmd.exe /c &lt;command&gt;</c>. The default: it is what a person types.</summary>
+    /// <summary><c>cmd.exe /d /s /c "&lt;command&gt;"</c>. The default: it is what a person types.</summary>
     public const string Cmd = "Cmd";
 
     /// <summary><c>powershell.exe -NoProfile -Command &lt;command&gt;</c>.</summary>
@@ -28,9 +28,15 @@ public sealed class WindowsShellSet : IShellSet
         switch (shell)
         {
             case Cmd:
+                // A raw string, not ArgumentList. ArgumentList escapes each quote as \" -- how the C
+                // runtime unescapes -- but cmd.exe reads its own command line and knows nothing of
+                // backslash escapes, so `"C:\Program Files\x.exe" --version` arrived as
+                // `\"C:\Program` and was "not recognized". /s makes cmd strip exactly the outer pair
+                // added here and run the rest as typed, where without it a line that starts with a quote
+                // and holds more than two loses its first and last. /d skips the AutoRun commands in the
+                // registry, which would otherwise run first and change what the caller's command sees.
                 start.FileName = "cmd.exe";
-                start.ArgumentList.Add("/c");
-                start.ArgumentList.Add(commandLine);
+                start.Arguments = "/d /s /c \"" + commandLine + "\"";
                 break;
 
             case PowerShell:

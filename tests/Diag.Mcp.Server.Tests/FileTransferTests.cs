@@ -134,14 +134,16 @@ public sealed class FileReceiverTests : IDisposable
     public void A_path_through_a_junction_resolves_to_the_ordinary_path_of_its_target()
     {
         // The walk splices the junction's absolute target in and carries on from its root, so the real
-        // path is the target's ordinary spelling -- the form the owned directories are compared in.
+        // path is the target's ordinary spelling -- the form the owned directories are compared in. The
+        // expected side is walked too: the temp directory on a CI runner is spelled with an 8.3 short name
+        // (C:\Users\RUNNER~1), which the walk spells out.
         var junction = Path.Combine(_artifactDir, "escape");
         MakeJunction(junction, _outsideDir);
 
         try
         {
             Assert.Equal(
-                Path.Combine(_outsideDir, "planted.bin"),
+                Path.Combine(FileScope.RealPath(_outsideDir), "planted.bin"),
                 FileScope.RealPath(Path.Combine(junction, "planted.bin")),
                 ignoreCase: true);
         }

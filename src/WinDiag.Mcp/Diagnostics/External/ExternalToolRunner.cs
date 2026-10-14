@@ -82,9 +82,11 @@ public sealed class ExternalToolRunner : IExternalToolRunner
         using var process = new Process { StartInfo = startInfo };
         var stopwatch = Stopwatch.StartNew();
 
+        int processId;
         try
         {
             process.Start();
+            processId = process.Id;
         }
         catch (Exception ex)
         {
@@ -132,7 +134,7 @@ public sealed class ExternalToolRunner : IExternalToolRunner
             process.ExitCode,
             stopwatch.ElapsedMilliseconds);
 
-        return new ExternalToolResult(executable, argv, process.ExitCode, stdout, stderr, stopwatch.Elapsed);
+        return new ExternalToolResult(executable, argv, process.ExitCode, stdout, stderr, stopwatch.Elapsed, processId);
     }
 
     /// <summary>
@@ -206,8 +208,10 @@ public sealed class ExternalToolRunner : IExternalToolRunner
     /// <c>0xE9</c>/<c>0xEF</c> are <c>é</c>/<c>ï</c> in CP1252 (ANSI) but <c>Θ</c>/<c>∩</c> in CP437
     /// (OEM), so decoding as OEM turns every non-ASCII path into mojibake -- a path the model would
     /// then report and act on, and which does not exist on disk.
+    /// Internal so the handle search can compare a process's name with what handle.exe could have written
+    /// for it: see <c>PrintedImageWitness</c>.
     /// </remarks>
-    private static Encoding ConsoleToolEncoding
+    internal static Encoding ConsoleToolEncoding
     {
         get
         {

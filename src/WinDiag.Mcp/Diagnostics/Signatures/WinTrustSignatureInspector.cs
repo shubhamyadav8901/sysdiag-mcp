@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.Win32.SafeHandles;
 
 namespace WinDiag.Mcp.Diagnostics.Signatures;
 
@@ -73,9 +74,44 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
         return new SignatureQueryResult(files, notFound);
     }
 
-    private static FileSignature Describe(string path)
+    /// <remarks>
+    /// <para>Exists for <c>update_self</c>, where verdict and hash used to come from two separate opens
+    /// of the staged file: verified signed, then overwritten through <c>put_file</c>, then hashed, the
+    /// pair was a signed verdict on the hash of an unsigned file -- and the helper's own hash check
+    /// would then install the unsigned one.</para>
+    /// <para><see cref="FileShare.Read"/> and nothing more, so no writer can open the file while this
+    /// holds it, and the open itself fails while one already has it open -- a transfer still in
+    /// progress is refused rather than read half-written. Without <see cref="FileShare.Delete"/> it
+    /// cannot be renamed or replaced either. WinVerifyTrust, the catalog hash and the SHA-256 all read
+    /// through this one handle; the version resource and embedded certificate are read by path, which
+    /// the hold makes the same bytes.</para>
+    /// </remarks>
+    public FileSignature InspectHeld(string path, CancellationToken cancellationToken)
     {
-        var (verdict, detail, catalogSigned) = VerifyEmbeddedThenCatalog(path);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var full = Path.GetFullPath(path);
+        using var held = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        return Describe(full, held);
+    }
+
+    /// <remarks>
+    /// For <c>process_modules</c>, which has to hold the file before it can prove it is the one a process
+    /// mapped, and so cannot let this open it again: a second open by path is exactly the gap a rename
+    /// and replace slips through.
+    /// </remarks>
+    public FileSignature InspectHeld(string path, FileStream held, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(held);
+
+        return Describe(Path.GetFullPath(path), held);
+    }
+
+    private static FileSignature Describe(string path, FileStream? held = null)
+    {
+        var (verdict, detail, catalogSigned, signerSubject) = VerifyEmbeddedThenCatalog(path, held?.SafeFileHandle);
         var info = FileVersionInfo.GetVersionInfo(path);
         var file = new FileInfo(path);
         using var certificate = ReadEmbeddedCertificate(path);
@@ -92,9 +128,10 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
             ProductVersion: NullIfEmpty(info.ProductVersion),
             CompanyName: NullIfEmpty(info.CompanyName),
             OriginalFilename: NullIfEmpty(info.OriginalFilename),
-            SizeBytes: file.Length,
+            SizeBytes: held?.Length ?? file.Length,
             LastWriteTime: new DateTimeOffset(file.LastWriteTimeUtc, TimeSpan.Zero),
-            Sha256: ComputeSha256(path));
+            Sha256: held is null ? ComputeSha256(path) : ComputeSha256(held),
+            SignerSubject: signerSubject);
 
         static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
     }
@@ -112,41 +149,46 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
     /// question it exists to answer is "is this the binary we shipped", and a confident false
     /// "unsigned" on ordinary Windows DLLs poisons every conclusion drawn from it.</para>
     /// </remarks>
-    private static (SignatureVerdict Verdict, string Detail, bool CatalogSigned) VerifyEmbeddedThenCatalog(string path)
+    private static (SignatureVerdict Verdict, string Detail, bool CatalogSigned, string? SignerSubject)
+        VerifyEmbeddedThenCatalog(string path, SafeFileHandle? held)
     {
-        var (verdict, detail, status) = Verify(path);
+        var (verdict, detail, status, signerSubject) = Verify(path, held);
 
         if (status != TrustENosignature && status != TrustESubjectFormUnknown)
         {
-            return (verdict, detail, false);
+            return (verdict, detail, false, signerSubject);
         }
 
-        var catalog = VerifyViaCatalog(path);
+        var catalog = VerifyViaCatalog(path, held);
         if (catalog is not { } result)
         {
-            return (verdict, detail, false);
+            return (verdict, detail, false, null);
         }
 
         return (Classify(result.Status),
             result.Status == TrustEOk
                 ? $"Signature is present and trusted, via the system catalog {result.CatalogFile}."
                 : Explain(result.Status),
-            result.Status == TrustEOk);
+            result.Status == TrustEOk,
+            result.SignerSubject);
     }
 
     /// <summary>
     /// Looks the file's hash up in the system catalogs and verifies the catalog entry, if one exists.
     /// </summary>
     /// <returns>Null when the file is in no catalog, which means it genuinely has no signature.</returns>
-    private static (int Status, string CatalogFile)? VerifyViaCatalog(string path)
+    private static (int Status, string CatalogFile, string? SignerSubject)? VerifyViaCatalog(
+        string path, SafeFileHandle? held)
     {
-        using var stream = TryOpenRead(path);
-        if (stream is null)
+        using var owned = held is null ? TryOpenRead(path) : null;
+        var handle = held ?? owned?.SafeFileHandle;
+        if (handle is null)
         {
             return null;
         }
 
-        var fileHandle = stream.SafeFileHandle.DangerousGetHandle();
+        Rewind(handle);
+        var fileHandle = handle.DangerousGetHandle();
 
         if (!CryptCATAdminAcquireContext2(out var adminContext, IntPtr.Zero, "SHA256", IntPtr.Zero, 0))
         {
@@ -183,8 +225,10 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
                     return null;
                 }
 
-                return (VerifyCatalogMember(adminContext, info.wszCatalogFile, path, hash, fileHandle),
-                    info.wszCatalogFile);
+                var status = VerifyCatalogMember(
+                    adminContext, info.wszCatalogFile, path, hash, fileHandle, out var signerSubject);
+
+                return (status, info.wszCatalogFile, signerSubject);
             }
             finally
             {
@@ -211,7 +255,7 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
     /// which is exactly why the omission survives casual testing.</para>
     /// </remarks>
     private static int VerifyCatalogMember(
-        IntPtr adminContext, string catalogFile, string path, byte[] hash, IntPtr fileHandle)
+        IntPtr adminContext, string catalogFile, string path, byte[] hash, IntPtr fileHandle, out string? signerSubject)
     {
         // The member tag is the file hash as an uppercase hex string; that is how the entry is named
         // inside the catalog.
@@ -249,6 +293,7 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
         try
         {
             var status = WinVerifyTrust(IntPtr.Zero, ref guid, ref data);
+            signerSubject = VerifiedSignerSubject(data.hWVTStateData);
 
             data.dwStateAction = WtdStateActionClose;
             WinVerifyTrust(IntPtr.Zero, ref guid, ref data);
@@ -278,12 +323,23 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
     }
 
     /// <summary>Runs WinVerifyTrust against the file's embedded signature only.</summary>
-    internal static (SignatureVerdict Verdict, string Detail, int Status) Verify(string path)
+    /// <param name="held">
+    /// When given, WinVerifyTrust reads through this handle rather than opening the path again, so the
+    /// verdict is about the bytes the caller is holding.
+    /// </param>
+    internal static (SignatureVerdict Verdict, string Detail, int Status, string? SignerSubject) Verify(
+        string path, SafeFileHandle? held = null)
     {
+        if (held is not null)
+        {
+            Rewind(held);
+        }
+
         var fileInfo = new WintrustFileInfo
         {
             cbStruct = (uint)Marshal.SizeOf<WintrustFileInfo>(),
-            pcwszFilePath = Marshal.StringToCoTaskMemUni(path)
+            pcwszFilePath = Marshal.StringToCoTaskMemUni(path),
+            hFile = held?.DangerousGetHandle() ?? IntPtr.Zero
         };
 
         var fileInfoPtr = Marshal.AllocCoTaskMem(Marshal.SizeOf<WintrustFileInfo>());
@@ -308,11 +364,12 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
         try
         {
             var status = WinVerifyTrust(IntPtr.Zero, ref guid, ref data);
+            var signerSubject = VerifiedSignerSubject(data.hWVTStateData);
 
             data.dwStateAction = WtdStateActionClose;
             WinVerifyTrust(IntPtr.Zero, ref guid, ref data);
 
-            return (Classify(status), Explain(status), status);
+            return (Classify(status), Explain(status), status, signerSubject);
         }
         finally
         {
@@ -430,6 +487,65 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
         return leaf;
     }
 
+    /// <summary>
+    /// The subject of the certificate WinVerifyTrust verified the first signature with, read from its
+    /// state before that state is closed.
+    /// </summary>
+    /// <remarks>
+    /// Not <see cref="SelectSigner"/>'s pick: the certificates embedded in a signature are an unsigned
+    /// bag, and anyone re-signing a file can add one whose subject names another publisher and which
+    /// issued nothing else -- exactly what that heuristic takes for the leaf. Index 0 of the provider's
+    /// chain is the certificate the signature was actually checked against.
+    /// </remarks>
+    private static string? VerifiedSignerSubject(IntPtr stateData)
+    {
+        if (stateData == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        var provider = WTHelperProvDataFromStateData(stateData);
+        var signer = provider == IntPtr.Zero ? IntPtr.Zero : WTHelperGetProvSignerFromChain(provider, 0, false, 0);
+        var chainCertificate = signer == IntPtr.Zero ? IntPtr.Zero : WTHelperGetProvCertFromChain(signer, 0);
+        if (chainCertificate == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        // CRYPT_PROVIDER_CERT opens { DWORD cbStruct; PCCERT_CONTEXT pCert; }: the pointer sits at 4 on
+        // x86 and at 8 on x64, which is IntPtr.Size on both.
+        var context = Marshal.ReadIntPtr(chainCertificate, IntPtr.Size);
+        if (context == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            // Duplicates the context, so the copy outlives the state about to be closed.
+            using var certificate = new X509Certificate2(context);
+            return certificate.Subject;
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Puts a shared handle's file pointer back at the start before native code reads through it.</summary>
+    /// <remarks>
+    /// WinVerifyTrust and the catalog hash both read through the handle they are given, and the first
+    /// may leave the pointer wherever it finished. A catalog hash taken from the middle of the file
+    /// matches no catalog, which would report a genuine Windows binary as unsigned.
+    /// </remarks>
+    private static void Rewind(SafeFileHandle handle) => SetFilePointerEx(handle, 0, IntPtr.Zero, 0);
+
+    private static string ComputeSha256(FileStream held)
+    {
+        held.Seek(0, SeekOrigin.Begin);
+        return Convert.ToHexString(SHA256.HashData(held));
+    }
+
     private static string ComputeSha256(string path)
     {
         try
@@ -472,6 +588,20 @@ public sealed class WinTrustSignatureInspector : ISignatureInspector
 
     [DllImport("wintrust.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int WinVerifyTrust(IntPtr hwnd, ref Guid pgActionID, ref WintrustData pWVTData);
+
+    [DllImport("wintrust.dll")]
+    private static extern IntPtr WTHelperProvDataFromStateData(IntPtr hStateData);
+
+    [DllImport("wintrust.dll")]
+    private static extern IntPtr WTHelperGetProvSignerFromChain(
+        IntPtr pProvData, uint idxSigner, [MarshalAs(UnmanagedType.Bool)] bool fCounterSigner, uint idxCounterSigner);
+
+    [DllImport("wintrust.dll")]
+    private static extern IntPtr WTHelperGetProvCertFromChain(IntPtr pSgnr, uint idxCert);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFilePointerEx(SafeFileHandle file, long distance, IntPtr newPointer, uint moveMethod);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WintrustCatalogInfo

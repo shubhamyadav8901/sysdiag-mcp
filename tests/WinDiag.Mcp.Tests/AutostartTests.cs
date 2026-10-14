@@ -24,7 +24,25 @@ public sealed class AutorunscCsvParserTests
         return text.TrimStart('\uFEFF');
     }
 
-    private static List<AutostartEntry> Parsed() => AutorunscCsvParser.Parse(Fixture());
+    private static List<AutostartEntry> Parsed() => AutorunscCsvParser.Parse(Fixture()).Entries;
+
+    /// <summary>autorunsc 14.3's header with <c>-s</c>, exactly as the fixture carries it.</summary>
+    private const string SignedHeader =
+        "Time,Entry Location,Entry,Enabled,Category,Profile,Description,Signer,Company,Image Path,Version,Launch String\r\n";
+
+    /// <summary>
+    /// The HKCU Run row an unprivileged user can plant, in autorunsc's shape, with the value name supplied.
+    /// </summary>
+    private static string UserRunRow(string entryField) =>
+        $"20260801-101500,HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run,{entryField},enabled,Logon," +
+        "CONTOSO\\jdoe,,(Not verified) (Not Verified) ,(Not Verified) ," +
+        "C:\\Users\\jdoe\\AppData\\Local\\Temp\\payload.exe,,\"\"\"C:\\Users\\jdoe\\AppData\\Local\\Temp\\payload.exe\"\"\"\r\n";
+
+    /// <summary>A whole row a hostile value name would smuggle in: Windows' own tray icon, signed.</summary>
+    private const string ForgedRow =
+        "20240401-072632,HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run,SecurityHealth,enabled,Logon," +
+        "System-wide,Windows Security notification icon,(Verified) Microsoft Windows,(Verified) Microsoft Windows," +
+        "C:\\Windows\\system32\\SecurityHealthSystray.exe,10.0.26100.1,%windir%\\system32\\SecurityHealthSystray.exe";
 
     [Fact]
     public void Reads_the_captured_output()
@@ -139,7 +157,81 @@ public sealed class AutorunscCsvParserTests
     [Fact]
     public void Returns_nothing_for_empty_output_rather_than_failing()
     {
-        Assert.Empty(AutorunscCsvParser.Parse(string.Empty));
+        Assert.Empty(AutorunscCsvParser.Parse(string.Empty).Entries);
+    }
+
+    [Fact]
+    public void Finds_no_malformed_rows_in_the_real_capture()
+    {
+        // The guard below must not cry wolf on ordinary output, or the warning it raises stops meaning
+        // anything. Every row of the 14.3 capture has the header's twelve fields.
+        Assert.Equal(0, AutorunscCsvParser.Parse(Fixture()).MalformedRows);
+    }
+
+    [Fact]
+    public void Keeps_a_quoted_description_that_spans_lines_as_one_entry()
+    {
+        // A version resource's FileDescription may contain a line break, and autorunsc quotes the field
+        // like any other. Split into lines first, this record became two fragments: the first ended in
+        // an open quote and the second was a row of nonsense, and the real entry was gone.
+        var csv = SignedHeader +
+                  "20260625-162027,HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run,Contoso Agent,enabled," +
+                  "Logon,System-wide,\"Contoso agent\r\nsecond line\",(Verified) Contoso Ltd,(Verified) Contoso Ltd," +
+                  "C:\\Program Files\\Contoso\\agent.exe,3.25.0.0,\"C:\\Program Files\\Contoso\\agent.exe\"\r\n";
+
+        var parsed = AutorunscCsvParser.Parse(csv);
+
+        var entry = Assert.Single(parsed.Entries);
+        Assert.Equal("Contoso Agent", entry.Entry);
+        Assert.Equal("Contoso agent\r\nsecond line", entry.Description);
+        Assert.Equal(@"C:\Program Files\Contoso\agent.exe", entry.ImagePath);
+        Assert.Equal("Verified", entry.SignatureVerdict);
+        Assert.Equal(0, parsed.MalformedRows);
+    }
+
+    [Fact]
+    public void A_value_name_carrying_a_newline_and_a_whole_row_does_not_forge_a_signed_entry()
+    {
+        // The attack: an unprivileged user names an HKCU Run value "\n" + a complete row describing
+        // Windows' own signed tray icon. autorunsc quotes the field. Split on '\n' first, the real
+        // record's first line ended in an open quote, its Entry read as empty and it was dropped as a
+        // section header -- the unsigned payload vanished -- and the smuggled row was reported as a
+        // Verified Microsoft entry, so the summary said every entry was validly signed.
+        var csv = SignedHeader + UserRunRow("\"\n" + ForgedRow + "\"");
+
+        var parsed = AutorunscCsvParser.Parse(csv);
+
+        var entry = Assert.Single(parsed.Entries);
+        Assert.Equal(@"C:\Users\jdoe\AppData\Local\Temp\payload.exe", entry.ImagePath);
+        Assert.Equal("Not verified", entry.SignatureVerdict);
+        Assert.DoesNotContain(parsed.Entries, e => e.ImagePath?.Contains("SecurityHealthSystray") == true);
+    }
+
+    [Fact]
+    public void A_record_broken_by_an_unquoted_newline_is_counted_not_dropped()
+    {
+        // If a build of autorunsc ever writes the newline without quoting the field, no parser can put
+        // the record back together -- but it can refuse to let the fragments pass as a short, clean
+        // list. Each piece has the wrong number of fields, and that is reported.
+        var csv = SignedHeader + UserRunRow("\n" + ForgedRow);
+
+        var parsed = AutorunscCsvParser.Parse(csv);
+
+        Assert.True(parsed.MalformedRows > 0, "the broken record was dropped without a trace");
+    }
+
+    [Fact]
+    public void A_row_with_no_entry_name_but_an_image_is_counted_rather_than_taken_for_a_section_header()
+    {
+        // A section header is a location with nothing in it: no entry, no image, no signer. A row with
+        // an empty Entry that still names an image is not one of those, and dropping it silently is how
+        // a real autostart disappears.
+        var csv = SignedHeader + UserRunRow(string.Empty);
+
+        var parsed = AutorunscCsvParser.Parse(csv);
+
+        Assert.Empty(parsed.Entries);
+        Assert.Equal(1, parsed.MalformedRows);
     }
 
     [Fact]
@@ -244,7 +336,29 @@ public sealed class AutostartInspectorArgumentTests
         var (executable, argv) = Assert.Single(runner.Invocations);
 
         Assert.Equal(ExpectedBuild, executable);
-        Assert.Equal(["-accepteula", "-nobanner", "-c", "-t", "-a", "*"], argv);
+        Assert.Equal(["-accepteula", "-nobanner", "-c", "-t", "-a", "*", "*"], argv);
+    }
+
+    [Fact]
+    public async Task Asks_for_every_user_profile_not_only_the_account_it_runs_as()
+    {
+        // Without autorunsc's trailing [user] argument it scans only its own account. Under the normal
+        // deployment, a LocalSystem service, that meant SYSTEM's HKCU Run keys and Startup folder and
+        // no real user's -- the commonest persistence there is, absent from a list the summary called
+        // complete because the server was elevated. A category other than '*' is asked for here so the
+        // trailing '*' cannot be mistaken for the category list.
+        var runner = new StubExternalToolRunner(SampleCsv);
+
+        await Inspector(runner).AuditAsync(
+            new AutostartQuery(Categories: "l", VerifySignatures: true, HideMicrosoft: true, UnsignedOnly: true),
+            CancellationToken.None);
+
+        var (_, argv) = Assert.Single(runner.Invocations);
+
+        // Last, after every switch, because autorunsc reads it positionally.
+        Assert.Equal(AutorunscInspector.AllUserProfiles, argv[^1]);
+        Assert.Equal("*", argv[^1]);
+        Assert.Equal(1, argv.Count(a => a == "*"));
     }
 
     [Fact]
@@ -259,7 +373,7 @@ public sealed class AutostartInspectorArgumentTests
 
         // -u without -s means "unknown to VirusTotal" rather than "unsigned", which is a different
         // question and one this server never asks.
-        Assert.Equal(["-accepteula", "-nobanner", "-c", "-t", "-a", "l", "-s", "-u"], argv);
+        Assert.Equal(["-accepteula", "-nobanner", "-c", "-t", "-a", "l", "-s", "-u", "*"], argv);
     }
 
     [Fact]
@@ -304,6 +418,20 @@ public sealed class AutostartInspectorArgumentTests
 
         Assert.Single(matched.Entries);
         Assert.Empty(missed.Entries);
+    }
+
+    [Fact]
+    public async Task Carries_the_count_of_rows_it_could_not_read_past_the_name_filter()
+    {
+        // A record broken by a line break has no trustworthy name, and the entry it hid may be exactly
+        // the one the filter is looking for -- so the count is not narrowed by the filter.
+        var broken = SampleCsv + "20260101-000000,HKCU\\Run,\r\n";
+
+        var result = await Inspector(new StubExternalToolRunner(broken)).AuditAsync(
+            new AutostartQuery(NameFilter: "nothing-like-this"), CancellationToken.None);
+
+        Assert.Empty(result.Entries);
+        Assert.Equal(1, result.MalformedRowCount);
     }
 
     [Fact]
@@ -375,6 +503,38 @@ public sealed class AutostartRenderingTests
 
         Assert.Contains("[FILE NOT FOUND]", summary);
         Assert.Contains("1 entry points at a file that is not there", summary);
+    }
+
+    [Fact]
+    public void Names_whose_profile_a_per_user_entry_belongs_to()
+    {
+        // Every profile is scanned, so two users' identical HKCU Run values render identically unless
+        // the profile is shown -- and "which user" is the first question about a per-user autostart.
+        var perUser = Entry("Updater") with
+        {
+            Location = @"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            Profile = @"CONTOSO\jdoe"
+        };
+
+        var summary = AutostartTools.Render(Result([perUser, Entry("Agent")]), "all", null);
+
+        Assert.Contains(@"profile CONTOSO\jdoe", summary);
+        Assert.DoesNotContain("profile System-wide", summary);
+    }
+
+    [Fact]
+    public void Leads_with_rows_it_could_not_read_and_does_not_call_the_list_clean()
+    {
+        // A record autorunsc did not write whole -- a value name carrying a line break produces one --
+        // can hide a real entry or make a smuggled one look signed. Saying "every entry is validly
+        // signed" over such a list is the exact false comfort the attack is after.
+        var result = Result([Entry("a", "Verified", "Contoso Ltd")], verified: true) with { MalformedRowCount = 2 };
+
+        var summary = AutostartTools.Render(result, "all", null);
+
+        Assert.StartsWith("WARNING", summary);
+        Assert.Contains("2 rows", summary);
+        Assert.DoesNotContain("Every entry returned is validly signed", summary);
     }
 
     [Fact]
