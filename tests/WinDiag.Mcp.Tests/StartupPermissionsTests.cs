@@ -131,8 +131,8 @@ public sealed class StartupPermissionsTests
             Exposed.Clear();
         }
 
-        public void Check(bool runsAsLocalSystem) => StartupPermissions.ProtectServiceKey(
-            "windiag", runsAsLocalSystem, Exposures, Protect, Warnings.Add);
+        public void Check(bool runsAsLocalSystem, bool holdsToken = true) => StartupPermissions.ProtectServiceKey(
+            "windiag", runsAsLocalSystem, Exposures, Protect, Warnings.Add, holdsToken);
     }
 
     [Fact]
@@ -195,6 +195,23 @@ public sealed class StartupPermissionsTests
     }
 
     [Fact]
+    public void Restricts_a_key_others_can_read_without_asking_for_a_new_token_that_was_never_in_it()
+    {
+        // This build keeps the token in a key created restricted; the service key holds only grants, so an
+        // exposure there is repaired and reported but is no reason to rotate anything.
+        var key = new FakeServiceKey();
+        key.Exposed.Add(@"BUILTIN\Users can read or change it");
+
+        key.Check(runsAsLocalSystem: true, holdsToken: false);
+
+        Assert.Equal(1, key.ProtectCalls);
+        var warning = Assert.Single(key.Warnings);
+        Assert.Contains("now restricted", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("--token-stdin", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("may already have the token", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Leaves_a_key_only_administrators_can_read_alone_and_says_nothing()
     {
         var key = new FakeServiceKey();
@@ -203,5 +220,149 @@ public sealed class StartupPermissionsTests
 
         Assert.Empty(key.Warnings);
         Assert.Equal(0, key.ProtectCalls);
+    }
+
+    [Fact]
+    public void Creates_a_directory_that_is_not_there_yet_so_it_has_its_acl_from_the_start()
+    {
+        Assert.Equal(StartupPermissions.InstallDirectory.Create, StartupPermissions.JudgeForInstall(exists: false, [], []));
+    }
+
+    [Fact]
+    public void Uses_a_directory_an_earlier_install_or_the_bootstrap_scripts_left_restricted()
+    {
+        // Nothing to recognise beyond that: the installer made or refused every directory it used, and the
+        // service restricts both of its own on every start, so a directory windiag left reads as restricted.
+        Assert.Equal(StartupPermissions.InstallDirectory.Use, StartupPermissions.JudgeForInstall(exists: true, [], []));
+    }
+
+    [Fact]
+    public void Refuses_rather_than_takes_over_a_directory_others_can_change_because_their_handles_outlive_any_acl()
+    {
+        // A C:\WinDiag a user made before the administrator copied the server in: as its owner they can hold it
+        // open for WRITE_DAC, which no share mode refuses, and put their ACE back once the installer is done.
+        string[] mallory = [@"CONTOSO\mallory owns it, so can change who has access"];
+        Assert.Equal(StartupPermissions.InstallDirectory.Refuse, StartupPermissions.JudgeForInstall(exists: true, mallory, mallory));
+
+        string[] everyone = [@"NT AUTHORITY\Authenticated Users can write to it"];
+        Assert.Equal(StartupPermissions.InstallDirectory.Refuse, StartupPermissions.JudgeForInstall(exists: true, everyone, everyone));
+    }
+
+    [Fact]
+    public void Takes_over_a_directory_only_an_administrators_own_account_could_change_as_the_bootstrap_scripts_leave_it()
+    {
+        // Created restricted, then filled over the admin share by an administrator whose machine gives new files to
+        // their creator: each file is owned by that account. An administrator can elevate anyway, so nothing they
+        // hold is a way in, and refusing would fail every such bootstrap.
+        Assert.Equal(
+            StartupPermissions.InstallDirectory.TakeOver,
+            StartupPermissions.JudgeForInstall(exists: true, [@"C:\WinDiag\WinDiag.Mcp.exe: CONTOSO\admin owns it, so can change who has access"], []));
+    }
+
+    [Fact]
+    public void Tells_the_operator_to_rename_an_exposed_artifact_directory_aside_so_the_installer_creates_it_afresh()
+    {
+        var message = StartupPermissions.InstallRefusal(
+            "artifact directory", @"C:\WinDiagArtifacts", [@"CONTOSO\mallory owns it, so can change who has access"], [], serverDirectory: false);
+
+        Assert.Contains(@"CONTOSO\mallory owns it", message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was installed", message, StringComparison.Ordinal);
+        Assert.Contains("handle", message, StringComparison.Ordinal);
+        Assert.Contains(@"ren ""C:\WinDiagArtifacts"" WinDiagArtifacts.old", message, StringComparison.Ordinal);
+        Assert.Contains("creates it with the ACL already on it", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tells_the_operator_where_to_put_the_server_instead_of_a_folder_made_by_hand_under_the_drive_root()
+    {
+        // The installer cannot create the directory the executable is already in, so it names one that is
+        // restricted from the moment it exists.
+        var message = StartupPermissions.InstallRefusal(
+            "server directory", @"C:\WinDiag", [@"NT AUTHORITY\Authenticated Users can write to it"], [], serverDirectory: true);
+
+        Assert.Contains("Nothing was installed", message, StringComparison.Ordinal);
+        Assert.Contains("rename it aside", message, StringComparison.Ordinal);
+        Assert.Contains(@"%ProgramFiles%\WinDiag", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Does_not_suggest_renaming_aside_a_folder_that_holds_the_operators_own_files()
+    {
+        var message = StartupPermissions.InstallRefusal(
+            "server directory", @"C:\Users\admin\Downloads", [@"CONTOSO\admin can write to it"],
+            ["holiday.jpg", "setup.msi", "notes.txt", "more.txt"], serverDirectory: true);
+
+        Assert.Contains("holiday.jpg, setup.msi, notes.txt, ...", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("rename it aside", message, StringComparison.Ordinal);
+    }
+
+    private sealed class FakeTempDirectory
+    {
+        public string? Foreign { get; set; }
+
+        public Exception? MoveFails { get; init; }
+
+        public List<string> Moved { get; } = [];
+
+        public List<string> Warnings { get; } = [];
+
+        public string Move(string path)
+        {
+            if (MoveFails is not null)
+            {
+                throw MoveFails;
+            }
+
+            Moved.Add(path);
+            Foreign = null;
+            return path + ".not-windiag-1";
+        }
+
+        public void Replace() => StartupPermissions.ReplaceForeign(
+            "artifact directory", @"C:\Windows\Temp\windiag", _ => Foreign, Move, Warnings.Add);
+    }
+
+    [Fact]
+    public void Leaves_a_default_artifact_directory_the_service_owns_and_says_nothing()
+    {
+        var temp = new FakeTempDirectory();
+
+        temp.Replace();
+
+        Assert.Empty(temp.Moved);
+        Assert.Empty(temp.Warnings);
+    }
+
+    [Fact]
+    public void Moves_aside_a_default_artifact_directory_a_user_made_first_rather_than_taking_it_over()
+    {
+        // C:\Windows\Temp lets any user create a folder, so %TEMP%\windiag may be waiting for the service.
+        var temp = new FakeTempDirectory { Foreign = @"CONTOSO\mallory owns it" };
+
+        temp.Replace();
+
+        Assert.Equal([@"C:\Windows\Temp\windiag"], temp.Moved);
+        var warning = Assert.Single(temp.Warnings);
+        Assert.Contains(@"CONTOSO\mallory owns it", warning, StringComparison.Ordinal);
+        Assert.Contains(@"C:\Windows\Temp\windiag.not-windiag-1", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Refuses_to_start_when_a_directory_somebody_else_made_cannot_be_moved_out_of_the_way()
+    {
+        // Held open without sharing delete: taking it over instead would leave them that handle.
+        var temp = new FakeTempDirectory
+        {
+            Foreign = @"CONTOSO\mallory owns it",
+            MoveFails = new IOException("The process cannot access the file because it is being used by another process.")
+        };
+
+        var ex = Assert.Throws<ConfigurationException>(temp.Replace);
+
+        Assert.Contains("Refusing to start", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(@"CONTOSO\mallory owns it", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("being used by another process", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("--artifacts", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(temp.Warnings);
     }
 }

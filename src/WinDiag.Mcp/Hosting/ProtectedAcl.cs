@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -13,7 +14,8 @@ namespace WinDiag.Mcp.Hosting;
 /// <remarks>
 /// <para>Nothing set these before, and the defaults are not what they look like. <c>sc create</c> gives
 /// the service key the Services key's ACL, under which every local user can read values -- including the
-/// <c>Environment</c> value that holds the bearer token. A directory made at the root of <c>C:\</c> (the
+/// <c>Environment</c> value, where older builds kept the bearer token, and which is why the token now has a
+/// key of its own: see <see cref="CreateTokenKey"/>. A directory made at the root of <c>C:\</c> (the
 /// bootstrap default, <c>C:\WinDiag</c>) inherits "Authenticated Users: Modify", so any local user could
 /// plant <c>handle64.exe</c> or a replacement server beside a binary that runs them as SYSTEM, or edit
 /// <c>self-update.cmd</c> in the artifact directory while the helper waits.</para>
@@ -140,13 +142,20 @@ public static class ProtectedAcl
     /// <para>Refuses the directory outright when it, or a directory above it, is a link: see
     /// <see cref="RefuseLinks"/>.</para>
     /// </remarks>
+    /// <param name="path">The directory.</param>
+    /// <param name="serviceAccount">The service's account, or null for LocalSystem.</param>
+    /// <param name="trustAdministratorMembers">
+    /// Whether a direct member of the local Administrators group counts as trusted in the directory and what it
+    /// holds too, as it always does above it: to tell what an administrator left there, which is safe to take
+    /// over since they could elevate and do anything anyway, from what anyone else could change.
+    /// </param>
     /// <exception cref="ConfigurationException">The directory is, or is reached through, a link.</exception>
-    public static IReadOnlyList<string> DirectoryExposures(string path, SecurityIdentifier? serviceAccount)
+    public static IReadOnlyList<string> DirectoryExposures(string path, SecurityIdentifier? serviceAccount, bool trustAdministratorMembers = false)
     {
         var full = FullPath(path);
         RefuseLinks(full);
 
-        var trusted = Trusted(serviceAccount);
+        var trusted = trustAdministratorMembers ? TrustedAbove(serviceAccount) : Trusted(serviceAccount);
         var above = TrustedAbove(serviceAccount);
         var found = new List<string>();
         var parentPath = Path.GetPathRoot(full)!;
@@ -528,8 +537,16 @@ public static class ProtectedAcl
     /// directory that already exists: without handles opened this way, which it cannot have before
     /// anything from this repository is on the target, it refuses one this would have to take over.</para>
     /// </remarks>
+    /// <param name="path">The directory.</param>
+    /// <param name="serviceAccount">The service's account, or null for LocalSystem.</param>
+    /// <param name="ownedByAdministrators">Whether to hand it, and what it holds, to Administrators.</param>
+    /// <param name="adoptExisting">
+    /// False to refuse, changing nothing, when the directory itself is already there by the time it would be
+    /// created: for a caller that has just found it missing, one there now is somebody else's, made in
+    /// between, and taking it over would leave them any handle they opened on it -- see <see cref="ForeignOwner"/>.
+    /// </param>
     /// <exception cref="ConfigurationException">A drive root, a file, a link, or a directory others could redirect.</exception>
-    public static void ProtectDirectory(string path, SecurityIdentifier? serviceAccount, bool ownedByAdministrators)
+    public static void ProtectDirectory(string path, SecurityIdentifier? serviceAccount, bool ownedByAdministrators, bool adoptExisting = true)
     {
         var full = FullPath(path);
         if (Same(full, Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? string.Empty)))
@@ -580,6 +597,14 @@ public static class ProtectedAcl
                 if (hold)
                 {
                     held = handle;
+                    if (!made && !adoptExisting)
+                    {
+                        throw new ConfigurationException(
+                            $"{full} was not there a moment ago and is now: somebody else made it while this was about "
+                            + "to, so it is theirs and is not used. Nothing in it was changed. Run this again; if it "
+                            + "happens again, find out who keeps making it.");
+                    }
+
                     break;
                 }
 
@@ -737,7 +762,8 @@ public static class ProtectedAcl
           + $"(takeown /a /r /d y /f \"{itemPath}\", then delete it), and run this again."
         : $"{itemPath} cannot be taken over by this service's account ({reason}): a service that does not run as "
           + "SYSTEM may not change the ACL of an item it does not own, as anything an administrator put there is. "
-          + "Re-run --install-service from an elevated prompt, which takes the directory over, or run the service as LocalSystem.";
+          + "Re-run --install-service from an elevated prompt, which gives the service's account what it needs on a directory "
+          + "only administrators can change, or run the service as LocalSystem.";
 
     /// <summary>Refuses a link or hard link anywhere the listed directory holds, changing nothing.</summary>
     /// <remarks>
@@ -879,14 +905,224 @@ public static class ProtectedAcl
         key.SetAccessControl(ServiceKeyAcl());
     }
 
+    /// <summary>
+    /// The token key's DACL: SYSTEM and Administrators full control, the service's own account (when it is
+    /// not SYSTEM) read, nothing inherited.
+    /// </summary>
+    /// <remarks>
+    /// <para>SYSTEM, not only because the service may run as it: the SCM, which runs as SYSTEM, deletes the
+    /// service's key and everything under it on <c>sc delete</c>, so the token goes with the service.</para>
+    /// <para>The service account reads it because, unlike the <c>Environment</c> value, nothing hands it over:
+    /// the SCM reads Environment itself, as SYSTEM, and passes it into the process, but the process reads this
+    /// key with its own token. It is the account already trusted with the server's directories, which it can
+    /// write.</para>
+    /// </remarks>
+    internal static RegistrySecurity TokenKeyAcl(SecurityIdentifier? serviceAccount)
+    {
+        var acl = ServiceKeyAcl();
+        if (serviceAccount is not null && serviceAccount != LocalSystem)
+        {
+            acl.AddAccessRule(new RegistryAccessRule(serviceAccount, RegistryRights.ReadKey, InheritanceFlags.ContainerInherit, PropagationFlags.None, AccessControlType.Allow));
+        }
+
+        return acl;
+    }
+
+    /// <summary>
+    /// Creates the service's token key with <see cref="TokenKeyAcl"/> already on it, and writes the token into it.
+    /// </summary>
+    /// <remarks>
+    /// <para>The ACL is part of the create, not set after it. <c>RegCreateKeyEx</c> takes a security
+    /// descriptor for the key it creates (its <c>lpSecurityAttributes</c>), so there is no moment at which
+    /// anyone else could open it. Called directly, not through <c>RegistryKey.CreateSubKey</c>: .NET's overload
+    /// that takes a <see cref="RegistrySecurity"/> discards it and creates the key with an inherited ACL. Restricting a key after creating it is not the same: Windows checks access
+    /// when a handle is opened and not on each use, so a handle opened before the ACL changed keeps reading.
+    /// That is what was wrong with keeping the token in the service key itself, which sc.exe creates
+    /// readable by every local user.</para>
+    /// <para>A handle on the service key gives nothing here: a subkey's own DACL is checked when the subkey
+    /// is opened, whatever handle it is opened relative to. Nobody else could have made this key first,
+    /// either: creating a subkey needs KEY_CREATE_SUB_KEY on the service key, which the Services key's ACL
+    /// gives only SYSTEM and Administrators. One that is there all the same is refused -- told apart by the
+    /// disposition <c>RegCreateKeyEx</c> returns -- because it ignores the descriptor for a key that already
+    /// exists and opens it as it is. The key is judged once made, protection and owner included, so a
+    /// descriptor that did not take is caught rather than trusted.</para>
+    /// </remarks>
+    /// <exception cref="ConfigurationException">The key existed, or did not come out restricted.</exception>
+    public static void CreateTokenKey(string serviceName, SecurityIdentifier? serviceAccount, string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+
+        using var service = Registry.LocalMachine.OpenSubKey(ServiceKeyPath(serviceName), writable: true)
+            ?? throw new ConfigurationException(
+                $"The service '{serviceName}' was created but its registry key could not be opened to store the "
+                + "token. Remove it with --uninstall-service and try again.");
+
+        // Owned by Administrators by name, not by whatever this token's default owner is: a machine whose
+        // policy makes the creating administrator the owner would otherwise get a key owned by one account,
+        // which the check below rightly counts as able to rewrite the DACL.
+        var acl = TokenKeyAcl(serviceAccount);
+        acl.SetOwner(Administrators);
+
+        using var key = CreateKeyWithAcl(service, ServiceInstallOptions.TokenKeyName, acl)
+            ?? throw new ConfigurationException(
+                $@"HKLM\{ServiceInstallOptions.TokenKeyPath(serviceName)} already exists, and a key that exists is "
+                + "opened as it is rather than created restricted. Remove the service with --uninstall-service, "
+                + "which removes the key, and install again.");
+
+        // Judged before the token goes in, so a key that is not what was asked for never holds it.
+        var security = key.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+        var exposed = Exposures(security, KeyExposingRights, Trusted(serviceAccount), "read or change").ToList();
+        if (!security.AreAccessRulesProtected)
+        {
+            exposed.Add("it inherits from the service key instead of having an ACL of its own");
+        }
+
+        if (!Administrators.Equals(security.GetOwner(typeof(SecurityIdentifier))))
+        {
+            exposed.Add($"it is owned by {security.GetOwner(typeof(SecurityIdentifier))?.Value ?? "nobody"}, not Administrators");
+        }
+
+        if (exposed.Count > 0)
+        {
+            throw new ConfigurationException(
+                $@"HKLM\{ServiceInstallOptions.TokenKeyPath(serviceName)} was created but not as asked "
+                + $"({string.Join("; ", exposed)}), so the token was not written to it. Remove the service with "
+                + "--uninstall-service and install again.");
+        }
+
+        key.SetValue(ServiceInstallOptions.TokenValueName, token, RegistryValueKind.String);
+    }
+
+    /// <summary>
+    /// Creates <paramref name="name"/> under <paramref name="parent"/> with <paramref name="acl"/> as its security
+    /// from the start; null, creating nothing, when it already exists.
+    /// </summary>
+    internal static RegistryKey? CreateKeyWithAcl(RegistryKey parent, string name, RegistrySecurity acl)
+    {
+        var descriptor = acl.GetSecurityDescriptorBinaryForm();
+        var pinned = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        try
+        {
+            var attributes = new SecurityAttributes
+            {
+                Length = Marshal.SizeOf<SecurityAttributes>(),
+                SecurityDescriptor = pinned.AddrOfPinnedObject()
+            };
+
+            var error = RegCreateKeyEx(parent.Handle, name, 0, null, 0, KeyAllAccess, ref attributes, out var handle, out var disposition);
+            if (error != 0)
+            {
+                handle.Dispose();
+                throw new IOException(
+                    $"Could not create registry key '{name}': {new System.ComponentModel.Win32Exception(error).Message}", error);
+            }
+
+            if (disposition != RegCreatedNewKey)
+            {
+                handle.Dispose();
+                return null;
+            }
+
+            return RegistryKey.FromHandle(handle);
+        }
+        finally
+        {
+            pinned.Free();
+        }
+    }
+
+    private const int KeyAllAccess = 0xF003F;
+    private const int RegCreatedNewKey = 1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SecurityAttributes
+    {
+        public int Length;
+        public IntPtr SecurityDescriptor;
+        public int InheritHandle;
+    }
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegCreateKeyExW")]
+    private static extern int RegCreateKeyEx(
+        SafeRegistryHandle key, string subKey, int reserved, string? keyClass, int options, int desired,
+        ref SecurityAttributes securityAttributes, out SafeRegistryHandle result, out int disposition);
+
+    /// <summary>Who other than SYSTEM, Administrators and the service's account can read or change the token key; null when there is none.</summary>
+    public static IReadOnlyList<string>? TokenKeyExposures(string serviceName, SecurityIdentifier? serviceAccount)
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(
+            ServiceInstallOptions.TokenKeyPath(serviceName), RegistryKeyPermissionCheck.ReadSubTree, RegistryRights.ReadPermissions);
+
+        return key is null
+            ? null
+            : Exposures(key.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner),
+                KeyExposingRights, Trusted(serviceAccount), "read or change");
+    }
+
+    /// <summary>
+    /// Why a directory someone else may have made is not to be used as it is: it is a link or not a directory,
+    /// or it is owned by an account other than SYSTEM, Administrators, TrustedInstaller and
+    /// <paramref name="serviceAccount"/>; null when nothing is there, or it is a directory one of them owns.
+    /// </summary>
+    /// <remarks>
+    /// <para>The owner, not the ACL, because the owner is what cannot be taken back from a handle. An owner
+    /// may always open its object for WRITE_DAC, and WRITE_DAC is not data access, so no share mode an
+    /// installer or service asks for can refuse it: whoever made the directory can hold such a handle from
+    /// before the takeover, and put their own ACE back through it after. A user cannot make a directory owned
+    /// by anyone else -- assigning another owner needs SeRestorePrivilege -- so a directory a user made reads
+    /// as theirs.</para>
+    /// <para>Opened as itself, never what a link leads to, and judged through that handle. One this account
+    /// may not even open to read its owner shuts administrators out, which nothing windiag makes does.</para>
+    /// </remarks>
+    internal static string? ForeignOwner(string path, SecurityIdentifier? serviceAccount)
+    {
+        var full = FullPath(path);
+        SafeFileHandle? handle;
+        try
+        {
+            handle = FileObjects.Open(full, FileObjects.ReadControl | FileObjects.ReadAttributes, Shared);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return "its ACL shuts out even this account, which nothing windiag makes does";
+        }
+
+        if (handle is null)
+        {
+            return null;
+        }
+
+        using (handle)
+        {
+            var node = FileObjects.Inspect(handle, full);
+            if (node.IsLink)
+            {
+                return "it is a link, which windiag never makes";
+            }
+
+            if (!node.IsDirectory)
+            {
+                return "it is a file, not a directory";
+            }
+
+            var owner = FileObjects.ReadAcl(handle, isDirectory: true).GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            return owner is not null && Trusted(serviceAccount).Contains(owner)
+                ? null
+                : $"{(owner is null ? "nobody" : Name(owner))} owns it";
+        }
+    }
+
     /// <summary>The SID of an account in sc.exe's spelling, or null for LocalSystem.</summary>
+    /// <remarks>
+    /// The built-in accounts are never looked up by name: see <see cref="ServiceInstallOptions.WellKnownAccountSid"/>.
+    /// </remarks>
     public static SecurityIdentifier? AccountSid(string account)
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        if (string.Equals(account, "LocalSystem", StringComparison.OrdinalIgnoreCase))
+        if (ServiceInstallOptions.WellKnownAccountSid(account) is { } wellKnown)
         {
-            return null;
+            return wellKnown == ServiceInstallOptions.LocalSystemSid ? null : new SecurityIdentifier(wellKnown);
         }
 
         // sc.exe takes ".\user" for a local account; NTAccount does not, so name the machine instead.

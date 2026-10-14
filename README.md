@@ -696,27 +696,42 @@ WinDiag.Mcp.exe --install-service --http http://10.0.0.5:7777 ^
 ```
 
 That registers the service, configures the SCM to restart it if the process dies, generates a
-256-bit token and stores it where only SYSTEM and Administrators can read it, opens the port to one
-address, and starts it. The token is printed once, because it exists nowhere else a human can read.
+256-bit token and stores it where only SYSTEM, Administrators and the service's account can read it,
+opens the port to one address, and starts it. The token is printed once, because it exists nowhere
+else a human can read. It goes into `HKLM\SYSTEM\CurrentControlSet\Services\<name>\Parameters`, a key
+created with that ACL already on it, and not into the service key's own `Environment` value: `sc
+create` makes that key readable by every local user, and a handle someone opened on it before it was
+restricted would go on reading whatever was written there afterwards. A target installed by an older
+build, whose token is still in `Environment`, keeps starting with it after `update_self`, and logs a
+warning until it is reinstalled with a new token. The reverse does not hold: an older build sent by
+`update_self` to a target this build installed finds no token in `Environment`, generates one nobody
+has, and cannot be reached again until it is reinstalled at the console. Do not downgrade such a target
+through `update_self`.
 
-It also restricts the executable's directory and the `--artifacts` directory to SYSTEM and
-Administrators whenever anyone else can write them or anything in them, and hands what they already
-hold to Administrators. That is not tidiness: the service runs the Sysinternals binaries it finds
-beside itself and `self-update.cmd` from the artifact directory as SYSTEM, and a folder made under
-`C:\` inherits *Authenticated Users: Modify*. A service repeats the check on every start, writes what
-it changed to the Application event log, and refuses to start from a directory it cannot restrict.
-Either directory being a link — a junction, a symbolic link, a mounted folder — or being reached
+The executable's directory and the `--artifacts` directory must be ones only SYSTEM and
+Administrators can change, and everything in them too. That is not tidiness: the service runs the
+Sysinternals binaries it finds beside itself and `self-update.cmd` from the artifact directory as
+SYSTEM, and a folder made under `C:\` inherits *Authenticated Users: Modify*. An `--artifacts`
+directory that does not exist yet is created with the right ACL from the start. **One that exists and
+that anyone but an administrator can change is refused, not taken over** — either directory (files an
+administrator copied in, owned by their own account, are simply handed to Administrators): restricting it would not
+shut out a handle opened on it, or on a file in it, beforehand, and whoever made it can hold one open
+to put their own access back afterwards. So install from a directory that was restricted when it was
+made: one created from an elevated prompt under `C:\Program Files` (`md "%ProgramFiles%\WinDiag"`),
+whose inherited ACL lets only administrators write, or the `C:\WinDiag` the bootstrap scripts create.
+If the refusal names a directory an earlier windiag left, rename it aside and install again; one that
+the service restricted on its last start is used as it is. A service repeats the check on every start,
+writes what it changed to the Application event log, and refuses to start from a directory it cannot
+restrict; the default artifact directory, `%TEMP%\windiag`, it moves aside and makes afresh if someone
+else made it first. Either directory being a link — a junction, a symbolic link, a mounted folder — or being reached
 through one is refused: whoever made the link could point it somewhere else after the check. So is
 either directory sitting below one that someone else could rename or empty, such as a folder any user
 made under `C:\` — they could put a directory of their own in its place. Above the two directories, a
 direct member of the local Administrators group counts as an administrator, so a folder the built-in
 Administrator made and owns is fine; an owner outside the group, or in it only through a domain group,
-is not, even when the ACL is restricted. One that others can write is
-refused, rather than taken over, if it holds a link or a hard link, since taking that over would change
-whatever it leads to; links only administrators can change, in a directory only they can write, are
-left alone. **Install from a directory of its own**, such as `C:\WinDiag`: one that others can write and
-that also holds files that are not windiag's — a Downloads folder, a drive root — is refused rather
-than locked down under its owner.
+is not, even when the ACL is restricted. Links only administrators can change, in a directory only
+they can write, are left alone. **Install from a directory of its own**: a Downloads folder or a drive
+root is refused, and the refusal names the files in it that are not windiag's.
 
 A target installed by an older build has these directories restricted by its next `update_self`, but
 restricting them does not undo what happened while they were open: a file a local user planted is
@@ -725,7 +740,7 @@ check the files against `windiag-staged.json` and restart the machine, which clo
 
 ```
 WinDiag.Mcp.exe --service-status      # by hand, or as a service? and configured how?
-WinDiag.Mcp.exe --uninstall-service   # removes the service, its token and its firewall rule
+WinDiag.Mcp.exe --uninstall-service   # removes the service, its token key and its firewall rule
 ```
 
 `--service-status` answers a question the machine cannot otherwise be asked in one step: a server
@@ -750,7 +765,7 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--password <value>` | Required for an account that is not built in |
 | `--token-stdin` | Reads the token from standard input, so it never appears on the target's command line. Needs an already-elevated shell: stdin cannot cross the UAC prompt. The bootstrap scripts use this |
 | `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call. Prefer `--token-stdin`: a value here is in the installer's command line, which process auditing records |
-| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. Give windiag a directory of its own: when others can write it, it and everything in it are handed to Administrators, and directories above it that do not exist yet are made the same way. A service refuses it when it is reached through any link, or sits below a directory others could rename — a folder made under a drive root, say — and, run by hand, `get_file` and `put_file` refuse one reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. Give windiag a directory of its own: one that does not exist yet is created restricted to SYSTEM and Administrators, as are directories above it that do not exist yet, and one that exists and others can change is refused rather than taken over. A service refuses it when it is reached through any link, or sits below a directory others could rename — a folder made under a drive root, say — and, run by hand, `get_file` and `put_file` refuse one reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
 | `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
 | `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
@@ -767,7 +782,7 @@ its grants are the `WINDIAG_*` variables, and `--read-only` on that command line
 ignored.
 
 **Flags and environment variables are two spellings of one setting.** Each grant flag becomes its
-`WINDIAG_*` variable (see [Configuration](#configuration)) in the service's own registry key —
+`WINDIAG_*` variable (see [Configuration](#configuration)) in the service key's `Environment` value —
 `--allow-arbitrary-read` writes `WINDIAG_ALLOW_ARBITRARY_READ=1`. So anything the environment can
 express, an install can too, and the semantics documented there apply unchanged to the flags here.
 
@@ -865,26 +880,41 @@ sc create windiagsvc binPath= "\"C:\WinDiag\WinDiag.Mcp.exe\" --http http://10.0
    start= auto obj= LocalSystem DisplayName= "windiag"
 ```
 
-**Put the token in the service's own environment, not a machine-wide variable.** A service has no
-console to inherit `WINDIAG_TOKEN` from, and the obvious fix is the wrong one: machine environment
-variables are readable by *every local user*, and with `run_command` or `update_self` enabled that
-token is code execution as SYSTEM. **`sc create` does not protect the per-service key either** — it
-inherits the Services key's ACL, under which every local user can read its values — so restrict it to
-SYSTEM and Administrators *before* writing the token:
+**Put the token in a key created restricted, not a machine-wide variable and not the service key
+itself.** A service has no console to inherit `WINDIAG_TOKEN` from, and the obvious fix is the wrong
+one: machine environment variables are readable by *every local user*, and with `run_command` or
+`update_self` enabled that token is code execution as SYSTEM. **`sc create` does not protect the
+per-service key either** — it inherits the Services key's ACL, under which every local user can read
+its values — and restricting it afterwards does not help a secret written there: Windows checks access
+when a handle is opened, so one opened before the change goes on reading. The server reads its token
+from the `Parameters` subkey, created with its ACL in the same call, and finds that key through
+`WINDIAG_SERVICE_NAME`; the service key itself is restricted for its grants. This is what
+`--install-service` does (Windows PowerShell 5.1, elevated):
 
 ```powershell
 $acl = New-Object System.Security.AccessControl.RegistrySecurity
 $acl.SetAccessRuleProtection($true, $false)
+$acl.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544')
 'S-1-5-18', 'S-1-5-32-544' | ForEach-Object {   # SYSTEM, Administrators
   $acl.AddAccessRule((New-Object System.Security.AccessControl.RegistryAccessRule (
     [Security.Principal.SecurityIdentifier]$_), 'FullControl', 'ContainerInherit', 'None', 'Allow')) }
 Set-Acl -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc -AclObject $acl
 
+# Created with the ACL, never given it afterwards. CreateSubKey opens an existing key as it is, so
+# check first that there is none.
+$service = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\windiagsvc', $true)
+if ($service.OpenSubKey('Parameters')) { throw 'Parameters already exists' }
+$parameters = $service.CreateSubKey('Parameters', 'ReadWriteSubTree', 'None', $acl)
+$parameters.SetValue('WINDIAG_TOKEN', '<paste a long random value>')
+
 New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\windiagsvc `
   -Name Environment -PropertyType MultiString -Force -Value @(
-    'WINDIAG_TOKEN=<paste a long random value>',
+    'WINDIAG_SERVICE_NAME=windiagsvc',
     'WINDIAG_ARTIFACT_DIR=C:\WinDiagArtifacts')
 ```
+
+A service running as NetworkService or another account also needs a `ReadKey` ACE for that account on
+`Parameters`, since it reads the key itself.
 
 Two things change when it runs as a service, both measured rather than assumed:
 
@@ -995,7 +1025,7 @@ same meanings, except:
 | `WINDIAG_ALLOW_ARBITRARY_READ` | `false` | `1`/`true` lets `get_file` and `query_activity` read *outside* windiag's own directories. It always reads inside them — which includes the artifact directory, so retrieving a dump or a trace needs no flag. This widens it to anything the elevated account can open, i.e. exfiltration, so it is off by default. Without it, every read tool that opens a path it is given (`get_file`, `who_locks_path`, `file_signatures`, `effective_access`, `query_activity`) also refuses a network share or device path — `\\host\share`, `\\?\UNC\`, `\\.\`, a mapped network drive — because opening one makes the server sign in to that host as its machine account. `put_file` reaches one only with `WINDIAG_ALLOW_ARBITRARY_WRITE`, which already lets it write anywhere. Unlike the write grant, `WINDIAG_READ_ONLY` does **not** override it — reading is what a read-only server is for |
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
-| `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode |
+| `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode. A service `--install-service` registered reads it from `HKLM\SYSTEM\CurrentControlSet\Services\<name>\Parameters` instead, and falls back to this variable only when that key has none |
 | `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written. Neither it nor the server's own folder may be reached through a mounted folder, a junction to a device, or a relative symbolic link: `get_file` and `put_file` cannot tell where such a link lands, so they refuse every transfer. Run as a service, windiag goes further and refuses to start when either is, or is reached through, any link, or sits below a directory someone other than SYSTEM and Administrators could rename (see the service section) |
 | `SYSDIAG_RELAY_FILE_ROOT` | a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp`; plus the `artifacts` directory when the relay runs from `artifacts/diagrelay` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The `artifacts` default exists because a relay published to `artifacts/diagrelay` sends the builds beside it in `artifacts/win-x64`; anywhere else — `~/bin`, an unpacked release zip, `dotnet run` — it does not apply, so set this to push builds from another folder |
 
@@ -1167,6 +1197,7 @@ split is what lets the tool layer be tested with fakes and no live machine.
 |---|---|
 | `'handle.exe' was not found on this machine` | Sysinternals Suite is not installed. Native-backed tools still work. |
 | `'…\handle64.exe' is beside the server but is not signed by Microsoft` | The copy in the server's folder is damaged or was not Microsoft's. Replace it from `download.sysinternals.com` (or re-run `deploy-target.ps1`), or delete it to use an installed copy. |
+| `--install-service`: `The server directory … can be changed by accounts other than SYSTEM and Administrators … Nothing was installed` (or `The artifact directory …`) | The directory exists and someone other than an administrator can change it or something in it — a folder made by hand under `C:\`, or one a user made before you did. The installer no longer takes such a directory over, because a handle opened on it beforehand would outlast that. For `--artifacts`, rename it aside or name one that does not exist yet: the installer creates it restricted. For the server, copy `WinDiag.Mcp.exe` into a directory created restricted — `md "%ProgramFiles%\WinDiag"` from an elevated prompt, or the bootstrap scripts' `C:\WinDiag` — and install from there. |
 | A service refuses to start: `… can be renamed or removed, or what it holds removed, by accounts other than SYSTEM and Administrators` | The server's or the artifact directory sits below a directory someone else could rename and replace — typically a folder made under `C:\` or `D:\`, which every user inherits *Modify* on, or one whose owner is an account outside the local Administrators group (an owner can grant itself any right, whatever the ACL says). The event log names the directory and who can change it. Remove the rights it names; if it says an account `owns it`, hand the directory to the group with `icacls <dir> /setowner *S-1-5-32-544`. Or move windiag to `C:\WinDiag` and `--artifacts C:\WinDiagArtifacts`. Then start the service again (`sc.exe \\<host> start <service>`): once its restart retries are spent it stays stopped, and nothing over port 4024 can reach it. |
 | `The owned directory '…' cannot be judged` on every `get_file` / `put_file` | The artifact directory or the server's folder sits under a folder a volume is mounted at (a data disk mounted at `C:\Data`), a junction to a device, or a relative symbolic link. .NET does not report where such a link really lands, so nothing under it can be judged owned. Move the directory: give the disk a drive letter and set `--artifacts` to a directory on that letter. |
 | `path_handle_search` warns about partial results | Not elevated. Restart the server from an elevated terminal. |

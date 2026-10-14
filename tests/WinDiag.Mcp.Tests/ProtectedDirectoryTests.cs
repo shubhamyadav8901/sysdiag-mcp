@@ -217,6 +217,7 @@ public sealed class DirectoryLinkRefusalTests : IDisposable
 public sealed class ProtectDirectoryOnDiskTests : IDisposable
 {
     private static readonly SecurityIdentifier Everyone = new(WellKnownSidType.WorldSid, null);
+    private static readonly SecurityIdentifier Users = new(WellKnownSidType.BuiltinUsersSid, null);
     private static readonly SecurityIdentifier NetworkService = new(WellKnownSidType.NetworkServiceSid, null);
 
     private readonly List<string> _made = [];
@@ -542,6 +543,60 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
 
         Assert.NotEmpty(ProtectedAcl.DirectoryExposures(root, serviceAccount: null));
         Assert.True(started.Elapsed < TimeSpan.FromSeconds(30), $"took {started.Elapsed}: it walked the drive");
+    }
+
+    [ElevatedFact]
+    public void Refuses_rather_than_takes_over_a_directory_that_is_already_there_when_asked_to_create_it_afresh()
+    {
+        // What the installer and the service ask for once they have found a directory missing: one there by the
+        // time it is created was made by somebody else in between, and taking it over would leave its owner any
+        // handle they opened on it -- one for WRITE_DAC included, which no share mode refuses.
+        var path = NewDirectory();
+        Assert.NotEmpty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+        var before = Acl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner);
+
+        var ex = Assert.Throws<ConfigurationException>(
+            () => ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true, adoptExisting: false));
+
+        Assert.Contains("somebody else made it", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Acl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner));
+    }
+
+    [ElevatedFact]
+    public void Creates_a_missing_directory_afresh_with_nothing_exposed_when_asked_not_to_adopt_one()
+    {
+        var path = Path.Combine(NewDirectory(), "artifacts");
+
+        ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true, adoptExisting: false);
+
+        Assert.Empty(ProtectedAcl.DirectoryExposures(path, serviceAccount: null));
+    }
+
+    [ElevatedFact]
+    public void Names_the_owner_of_a_directory_somebody_else_made_and_passes_one_administrators_own()
+    {
+        // The default artifact directory under C:\Windows\Temp, which any user may create first: owned by them,
+        // it is moved aside on start rather than taken over.
+        var path = NewDirectory();
+        PlantedTree.SetOwner(path, Users);
+
+        Assert.Contains("owns it", ProtectedAcl.ForeignOwner(path, serviceAccount: null), StringComparison.Ordinal);
+
+        PlantedTree.OwnByAdministrators(path);
+        Assert.Null(ProtectedAcl.ForeignOwner(path, serviceAccount: null));
+        Assert.Null(ProtectedAcl.ForeignOwner(Path.Combine(path, "not-made-yet"), serviceAccount: null));
+    }
+
+    [ElevatedFact]
+    public void Counts_a_junction_where_a_directory_should_be_as_somebody_elses_without_following_it()
+    {
+        var target = NewDirectory();
+        PlantedTree.OwnByAdministrators(target);
+        var link = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, $"windiag-test-{Guid.NewGuid():N}");
+        _made.Add(link);
+        PlantedTree.LinkDirectory(link, target);
+
+        Assert.Contains("link", ProtectedAcl.ForeignOwner(link, serviceAccount: null), StringComparison.Ordinal);
     }
 
     private static string Long(string path) => @"\\?\" + path;

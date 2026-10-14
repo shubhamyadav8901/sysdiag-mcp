@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.Versioning;
 using System.Security.Principal;
+using Microsoft.Win32;
+using WinDiag.Mcp.Configuration;
 
 namespace WinDiag.Mcp.Hosting;
 
@@ -17,6 +20,51 @@ namespace WinDiag.Mcp.Hosting;
 [SupportedOSPlatform("windows")]
 public static class ServiceHardening
 {
+    /// <summary>
+    /// <paramref name="options"/> with the token from the service's token key, which --install-service writes;
+    /// unchanged when there is none, as on a target an older build installed, whose token is in its environment.
+    /// </summary>
+    /// <remarks>
+    /// Found by WINDIAG_SERVICE_NAME, which --install-service writes into the environment beside it. A key that is
+    /// there but cannot be read refuses the start rather than falling back: the server would otherwise make up a
+    /// token of its own, and serve with one nobody holds.
+    /// </remarks>
+    /// <exception cref="ConfigurationException">The token key exists and cannot be read.</exception>
+    public static WinDiagOptions WithStoredToken(WinDiagOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var name = Environment.GetEnvironmentVariable("WINDIAG_SERVICE_NAME");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return options;
+        }
+
+        var path = ServiceInstallOptions.TokenKeyPath(name);
+        string? stored;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(path);
+            stored = key?.GetValue(ServiceInstallOptions.TokenValueName) as string;
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            throw new ConfigurationException(
+                $@"could not read the bearer token from HKLM\{path} ({ex.Message}). Re-run --install-service from an "
+                + "elevated prompt, which creates that key readable by the service's account.");
+        }
+
+        if (string.IsNullOrWhiteSpace(stored) && options.Token is not null)
+        {
+            Warn($"This service's bearer token is in its registry key's Environment value, where an older build put it, "
+                 + "in a key every local user could read until it was restricted. Change it: --uninstall-service, then "
+                 + "--install-service --token-stdin with a new one, which goes into a key of its own; then update the "
+                 + "relay's targets file.");
+        }
+
+        return options with { Token = ServiceInstallOptions.ServiceToken(stored, options.Token) };
+    }
+
     /// <summary>Protects or refuses; see <see cref="StartupPermissions"/>.</summary>
     /// <exception cref="ConfigurationException">A directory stays writable by someone else.</exception>
     public static void Apply(string artifactDirectory)
@@ -35,11 +83,20 @@ public static class ServiceHardening
 
         try
         {
+            // The default is %TEMP%\windiag, a name anyone may have taken first where SYSTEM's temp directory is
+            // C:\Windows\Temp. A directory the operator named was made, or refused, by the installer.
+            if (IsDefault(artifactDirectory))
+            {
+                StartupPermissions.ReplaceForeign(
+                    "artifact directory", artifactDirectory, p => ProtectedAcl.ForeignOwner(p, account), MoveAside, Warn);
+            }
+
             // Made here, protected, rather than left for the first dump to create: Directory.CreateDirectory
-            // inherits whatever the parent hands down, and under C:\ that is "Authenticated Users: Modify".
+            // inherits whatever the parent hands down, and under C:\ that is "Authenticated Users: Modify". One
+            // that appears between the look and the create is somebody else's, and refused.
             if (!Directory.Exists(artifactDirectory))
             {
-                Protect(artifactDirectory);
+                ProtectedAcl.ProtectDirectory(artifactDirectory, account, ownedByAdministrators: account is null, adoptExisting: false);
             }
 
             foreach (var (what, path) in new[] { ("server directory", serverDirectory), ("artifact directory", artifactDirectory) })
@@ -61,6 +118,43 @@ public static class ServiceHardening
         ProtectOwnKey(runsAsLocalSystem: account is null);
     }
 
+    private static bool IsDefault(string artifactDirectory) => string.Equals(
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(artifactDirectory)),
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(WinDiagOptions.DefaultArtifactDirectory)),
+        StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Renames a directory to a name beside it that is not taken, and returns that name.</summary>
+    /// <remarks>
+    /// A rename moves a link itself, never what it leads to (MoveFileEx acts on the reparse point), so a junction
+    /// in the way is moved, not followed. One held open without FILE_SHARE_DELETE cannot be renamed, which is the
+    /// refusal ReplaceForeign gives.
+    /// </remarks>
+    private static string MoveAside(string path)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+        for (var attempt = 0; ; attempt++)
+        {
+            var aside = $"{full}.not-windiag-{stamp}{(attempt == 0 ? string.Empty : $"-{attempt}")}";
+            if (Path.Exists(aside))
+            {
+                continue;
+            }
+
+            // A file in the way is moved too; GetAttributes reads the name itself, not what a link leads to.
+            if (File.GetAttributes(full).HasFlag(FileAttributes.Directory))
+            {
+                Directory.Move(full, aside);
+            }
+            else
+            {
+                File.Move(full, aside);
+            }
+
+            return aside;
+        }
+    }
+
     /// <summary>Restricts the service key if it is still readable; see <see cref="StartupPermissions.ProtectServiceKey"/>.</summary>
     /// <remarks>
     /// Named by WINDIAG_SERVICE_NAME, which --install-service writes; a hand-registered service without it
@@ -75,7 +169,8 @@ public static class ServiceHardening
         }
 
         StartupPermissions.ProtectServiceKey(
-            name, runsAsLocalSystem, ProtectedAcl.ServiceKeyExposures, ProtectedAcl.ProtectServiceKey, Warn);
+            name, runsAsLocalSystem, ProtectedAcl.ServiceKeyExposures, ProtectedAcl.ProtectServiceKey, Warn,
+            holdsToken: Environment.GetEnvironmentVariable("WINDIAG_TOKEN") is not null);
     }
 
     /// <summary>To stderr and, because a service has no stderr anyone sees, to the event log.</summary>
