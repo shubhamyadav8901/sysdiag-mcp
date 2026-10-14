@@ -1,7 +1,5 @@
 # Security
 
-## Security
-
 The threat model is **not only the network**. The server runs elevated, so any local unprivileged user
 on the target can reach the port; with the token they get command execution at the server's privilege
 level through an ordinary tool call. The token is the whole boundary.

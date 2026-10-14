@@ -7,7 +7,7 @@ It complements `mcp-windbg`, which owns post-mortem dump analysis. A debugger se
 process; this server sees the machine.
 
 sysdiag is a set of servers: **WinDiag** (`WinDiag.Mcp`, Windows), **LinuxDiag** and **MacDiag**,
-which serve much the same tool set on Linux and macOS (each one's section lists its tools), and **DiagRelay**, a local relay that puts any number
+which serve much the same tool set on Linux and macOS ([Linux](docs/linux.md) and [macOS](docs/macos.md) list theirs), and **DiagRelay**, a local relay that puts any number
 of them behind one MCP registration. This page gets you started; the [documentation](#documentation) has
 the rest.
 
@@ -47,8 +47,8 @@ unelevated, the servers answer for what the current account can see, and `capabi
 missing.
 
 To drive other machines, install the server on each one as a service, with HTTP and a bearer token, and
-register the relay locally. See [Deploying to a target machine](docs/windows.md#deploying-to-a-target-machine) and
-[the relay](docs/relay.md#one-stable-mcp-entry-for-a-fleet-of-targets--the-relay). That channel is plaintext HTTP: keep
+register the relay locally. See the [Windows](docs/windows.md#deploying-to-a-target-machine), [Linux](docs/linux.md) and [macOS](docs/macos.md) guides, and
+[the relay](docs/relay.md). That channel is plaintext HTTP: keep
 it on a network you trust, or tunnel it.
 
 ## Status
@@ -128,7 +128,7 @@ Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
 | [Linux targets](docs/linux.md) | LinuxDiag: install, grants and what each tool reads |
 | [macOS targets](docs/macos.md) | MacDiag: install, Full Disk Access, signing and what each tool reads |
 | [The relay](docs/relay.md) | One MCP registration for a fleet, `~/.sysdiag-targets.json`, and moving files without spending context |
-| [Configuration](docs/configuration.md) | Every `WINDIAG_*` variable and its default |
+| [Configuration](docs/configuration.md) | Every `WINDIAG_*`, `LINUXDIAG_*`, `MACDIAG_*` and relay variable, and its default |
 | [Security](docs/security.md) | The threat model and what each defence is for |
 | [Design notes and troubleshooting](docs/design-notes.md) | Behaviour worth knowing, and what each error means |
 | [Contributing](CONTRIBUTING.md) | Building, testing, the source layout and releases |

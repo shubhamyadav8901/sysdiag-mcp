@@ -1,6 +1,6 @@
 ---
 name: sysdiag-target
-description: Use when standing up, updating, or recovering a sysdiag target machine (WinDiag, LinuxDiag or MacDiag) — "set up windiag on <host>", "add this VM to windiag", "deploy the latest build to <host>", "the target is down / not answering / refusing the token", "register windiag as a service", "give me read-only access to that box", "runner1 is unreachable". Covers choosing a transport from what the target actually answers on, choosing grants, first install, later updates via update_self, and the failures that look like something else. Do NOT read src/ to answer a configuration question — `--help` and the README are authoritative.
+description: Use when standing up, updating, or recovering a sysdiag target machine (WinDiag, LinuxDiag or MacDiag) — "set up windiag on <host>", "add this VM to windiag", "deploy the latest build to <host>", "the target is down / not answering / refusing the token", "register windiag as a service", "give me read-only access to that box", "runner1 is unreachable". Covers choosing a transport from what the target actually answers on, choosing grants, first install, later updates via update_self, and the failures that look like something else. Do NOT read src/ to answer a configuration question — `--help` and docs/ are authoritative.
 ---
 
 # Setting up and recovering a sysdiag target

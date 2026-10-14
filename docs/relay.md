@@ -1,6 +1,4 @@
-# The relay
-
-## One stable MCP entry for a fleet of targets — the relay
+# The relay: one stable MCP entry for a fleet of targets
 
 The targets are lab VMs whose IP changes every time, so a fixed `--http <url>` registration goes stale
 on every reboot. The relay solves that. `DiagRelay.Mcp` is its own executable that runs a **local stdio** MCP server on the base machine — no

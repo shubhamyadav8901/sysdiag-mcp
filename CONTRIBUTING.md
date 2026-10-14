@@ -25,7 +25,7 @@ dotnet test tests/WinDiag.Mcp.Tests          # offline; never touches the live m
 dotnet test tests/Diag.Mcp.Server.Tests      # the shared server kit; also runs on Linux
 dotnet test tests/DiagRelay.Mcp.Tests        # the relay
 dotnet test tests/LinuxDiag.Mcp.Tests        # the Linux server; its [LinuxFact] tests run through tools/test-linux.sh
-dotnet test tests/MacDiag.Mcp.Tests          # the macOS server; its [MacFact] tests run on a Mac
+dotnet test tests/MacDiag.Mcp.Tests          # the macOS server; its [MacFact] tests run only on a Mac (CI's macos-latest)
 dotnet test tests/WinDiag.Mcp.OnTarget       # creates real locks on this machine
 ```
 

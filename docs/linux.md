@@ -1,7 +1,5 @@
 # LinuxDiag on Linux targets
 
-## Linux targets
-
 `LinuxDiag.Mcp` is the Linux server: Ubuntu and Debian, **x86-64 only**. It is reached through the same
 relay, with the same bearer token model and the same plaintext-HTTP caveat as windiag. It serves
 `capabilities`, `put_file`, `get_file`, `system_overview`, `run_command` (`sh`, `bash`, `none`),
@@ -60,7 +58,7 @@ a live host.) Leave `-Token` out and the installer generates
 one and prints it once. The script copies the binary into
 the SSH user's home directory -- not the shared `/tmp`, where another account could swap it -- checks its
 hash there, and runs `sudo LinuxDiag.Mcp --install-service`. `-Grants` takes the same presets as
-`bootstrap-target.ps1`. That installs:
+`bootstrap-target.ps1` ([the presets table](windows.md#bringing-up-a-machine-that-has-never-run-windiag)). That installs:
 
 | Path | What |
 |---|---|

@@ -1,7 +1,5 @@
 # Configuration
 
-## Configuration
-
 The Linux server reads the same settings as `LINUXDIAG_*` -- `LINUXDIAG_READ_ONLY`, `LINUXDIAG_TOKEN` and so on -- with the same meanings and defaults, except that its artifact directory defaults to `/var/lib/linuxdiag`.
 `LinuxDiag.Mcp --help` lists them.
 
@@ -26,7 +24,7 @@ same meanings, except:
 | `WINDIAG_MAX_RESULTS` | `50000` | Row cap per tool call (1–10000000). High so handle-heavy tools aren't truncated; lower it if one call's output is too large for your client. |
 | `WINDIAG_HTTP_BIND` | — | Address to serve on; equivalent to `--http` |
 | `WINDIAG_TOKEN` | generated | Bearer token for HTTP mode. A service `--install-service` registered reads it from `HKLM\SYSTEM\CurrentControlSet\Services\<name>\Parameters` instead, and falls back to this variable only when that key has none |
-| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written. Neither it nor the server's own folder may be reached through a mounted folder, a junction to a device, or a relative symbolic link: `get_file` and `put_file` cannot tell where such a link lands, so they refuse every transfer. Run as a service, windiag goes further and refuses to start when either is, or is reached through, any link, or sits below a directory someone other than SYSTEM and Administrators could rename (see the service section) |
+| `WINDIAG_ARTIFACT_DIR` | `%TEMP%\windiag` | Where dumps and traces are written. Neither it nor the server's own folder may be reached through a mounted folder, a junction to a device, or a relative symbolic link: `get_file` and `put_file` cannot tell where such a link lands, so they refuse every transfer. Run as a service, windiag goes further and refuses to start when either is, or is reached through, any link, or sits below a directory someone other than SYSTEM and Administrators could rename (see [running it as a service](windows.md#running-it-as-a-service-instead)) |
 | `SYSDIAG_RELAY_FILE_ROOT` | a per-user `sysdiag` folder: `%TEMP%\sysdiag` on Windows, `$XDG_CACHE_HOME/sysdiag` or `~/.cache/sysdiag` elsewhere — never the shared `/tmp`; plus the `artifacts` directory when the relay runs from `artifacts/diagrelay` | **Relay only.** Semicolon-separated local directories `push_file` may read from and `pull_file` may write to, *replacing* the defaults rather than adding to them. This is the boundary that stops one tool call copying an arbitrary local file onto a target, so widen it deliberately. The `artifacts` default exists because a relay published to `artifacts/diagrelay` sends the builds beside it in `artifacts/win-x64`; anywhere else — `~/bin`, an unpacked release zip, `dotnet run` — it does not apply, so set this to push builds from another folder |
 
 Booleans are strict: `1/true/yes/on` or `0/false/no/off`. A misspelling fails startup rather than

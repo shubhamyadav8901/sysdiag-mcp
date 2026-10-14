@@ -16,7 +16,7 @@ Every operator-facing knob is documented, and the source is the slowest place to
 | Which flag sets which variable | Two spellings of one setting: `--allow-arbitrary-read` → `WINDIAG_ALLOW_ARBITRARY_READ=1`, written into the service's own registry key |
 | How to reach a machine that has never run windiag | `docs/windows.md`, **Bringing up a machine that has never run windiag**; for Linux and macOS, `docs/linux.md` / `docs/macos.md` |
 | What `MacDiag.Mcp` installs, where, and what makes it refuse to start | `docs/macos.md`, and `MacDiag.Mcp --help` |
-| What each `-Grants` preset actually passes | Same section. `None` is `--read-only` alone and **cannot read files** |
+| What each `-Grants` preset actually passes | `docs/windows.md`, **Bringing up a machine that has never run windiag**. `None` is `--read-only` alone and **cannot read files** |
 | The `~/.sysdiag-targets.json` shape | `docs/relay.md` |
 | What a tool can and cannot do on a given machine | Call `capabilities` on it — it names the missing binary or the lost privilege |
 

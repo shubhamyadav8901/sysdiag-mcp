@@ -2,6 +2,7 @@
 
 ## Running it
 
+From a checkout, or the published executable's `--help`:
 
 ```
 dotnet run --project src/WinDiag.Mcp                      # stdio
@@ -262,7 +263,7 @@ WinDiag.Mcp.exe --http http://10.0.0.5:7777
 
 Omit `WINDIAG_TOKEN` and the server generates one and prints it to stderr; it changes on restart.
 
-### Running it as a service instead
+## Running it as a service instead
 
 Everything above starts the server by hand, which is how the fleet has always run and still works
 unchanged. The same executable can also run under the Service Control Manager, which buys one thing
@@ -335,7 +336,7 @@ every restart.
 without it comes back with fewer tools than it went away with, and nothing announces that except a
 `capabilities` call nobody makes. `--service-status` lists what was configured.
 
-#### Every option `--install-service` takes
+### Every option `--install-service` takes
 
 `WinDiag.Mcp.exe --help` prints this list too, and is the authority if the two ever disagree.
 
@@ -349,7 +350,7 @@ without it comes back with fewer tools than it went away with, and nothing annou
 | `--password <value>` | Required for an account that is not built in |
 | `--token-stdin` | Reads the token from standard input, so it never appears on the target's command line. Needs an already-elevated shell: stdin cannot cross the UAC prompt. The bootstrap scripts use this |
 | `--token <value>` | Default: a new 256-bit token, printed once. Must match what the relay's targets file holds for this machine, or the alias connects and then 401s every call. Prefer `--token-stdin`: a value here is in the installer's command line, which process auditing records |
-| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. Give windiag a directory of its own: one that does not exist yet is created restricted to SYSTEM and Administrators, as are directories above it that do not exist yet, and one that exists and others can change is refused rather than taken over. A service refuses it when it is reached through any link, or sits below a directory others could rename — a folder made under a drive root, say — and, run by hand, `get_file` and `put_file` refuse one reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see Troubleshooting |
+| `--artifacts <dir>` | Pins `WINDIAG_ARTIFACT_DIR`. As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`, so captures and dumps move somewhere surprising without it. Give windiag a directory of its own: one that does not exist yet is created restricted to SYSTEM and Administrators, as are directories above it that do not exist yet, and one that exists and others can change is refused rather than taken over. A service refuses it when it is reached through any link, or sits below a directory others could rename — a folder made under a drive root, say — and, run by hand, `get_file` and `put_file` refuse one reached through a folder a volume is mounted at, a junction to a device, or a relative symbolic link: see [troubleshooting](design-notes.md#troubleshooting) |
 | `--allow-self-update` | Registers `update_self`, and lets `put_file` stage into the server's own directory |
 | `--allow-command-execution` | Registers `run_command` |
 | `--allow-arbitrary-write` | Lets `put_file` write anywhere, the server's own directory included |
@@ -382,7 +383,7 @@ read tools can still open any file the service account can reach. `--read-only` 
 *not* override the read grant — reading is what a read-only server is for. Reach for this when
 somebody will grant you diagnostics on a machine but not a shell on it.
 
-### Bringing up a machine that has never run windiag
+## Bringing up a machine that has never run windiag
 
 `--install-service` assumes the executable is already on the target. Getting it there is the one step
 that needs a route in, and the two scripts under `tools/` cover the two shapes that exist. Both leave

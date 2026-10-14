@@ -1,7 +1,5 @@
 # MacDiag on macOS targets
 
-## macOS targets
-
 `MacDiag.Mcp` is the macOS server: macOS 13 or later, Apple Silicon (`osx-arm64`) and Intel (`osx-x64`).
 It is reached through the same relay, with the same bearer token model and the same plaintext-HTTP caveat.
 
@@ -49,7 +47,7 @@ dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:Publi
 ```
 
 Use `-r osx-x64` and `-Binary artifacts/macdiag-osx-x64/MacDiag.Mcp` for an Intel Mac. `tools/bootstrap-macos.sh`
-is the same for a Linux or macOS operator. Both do what the Linux scripts do, plus two Mac-specific steps:
+is the same for a Linux or macOS operator. Both do what [the Linux scripts](linux.md) do, plus two Mac-specific steps:
 
 - After checking the hash, they clear the quarantine flag.
 - They sign the binary ad hoc (`codesign --force --sign -`) if it carries no valid signature. An Apple
