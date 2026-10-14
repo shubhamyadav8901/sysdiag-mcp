@@ -337,9 +337,10 @@ public sealed record ServiceInstallOptions
 
     /// <summary>The names in a server directory that are not windiag's, in the order given.</summary>
     /// <remarks>
-    /// The installer restricts an exposed server directory to SYSTEM and Administrators -- which, for a
-    /// server run from a Downloads or Desktop folder, would take that folder away from its own user.
-    /// A directory holding anything else is therefore refused rather than restricted.
+    /// The installer restricts a server directory only administrators could change but which holds files
+    /// their own accounts own -- which, for a server run from an administrator's Downloads or Desktop folder,
+    /// would take that folder away from its own user. A directory holding anything else is therefore refused
+    /// rather than restricted.
     /// </remarks>
     public static IReadOnlyList<string> ForeignToServerDirectory(IEnumerable<string> names) =>
         names.Where(name => !ServerDirectoryFiles.Any(
@@ -362,6 +363,69 @@ public sealed record ServiceInstallOptions
         "networkservice" or "nt authority\\networkservice" => "NT AUTHORITY\\NetworkService",
         _ => account
     };
+
+    /// <summary>
+    /// The SID of a built-in service account, in any spelling <see cref="Parse(IReadOnlyList{string}, TextReader?)"/>
+    /// accepts or <see cref="Normalise"/> produces; null for any other account.
+    /// </summary>
+    /// <remarks>
+    /// <para>Not looked up by name, because the name sc.exe wants is not one LSA knows. Microsoft's
+    /// NetworkService and LocalService account pages say so in as many words: "This account is not
+    /// recognized by the security subsystem, so you cannot specify its name in a call to the
+    /// LookupAccountName function." The SCM special-cases <c>NT AUTHORITY\NetworkService</c>; LSA's own
+    /// names are <c>NETWORK SERVICE</c> and <c>LOCAL SERVICE</c>, with a space, and are localised besides
+    /// (<c>NT-AUTORITÄT\NETZWERKDIENST</c>). Translating the sc.exe spelling refused every NetworkService
+    /// and LocalService install before sc.exe ever ran. The SIDs are fixed by Windows (well-known SIDs
+    /// S-1-5-18, -19 and -20), so nothing needs to be asked.</para>
+    /// <para>LSA's own spellings are mapped as well, so an operator who types what <c>whoami</c> prints is
+    /// not sent to a lookup that would happen to work only in English.</para>
+    /// </remarks>
+    public static string? WellKnownAccountSid(string account)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+
+        var name = account.Trim().ToLowerInvariant();
+        if (name.StartsWith(@"nt authority\", StringComparison.Ordinal))
+        {
+            name = name[@"nt authority\".Length..];
+        }
+
+        return name switch
+        {
+            "localsystem" or "system" => LocalSystemSid,
+            "localservice" or "local service" => "S-1-5-19",
+            "networkservice" or "network service" => "S-1-5-20",
+            _ => null
+        };
+    }
+
+    /// <summary>The LocalSystem account's SID.</summary>
+    public const string LocalSystemSid = "S-1-5-18";
+
+    /// <summary>The subkey of the service's own key that holds its bearer token, and nothing else.</summary>
+    public const string TokenKeyName = "Parameters";
+
+    /// <summary>The value in <see cref="TokenKeyName"/> that holds the token.</summary>
+    /// <remarks>
+    /// Named like the variable it replaces, which also keeps registry_read redacting it: that tool hides
+    /// any string value whose name ends in TOKEN.
+    /// </remarks>
+    public const string TokenValueName = "WINDIAG_TOKEN";
+
+    /// <summary>The token key's path under HKLM.</summary>
+    public static string TokenKeyPath(string serviceName) =>
+        $@"SYSTEM\CurrentControlSet\Services\{serviceName}\{TokenKeyName}";
+
+    /// <summary>The token a service runs with: the one in its token key, or else the one in its environment.</summary>
+    /// <param name="stored">What <see cref="TokenValueName"/> in <see cref="TokenKeyPath"/> holds, or null.</param>
+    /// <param name="fromEnvironment">WINDIAG_TOKEN as the process received it, or null.</param>
+    /// <remarks>
+    /// The environment is read only when the key has nothing: a target installed by an older build has its
+    /// token there, and update_self brings it this build without an install running again. It must still
+    /// start with the token the relay holds for it. The next --install-service moves it.
+    /// </remarks>
+    public static string? ServiceToken(string? stored, string? fromEnvironment) =>
+        string.IsNullOrWhiteSpace(stored) ? fromEnvironment : stored.Trim();
 
     /// <summary>
     /// The argument list for <c>sc.exe create</c>.
@@ -410,14 +474,19 @@ public sealed record ServiceInstallOptions
         ["failure", Name, "reset=", "86400", "actions=", "restart/5000/restart/30000/restart/60000"];
 
     /// <summary>
-    /// The per-service environment, as the REG_MULTI_SZ the SCM hands the process.
+    /// The per-service environment, as the REG_MULTI_SZ the SCM hands the process: the service's name,
+    /// its artifact directory and its grants -- never the token.
     /// </summary>
     /// <remarks>
-    /// The installer restricts this key to SYSTEM and Administrators before writing it
-    /// (<see cref="ProtectedAcl.ProtectServiceKey"/>): sc.exe creates it with the Services key's ACL,
-    /// under which every local user can read its values. A machine-wide variable would be readable by
-    /// every local user too, and with self-update or command execution enabled the token is equivalent
-    /// to code execution -- so where it is written, and who can read that, matters more than that it is set.
+    /// <para>The token is not here because this value lives in the service's own key, and that key cannot be
+    /// made safe for a secret. sc.exe creates it with the Services key's ACL, under which every local user
+    /// may read it, and the installer can only restrict it afterwards. Windows checks access when a handle
+    /// is opened, not each time it is used, so a user who opened the key in between keeps reading it after
+    /// the ACL changes -- and the key name is predictable, so they need only keep trying. The token goes in
+    /// the <see cref="TokenKeyName"/> subkey instead, which is created with its ACL already on it; see
+    /// <see cref="ProtectedAcl.CreateTokenKey"/>.</para>
+    /// <para>The key is still restricted (<see cref="ProtectedAcl.ProtectServiceKey"/>): the grants are
+    /// not secret, but a target installed by an older build still has its token here.</para>
     /// </remarks>
     public IReadOnlyList<string> EnvironmentBlock()
     {
@@ -426,9 +495,9 @@ public sealed record ServiceInstallOptions
         // server can also discover this by querying WMI for its own process id, but that is the
         // fallback for a hand-registered service: on a real one the query threw instead of answering,
         // and a restart path should not depend on the less reliable of two ways to learn the same fact.
+        // It is also how the running service finds its token key.
         var values = new List<string>
         {
-            $"WINDIAG_TOKEN={Token}",
             $"WINDIAG_SERVICE_NAME={Name}"
         };
 

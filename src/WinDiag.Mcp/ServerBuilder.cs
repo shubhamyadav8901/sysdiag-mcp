@@ -83,17 +83,19 @@ public static class ServerBuilder
           An option not listed here is refused, and nothing is installed. So is an option whose value
           is missing, empty or another option (--token --read-only).
 
-          The token is written to the service's own registry key, which the installer first restricts
-          to SYSTEM and Administrators -- never to a machine-wide variable, which every local user can
-          read. The server's own directory and --artifacts are restricted the same way when anyone
-          else can write them or anything in them, and what they hold is handed to Administrators,
-          because the service runs what it finds there; install from a directory of its own, since one
-          that also holds other files is refused instead. So is one that is, or is reached through, a
-          link, one below a directory others could rename, and one others can write that holds a link.
-          A service also checks on every start, restricts what it can, and refuses to start from a
-          directory it cannot.
+          The token is written to <service key>\Parameters, a key created with an ACL that admits
+          only SYSTEM, Administrators and the service's account -- never to the service key itself,
+          which sc.exe makes readable by every local user, nor to a machine-wide variable.
+          The server's own directory and --artifacts must be ones only administrators can change:
+          --artifacts is created with that ACL when it does not exist yet, and either one that exists
+          and that anyone else can change -- a folder made by hand under C:\, say -- is refused, not
+          taken over, since a handle opened on it beforehand would outlast the takeover. Install from
+          a directory restricted when it was made: one made elevated under C:\Program Files, or the
+          C:\WinDiag the bootstrap scripts make. Also refused: a directory that is, or is reached
+          through, a link, and one below a directory others could rename. A service checks again on
+          every start, restricts what it can, and refuses to start from a directory it cannot.
 
-          Each grant flag above becomes its WINDIAG_* variable (below) in that same per-service key:
+          Each grant flag above becomes its WINDIAG_* variable (below) in the service key's Environment:
           --allow-self-update -> WINDIAG_ALLOW_SELF_UPDATE=1, and so on. Flags and variables are two
           spellings of one setting, so anything the environment can express, an install can too.
 
@@ -132,7 +134,9 @@ public static class ServerBuilder
         variables, and --read-only or --allow-* on that command line is refused rather than ignored.
 
         HTTP mode always requires a bearer token. The running server reads it from the environment
-        only, never from a command-line argument, because this server's own process_list exposes
+        -- or, installed with --install-service, from HKLM\SYSTEM\CurrentControlSet\Services\<name>\
+        Parameters, a key created readable only by SYSTEM, Administrators and the service's account --
+        never from a command-line argument, because this server's own process_list exposes
         command lines to every local user on the machine. For the same reason the installer takes it
         best through --token-stdin; --token puts it on the installer's command line while it runs.
 

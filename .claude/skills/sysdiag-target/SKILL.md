@@ -111,6 +111,7 @@ output as failure, or you will report success for work that never happened.
 | `update_self` succeeds but the build is unchanged | The helper aborted and restored the old build — a server answers either way. Compare `file_signatures` against the staged hash |
 | Host reachable, 4024 closed, nothing can update it | Nothing is running. If it served before an `update_self`, first read the target's Application event log (source `windiag`): a service that refuses to start says why there. `… can be renamed or removed …` means a directory above windiag's lets others replace it — remove the rights it names, or hand it to Administrators (`icacls <dir> /setowner *S-1-5-32-544`) when it says an account `owns it`, or move windiag — then start the service again. Otherwise this is a bootstrap, not an update |
 | Bootstrap refuses an existing `C:\WinDiag` with `… cannot be used as it is` | The scripts never take over a directory that already exists and is not restricted. Rename it aside and bootstrap again; if windiag still serves from it, `update_self` instead — the new server restricts it on its next start |
+| `--install-service` refuses a server or artifact directory with `… Nothing was installed` | Same rule as the scripts: an existing directory others can change is never taken over. Rename it aside (`--artifacts` is then created restricted), or for the server copy the exe into a directory made restricted — `md "%ProgramFiles%\WinDiag"` elevated, or bootstrap's `C:\WinDiag` |
 | A capture appears then vanishes | As SYSTEM `%TEMP%` is `C:\Windows\SystemTemp`. Pin `--artifacts` |
 
 ## Never
@@ -118,6 +119,9 @@ output as failure, or you will report success for work that never happened.
 - Put the token on a serving command line — `process_list` exposes command lines to every local user.
   Installing, use `--install-service --token-stdin`; `--token <value>` is visible in the installer's own
   command line (and process-creation auditing) while it runs.
+- `update_self` a WinDiag target back to a build older than its install. This build keeps the token in the
+  service's `Parameters` key; an older one looks only in `Environment`, serves with a token nobody has,
+  and needs a console visit to reinstall.
 - Stand a target up across a network the operator does not trust. The channel is plaintext HTTP with
   no TLS, so the token — and every dump, file and command output — is readable by anyone on the path,
   and `--firewall-from` scopes who can connect, not who can watch. Trusted segment, or a tunnel.

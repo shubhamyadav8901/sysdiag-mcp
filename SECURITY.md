@@ -41,29 +41,45 @@ intended, documented, and the reason both are off unless a deployment explicitly
 The server runs elevated, so a local unprivileged user is inside the threat model too. Things that
 follow from that, and which are deliberate rather than oversights:
 
-- **A running server reads the token from the environment only, never a command-line argument.** Each
+- **A running server reads the token from the environment, or as a Windows service from its own
+  token key, never a command-line argument.** Each
   server's own `process_list` shows command lines to every local user on the machine; a token passed as
   an argument would be readable by the people it is meant to exclude. The installers accept `--token`
   for convenience, which is visible while the installer runs; `--token-stdin` is not, and is what every
   bootstrap script uses.
-- **As a Windows service, the token belongs in the service's own registry `Environment` value**, which
-  `--install-service` restricts to SYSTEM and Administrators before writing it — `sc create` alone
-  leaves the key readable by every local user, and a service restricts its own key on start if it
-  finds it that way. A machine-wide environment variable is readable by every local user and is *not*
+- **As a Windows service, the token belongs in `Services\<name>\Parameters`, a key created with an ACL
+  that admits only SYSTEM, Administrators and the service's account** — passed to `RegCreateKeyEx`, so
+  the key is never readable by anyone else, not even for a moment. It does not go into the service
+  key's own `Environment` value: `sc create` makes that key readable by every local user, and Windows
+  checks access when a handle is opened, so restricting the key afterwards does not stop a handle
+  opened in between from reading a token written there later. The service key is still restricted,
+  for its grants, and a service restricts it on start if it finds it readable. A target installed by
+  an older build has its token in `Environment`, keeps starting with it, and warns until reinstalled
+  with a new one. A machine-wide environment variable is readable by every local user and is *not*
   an acceptable substitute. LinuxDiag and MacDiag keep it in a root-owned `0600` env file instead
   (`/etc/linuxdiag/linuxdiag.env`, `/etc/macdiag/<label>.env`).
 - **The directories a Windows service runs code from are writable only by SYSTEM and Administrators.**
   The server runs Sysinternals binaries from beside itself and `self-update.cmd` from its artifact
-  directory, and a folder made under `C:\` inherits *Authenticated Users: Modify*. The installer gives
-  both directories a protected ACL and hands what they already hold to Administrators, working through
-  handles opened without following links; it refuses a directory that is, or is reached through, a link,
-  one below a directory others could rename and replace (above windiag's own directories, a direct member
-  of the local Administrators group counts as an administrator), and one others can write that holds a link or
-  hard link. A service checks again on every start and refuses to run from one it cannot restrict. The
-  bootstrap scripts create the directories restricted, and refuse, unchanged, one that already exists
-  and is not. Restricting a directory a local user could already write does not undo what they did
-  meanwhile: a file they planted stays, and a handle they opened keeps its access until it is closed,
-  which a restart guarantees.
+  directory, and a folder made under `C:\` inherits *Authenticated Users: Modify*. The installer creates
+  a missing artifact directory with a protected ACL from the start, uses one that only administrators
+  can already change, takes over one that only administrators' own accounts could change (files an
+  administrator copied in, owned by that account), and **refuses one that exists and anyone else can
+  change, rather than taking it over**: restricting a directory does not undo a handle opened on it, or on a file in it, beforehand,
+  and its owner can hold one open for WRITE_DAC — not data access, so no share mode refuses it — to put
+  their own ACE back afterwards. The server's directory, which the installer cannot create, must be one
+  restricted when it was made. It also refuses a directory that is, or is reached through, a link, and
+  one below a directory others could rename and replace (above windiag's own directories, a direct
+  member of the local Administrators group counts as an administrator). The bootstrap scripts create
+  the directories restricted, and refuse, unchanged, one that already exists and is not. A service checks
+  again on every start; there, so that `update_self` does not strand a target an older build installed,
+  it takes an exposed directory over and warns, and refuses to run from one it cannot restrict.
+  Restricting a directory a local user could already write does not undo what they did meanwhile: a
+  file they planted stays, and a handle they opened keeps its access until it is closed, which a restart
+  guarantees. The default artifact directory, `%TEMP%\windiag`, is not taken over from whoever made it:
+  where SYSTEM's temp directory is `C:\Windows\Temp` any user may create it first, so one that someone
+  else owns, or that is a link, is moved aside and made afresh, or the service refuses to start. One the
+  service made itself but that holds what others could change -- an older build's, made without a
+  protected ACL -- is taken over and warned about, as above.
 - **There is no default bind address.** `--http` with nothing to bind to is refused rather than
   quietly listening on `0.0.0.0`.
 - **File access is confined** to directories the server owns, on both the read and write sides, through
@@ -73,7 +89,8 @@ follow from that, and which are deliberate rather than oversights:
 - **`registry_read` is available under every grant, read-only included,** and reads whatever the
   server's account can. HKLM\SAM, HKLM\SECURITY and other users' hives under HKU need
   `WINDIAG_ALLOW_ARBITRARY_READ`, and a value named like a credential -- a windiag instance's own
-  `WINDIAG_TOKEN` in its service key's `Environment` among them -- is returned redacted under every grant.
+  `WINDIAG_TOKEN` in its token key, or in its service key's `Environment` on an older install, among
+  them -- is returned redacted under every grant.
 - **A dump is a read of a process's memory.** `capture_dump` writes into the artifact directory, which
   `get_file` reads without `WINDIAG_ALLOW_ARBITRARY_READ`, so a writable server's token can read the
   memory of any process the server can open -- SYSTEM services included. The processes that hold the

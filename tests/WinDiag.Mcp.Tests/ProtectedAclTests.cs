@@ -142,6 +142,50 @@ public sealed class ProtectedAclTests
     }
 
     [Fact]
+    public void The_token_key_acl_admits_only_system_administrators_and_a_service_account_that_must_read_it_itself()
+    {
+        // Unlike the Environment value, which the SCM reads as SYSTEM and hands over, the token key is read by
+        // the service's own token: a NetworkService service shut out of it would start with a token nobody holds.
+        foreach (var account in new SecurityIdentifier?[] { null, NetworkService })
+        {
+            var written = ProtectedAcl.TokenKeyAcl(account);
+            written.SetOwner(ProtectedAcl.Administrators);
+
+            Assert.True(written.AreAccessRulesProtected);
+            Assert.Empty(ProtectedAcl.Exposures(written, ProtectedAcl.KeyExposingRights, ProtectedAcl.Trusted(account), "read or change"));
+            Assert.All(
+                written.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)).Cast<RegistryAccessRule>(),
+                rule => Assert.Contains(rule.IdentityReference, new IdentityReference?[] { ProtectedAcl.LocalSystem, ProtectedAcl.Administrators, account }));
+        }
+
+        // And the NetworkService ACE reads, nothing more: it may not rewrite the ACL or the token.
+        var rule = ProtectedAcl.TokenKeyAcl(NetworkService)
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)).Cast<RegistryAccessRule>()
+            .Single(r => r.IdentityReference.Equals(NetworkService));
+        Assert.Equal(RegistryRights.ReadKey, rule.RegistryRights);
+
+        // Judged as a LocalSystem install, the same ACE would be somebody else's.
+        Assert.NotEmpty(ProtectedAcl.Exposures(ProtectedAcl.TokenKeyAcl(NetworkService), ProtectedAcl.KeyExposingRights, ProtectedAcl.Trusted(null), "read or change"));
+    }
+
+    [Theory]
+    [InlineData(@"NT AUTHORITY\NetworkService", "S-1-5-20")]
+    [InlineData(@"NT AUTHORITY\LocalService", "S-1-5-19")]
+    [InlineData("networkservice", "S-1-5-20")]
+    public void Resolves_the_built_in_service_accounts_without_asking_lsa_for_a_name_it_does_not_know(string account, string sid)
+    {
+        // LookupAccountName does not resolve the sc.exe spelling, as Microsoft's account pages say; looked up by
+        // name, every NetworkService and LocalService install was refused before sc.exe ran.
+        Assert.Equal(new SecurityIdentifier(sid), ProtectedAcl.AccountSid(account));
+    }
+
+    [Fact]
+    public void Resolves_local_system_to_no_account_of_its_own_as_the_rest_of_the_installer_expects()
+    {
+        Assert.Null(ProtectedAcl.AccountSid("LocalSystem"));
+    }
+
+    [Fact]
     public void Refuses_to_restrict_a_drive_root_rather_than_lock_every_user_out_of_the_drive()
     {
         // WinDiag.Mcp.exe dropped straight into C:\ makes C:\ its server directory, and C:\ always reads as
@@ -193,5 +237,52 @@ public sealed class ProtectedAclTests
 
         Assert.Contains(@"icacls ""D:\Ops"" /setowner *S-1-5-32-544", remedy, StringComparison.Ordinal);
         Assert.Contains("direct member of the local Administrators group", remedy, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// What <see cref="ProtectedAcl.CreateKeyWithAcl"/> leaves in the real registry: the token key's ACL from the moment
+/// it exists, which nothing built in memory can show.
+/// </summary>
+/// <remarks>Elevated Windows only, as the installer is: CI's Windows runner. Each test removes its scratch key.</remarks>
+public sealed class TokenKeyOnRegistryTests : IDisposable
+{
+    private static readonly SecurityIdentifier NetworkService = new(WellKnownSidType.NetworkServiceSid, null);
+
+    private readonly string _name = $"windiag-test-{Guid.NewGuid():N}";
+
+    public void Dispose()
+    {
+        if (OperatingSystem.IsWindows() && new ElevatedFactAttribute().Skip is null)
+        {
+            using var software = Microsoft.Win32.Registry.LocalMachine.OpenSubKey("SOFTWARE", writable: true);
+            software?.DeleteSubKeyTree(_name, throwOnMissingSubKey: false);
+        }
+    }
+
+    [ElevatedFact]
+    public void Creates_the_key_protected_owned_by_administrators_and_readable_by_the_service_account_from_the_start()
+    {
+        // .NET's CreateSubKey overload that takes a RegistrySecurity discards it: the key came out inheriting
+        // its parent's ACL, with no ACE for a NetworkService service, which then could not read its own token.
+        var acl = ProtectedAcl.TokenKeyAcl(NetworkService);
+        acl.SetOwner(ProtectedAcl.Administrators);
+        using var software = Microsoft.Win32.Registry.LocalMachine.OpenSubKey("SOFTWARE", writable: true)!;
+
+        using (var key = ProtectedAcl.CreateKeyWithAcl(software, _name, acl))
+        {
+            Assert.NotNull(key);
+            var written = key.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+
+            Assert.True(written.AreAccessRulesProtected);
+            Assert.Equal(ProtectedAcl.Administrators, written.GetOwner(typeof(SecurityIdentifier)));
+            Assert.Contains(
+                written.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)).Cast<RegistryAccessRule>(),
+                r => r.IdentityReference.Equals(NetworkService) && r.RegistryRights == RegistryRights.ReadKey);
+            Assert.Empty(ProtectedAcl.Exposures(written, ProtectedAcl.KeyExposingRights, ProtectedAcl.Trusted(NetworkService), "read or change"));
+        }
+
+        // One already there is opened as it is by RegCreateKeyEx, whatever descriptor is passed: refused, not used.
+        Assert.Null(ProtectedAcl.CreateKeyWithAcl(software, _name, acl));
     }
 }

@@ -122,7 +122,6 @@ public sealed class ServiceInstallationTests
         // reports it except a capabilities call nobody makes.
         var bare = Parse("--http", "http://x:1").EnvironmentBlock();
 
-        Assert.Contains(bare, v => v.StartsWith("WINDIAG_TOKEN=", StringComparison.Ordinal));
         Assert.DoesNotContain(bare, v => v.StartsWith("WINDIAG_ALLOW_", StringComparison.Ordinal));
 
         var granted = Parse(
@@ -153,6 +152,82 @@ public sealed class ServiceInstallationTests
         // service is not thereby allowed to read outside the artifact directory, so a re-registration
         // that drops this comes back able to read less than the server it replaced.
         Assert.Contains("WINDIAG_ALLOW_ARBITRARY_READ=1", everything);
+    }
+
+    [Fact]
+    public void Never_puts_the_token_in_the_environment_value_of_a_key_sc_exe_made_readable_by_every_user()
+    {
+        // sc.exe creates the service key readable by Users, and the installer can only restrict it afterwards.
+        // A handle opened in between keeps reading whatever is written later, so a token written there was
+        // readable by anyone who kept trying the predictable key name. It goes into a key created restricted.
+        var options = Parse("--http", "http://x:1", "--token", "pinned-token-value", "--allow-command-execution");
+
+        var block = options.EnvironmentBlock();
+
+        Assert.DoesNotContain(block, v => v.Contains("pinned-token-value", StringComparison.Ordinal));
+        Assert.DoesNotContain(block, v => v.StartsWith("WINDIAG_TOKEN", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("WINDIAG_SERVICE_NAME=windiag", block);
+    }
+
+    [Fact]
+    public void Keeps_the_token_in_a_subkey_of_the_service_key_named_so_registry_read_redacts_it()
+    {
+        // A subkey, so the SCM deletes it with the service; and a value name ending in TOKEN, so a second
+        // instance's registry_read cannot read this one's token out of it.
+        Assert.Equal(@"SYSTEM\CurrentControlSet\Services\windiag-lab\Parameters", ServiceInstallOptions.TokenKeyPath("windiag-lab"));
+
+        var (rendered, _) = Diagnostics.RegistryInspection.WindowsRegistryInspector.RenderValue(
+            ServiceInstallOptions.TokenValueName, "0123456789abcdef");
+        Assert.DoesNotContain("0123456789abcdef", rendered);
+    }
+
+    [Theory]
+    [InlineData("stored", null, "stored")]
+    [InlineData("stored", "from-environment", "stored")]
+    [InlineData(null, "from-environment", "from-environment")]
+    [InlineData("  ", "from-environment", "from-environment")]
+    [InlineData(null, null, null)]
+    public void Runs_with_the_token_in_its_key_and_falls_back_to_the_environment_an_older_install_used(
+        string? stored, string? fromEnvironment, string? expected)
+    {
+        // A target an older build installed has its token only in Environment, and update_self brings it this
+        // build without an install running: it must still come up with the token the relay holds.
+        Assert.Equal(expected, ServiceInstallOptions.ServiceToken(stored, fromEnvironment));
+    }
+
+    [Theory]
+    [InlineData("--account", "NetworkService", "S-1-5-20")]
+    [InlineData("--account", @"NT AUTHORITY\NetworkService", "S-1-5-20")]
+    [InlineData("--account", "LocalService", "S-1-5-19")]
+    [InlineData("--account", @"nt authority\localservice", "S-1-5-19")]
+    [InlineData("--account", "LocalSystem", "S-1-5-18")]
+    [InlineData("--account", @"NT AUTHORITY\LocalSystem", "S-1-5-18")]
+    public void Maps_every_built_in_spelling_the_installer_accepts_to_its_well_known_sid(string option, string account, string sid)
+    {
+        // What reaches the SID lookup is the sc.exe spelling Parse normalises to, and LSA does not know that
+        // name -- so each one must resolve without asking it.
+        var normalised = Parse("--http", "http://x:1", option, account).Account;
+
+        Assert.Equal(sid, ServiceInstallOptions.WellKnownAccountSid(normalised));
+        Assert.Equal(sid, ServiceInstallOptions.WellKnownAccountSid(account));
+    }
+
+    [Theory]
+    [InlineData(@"NT AUTHORITY\NETWORK SERVICE", "S-1-5-20")]
+    [InlineData(@"NT AUTHORITY\LOCAL SERVICE", "S-1-5-19")]
+    [InlineData(@"NT AUTHORITY\SYSTEM", "S-1-5-18")]
+    public void Maps_lsas_own_spelling_of_the_built_in_accounts_too(string account, string sid)
+    {
+        Assert.Equal(sid, ServiceInstallOptions.WellKnownAccountSid(account));
+    }
+
+    [Theory]
+    [InlineData(@"CONTOSO\svc-windiag")]
+    [InlineData(@".\windiag")]
+    [InlineData("NetworkServices")]
+    public void Leaves_any_other_account_to_be_looked_up(string account)
+    {
+        Assert.Null(ServiceInstallOptions.WellKnownAccountSid(account));
     }
 
     [Fact]

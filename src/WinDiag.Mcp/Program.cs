@@ -102,6 +102,9 @@ try
     // re-ACLing a developer's bin directory on `dotnet run` would be a surprise with no security gain.
     if (WindowsServiceHelpers.IsWindowsService())
     {
+        // The token first, from the key --install-service made for it; WINDIAG_TOKEN in the environment is
+        // only where an older build's install left it.
+        options = ServiceHardening.WithStoredToken(options);
         ServiceHardening.Apply(options.ArtifactDirectory);
     }
 }
