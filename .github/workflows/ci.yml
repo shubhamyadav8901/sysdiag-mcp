@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  windows:
     # windows-latest is not a preference: the target framework is net9.0-windows and the code calls
     # Restart Manager, ServiceController, EventLogReader and WinVerifyTrust directly.
     runs-on: windows-latest
@@ -252,7 +252,7 @@ jobs:
             Remove-Item -Recurse -Force $server, $artifacts, "$artifacts-ns", $exposed -ErrorAction SilentlyContinue
           }
 
-  relay:
+  unix:
     # The relay and its shared core are net9.0 and must stay that way, so they are built and tested on
     # the platforms they exist for. Per project, not per solution: the solution also holds net9.0-windows
     # projects, which fail to restore here with NETSDK1100.
