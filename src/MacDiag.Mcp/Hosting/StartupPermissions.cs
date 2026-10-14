@@ -53,6 +53,76 @@ public static class StartupPermissions
         }
     }
 
+    /// <summary>Refuses a directory root will write and run files in unless root alone controls it and every directory above it.</summary>
+    /// <remarks>
+    /// <para>The artifact directory is where put_file writes, get_file reads, and self-update.sh is written and then run by
+    /// root. Checking the directory alone passed /Users/alice/diag, root's and 0700: alice owns /Users/alice, so she can
+    /// rename diag away and put her own directory or a link in its place, and root then runs her script. So every
+    /// directory above it is held to the env file's rule, as spelled and resolved.</para>
+    /// <para>A directory that does not exist yet is judged by the nearest one above it that does, before anything is
+    /// created: once those are root's alone, nobody else can slip a link in where the new one is about to go.</para>
+    /// </remarks>
+    /// <param name="setting">How the operator chose the directory, to name it in the refusal.</param>
+    public static void RequireRootOnlyDirectory(string path, string setting)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        var full = System.IO.Path.GetFullPath(path);
+        var existing = full;
+        while (!Directory.Exists(existing) && !System.IO.File.Exists(existing) && new FileInfo(existing).LinkTarget is null &&
+               System.IO.Path.GetDirectoryName(existing) is { } parent)
+        {
+            existing = parent;
+        }
+
+        var paths = Chain(existing).Concat(Chain(RealPath(existing))).Distinct(StringComparer.Ordinal).ToList();
+        var problems = RootOnlyDirectoryProblems(Inspect(paths), existing == full ? RealPath(full) : null);
+        if (problems.Count > 0)
+        {
+            throw new ConfigurationException(
+                $"{setting} {path} cannot be used: {string.Join(" ", problems)} Root writes there and runs self-update.sh from it, so it " +
+                "and every directory above it must be root's alone: choose such a directory, or leave it unset for /var/db/macdiag.");
+        }
+    }
+
+    /// <summary>Everything that lets another account change <paramref name="directory"/> or what leads to it.</summary>
+    /// <param name="directory">The directory itself, resolved, which must be one; null when it does not exist yet.</param>
+    /// <remarks>
+    /// An existing directory is judged as it is and never chmodded: --artifacts /tmp once made /private/tmp 0700 and
+    /// broke every other account on the Mac. A sticky directory such as /tmp is refused too, rather than trusted for
+    /// its sticky bit: before the directory exists, anyone may create that name there first.
+    /// </remarks>
+    public static IReadOnlyList<string> RootOnlyDirectoryProblems(IReadOnlyList<StatEntry> entries, string? directory)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+
+        const int Sticky = 0b1_000_000_000;
+        var problems = new List<string>();
+        foreach (var (path, uid, mode, kind) in entries)
+        {
+            if (uid != 0)
+            {
+                problems.Add($"{path} is owned by uid {uid}, not root.");
+            }
+
+            if (string.Equals(path, directory, StringComparison.Ordinal) && kind != EntryKind.Directory)
+            {
+                problems.Add($"{path} is not a directory.");
+            }
+            else if (kind != EntryKind.Link && (mode & Sticky) != 0)
+            {
+                problems.Add($"{path} is a shared sticky directory, such as /tmp.");
+            }
+            else if (kind != EntryKind.Link && (mode & (GroupWrite | OtherWrite)) != 0)
+            {
+                // A link's own mode means nothing; what it points at is checked as its own entry.
+                problems.Add($"{path} is writable by its group or by everyone (mode {Convert.ToString(mode, 8).PadLeft(4, '0')}).");
+            }
+        }
+
+        return problems;
+    }
+
     /// <summary>One stat line per path, from BSD stat run as the system's own program.</summary>
     /// <remarks>
     /// %Mp%Lp, not %Lp alone: %Lp is only the user/group/other digits, and the sticky bit that marks a shared

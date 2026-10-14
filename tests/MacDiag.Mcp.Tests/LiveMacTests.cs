@@ -226,6 +226,21 @@ public sealed class LiveMacTests : IDisposable
     }
 
     [MacFact]
+    public async Task A_developer_id_binary_is_valid_with_its_team_because_apple_issued_its_certificate()
+    {
+        // The dotnet host running this test is signed with Microsoft's Developer ID here and on CI. Run against the real
+        // codesign, this is what proves "-R=anchor apple generic" is a requirement it accepts: a malformed one would exit
+        // neither 0 nor 3, and every Developer ID file would read as Unknown.
+        var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } dotnet ? dotnet : Environment.ProcessPath!;
+
+        var file = Assert.Single((await new Diagnostics.Signatures.MacSignatureInspector(Commands, Options).InspectAsync([host], CancellationToken.None)).Files);
+
+        Assert.Equal(Diagnostics.Signatures.SignatureVerdict.Valid, file.Verdict);
+        Assert.StartsWith("Developer ID Application: ", file.Authorities[0], StringComparison.Ordinal);
+        Assert.Equal($"Signed by certificate \"{file.Authorities[0]}\" (team {file.TeamId}), verified", file.Detail);
+    }
+
+    [MacFact]
     public async Task A_platform_binary_is_signed_by_apple_and_a_bare_tool_has_no_gatekeeper_assessment()
     {
         var result = await new Diagnostics.Signatures.MacSignatureInspector(Commands, Options).InspectAsync(["/bin/ls"], CancellationToken.None);

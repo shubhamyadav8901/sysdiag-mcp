@@ -3,13 +3,17 @@ namespace WinDiag.Mcp.Diagnostics.External;
 /// <summary>The outcome of one external tool invocation.</summary>
 /// <param name="Executable">Full path actually executed.</param>
 /// <param name="Arguments">The argument vector as passed, for logging and test assertions.</param>
+/// <param name="ProcessId">
+/// The PID the tool ran as, which was its own for the whole run; null where no process was started.
+/// </param>
 public sealed record ExternalToolResult(
     string Executable,
     IReadOnlyList<string> Arguments,
     int ExitCode,
     string StandardOutput,
     string StandardError,
-    TimeSpan Duration);
+    TimeSpan Duration,
+    int? ProcessId = null);
 
 /// <summary>Runs a bundled console tool and captures its output.</summary>
 /// <remarks>

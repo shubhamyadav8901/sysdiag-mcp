@@ -1,5 +1,6 @@
 using System.Globalization;
 using MacDiag.Mcp.Configuration;
+using MacDiag.Mcp.Diagnostics.Signatures;
 using MacDiag.Mcp.Diagnostics.Services;
 using MacDiag.Mcp.Hosting;
 using MacDiag.Mcp.Mac.Launchd;
@@ -731,28 +732,31 @@ public sealed class MacAutostartInspector(IExternalCommand commands, MacDiagOpti
             }
 
             var signer = details.Authorities.Count > 0 ? $"Signed by {CodesignDisplay.Certificate(details.Authorities[0])}" : "Signed";
-            if (details.TeamId is not null)
+            var issuance = await AppleIssuance.AskAsync(CodesignAsync, image, details.TeamId is not null).ConfigureAwait(false);
+            return issuance switch
             {
-                // Apple's own code carries no team; asking would repeat the whole verification for nothing.
-                return (true, signer);
-            }
+                { Issuer: Issuer.Apple } => (true, "Signed by Apple"),
+                // Counted as unsigned: nobody but the signer vouches for the name, and unsignedOnly is how persistence is
+                // hunted -- a home-made "Developer ID" must stay in that list.
+                { Issuer: Issuer.NotAppleIssued } => (false, signer + AppleIssuance.NotIssuedSuffix),
+                // Not judged is neither unsigned nor signed: unsignedOnly keeps it, so somebody looks at it.
+                { Issuer: Issuer.Undetermined, Reason: var reason } => (null, $"{signer}, but whether Apple issued its certificate was not determined: {reason}"),
+                { AppleQuestionLeftOpen: { } reason } => (true, $"{signer}; whether Apple signed it was not determined: {reason}"),
+                _ => (true, signer),
+            };
+        }
 
-            ExternalResult anchored;
+        /// <summary>codesign, with a run that does not finish reported as an exit, as <see cref="AppleIssuance"/> asks.</summary>
+        private async Task<ExternalResult> CodesignAsync(IReadOnlyList<string> arguments)
+        {
             try
             {
-                anchored = await Commands.RunAsync("codesign", CodesignDisplay.AppleAnchoredArguments(image), Timeout, cancellationToken).ConfigureAwait(false);
+                return await Commands.RunAsync("codesign", arguments, Timeout, cancellationToken).ConfigureAwait(false);
             }
             catch (ExternalCommandException ex)
             {
-                return (true, $"{signer}; whether Apple signed it was not determined: codesign did not finish: {ex.Message}");
+                return new ExternalResult(-1, string.Empty, $"codesign did not finish: {ex.Message}");
             }
-
-            return anchored.ExitCode switch
-            {
-                0 => (true, "Signed by Apple"),
-                3 => (true, signer),
-                _ => (true, $"{signer}; whether Apple signed it was not determined: codesign exit {anchored.ExitCode}"),
-            };
         }
 
         private async Task<PlistDictionary?> ReadPlistAsync(string path)

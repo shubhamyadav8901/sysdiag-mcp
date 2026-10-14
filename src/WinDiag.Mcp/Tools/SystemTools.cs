@@ -46,10 +46,10 @@ public sealed class SystemTools
     {
         var builder = new StringBuilder();
 
-        builder.Append(overview.MachineName).Append(" - ").Append(overview.OperatingSystem)
-            .Append(" (").Append(overview.Architecture).AppendLine(")");
+        builder.Append(RenderLimits.Printable(overview.MachineName)).Append(" - ").Append(RenderLimits.Printable(overview.OperatingSystem))
+            .Append(" (").Append(RenderLimits.Printable(overview.Architecture)).AppendLine(")");
 
-        builder.Append("Running as ").Append(overview.UserName)
+        builder.Append("Running as ").Append(RenderLimits.Printable(overview.UserName))
             .Append(overview.Elevated ? " (elevated)" : " (NOT elevated)").AppendLine();
 
         if (overview.Is64BitOperatingSystem && !overview.Is64BitProcess)
@@ -73,13 +73,13 @@ public sealed class SystemTools
 
         foreach (var disk in overview.Disks)
         {
-            builder.Append("- ").Append(disk.Name);
+            builder.Append("- ").Append(RenderLimits.Printable(disk.Name));
             if (disk.Label is { } label)
             {
-                builder.Append(" \"").Append(label).Append('"');
+                builder.Append(" \"").Append(RenderLimits.Printable(label)).Append('"');
             }
 
-            builder.Append(' ').Append(disk.FileSystem).Append(": ")
+            builder.Append(' ').Append(RenderLimits.Printable(disk.FileSystem)).Append(": ")
                 .Append(TextFormat.Bytes(disk.FreeBytes)).Append(" free of ")
                 .Append(TextFormat.Bytes(disk.TotalBytes));
 

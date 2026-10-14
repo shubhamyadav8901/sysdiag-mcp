@@ -100,10 +100,126 @@ public sealed record ServiceInstallOptions
     public int Port =>
         Uri.TryCreate(Bind, UriKind.Absolute, out var uri) && uri.Port > 0 ? uri.Port : 4024;
 
+    /// <summary>The three service commands. Exactly one may be given.</summary>
+    public static readonly IReadOnlyList<string> Commands = ["--install-service", "--uninstall-service", "--service-status"];
+
+    // Every option --install-service understands. Anything else is refused rather than ignored: an
+    // ignored `--readonly` installed a fully writable LocalSystem service, and an ignored trailing
+    // `--token` installed one with a generated token nobody had put in the relay's targets file.
+    private static readonly string[] InstallValueOptions =
+        ["--http", "--service-name", "--display-name", "--start", "--account", "--password", "--token", "--artifacts", "--firewall-from"];
+
+    private static readonly string[] InstallFlags =
+    [
+        "--install-service", "--token-stdin", "--allow-self-update", "--allow-command-execution",
+        "--allow-arbitrary-write", "--allow-arbitrary-read", "--read-only", "--no-restart-on-failure"
+    ];
+
+    /// <summary>Every option --install-service accepts, for the test that keeps --help in step with it.</summary>
+    internal static IEnumerable<string> InstallOptions => [.. InstallValueOptions, .. InstallFlags];
+
     /// <summary>Parses the install switches, or explains what is wrong with them.</summary>
-    public static ServiceInstallOptions Parse(IReadOnlyList<string> args)
+    public static ServiceInstallOptions Parse(IReadOnlyList<string> args) => Parse(args, stdin: null);
+
+    /// <summary>Refuses any argument the given service command does not understand.</summary>
+    /// <remarks>
+    /// Run before elevation as well as by <see cref="Parse(IReadOnlyList{string}, TextReader?)"/>, so a
+    /// typo is reported in the operator's own terminal instead of behind a UAC prompt in a window that
+    /// closes the moment it exits.
+    /// </remarks>
+    public static void CheckArguments(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
+
+        var command = args.FirstOrDefault(a => Commands.Contains(a, StringComparer.Ordinal))
+            ?? throw new ConfigurationException("No service command was given.");
+
+        var (values, flags) = command == "--install-service"
+            ? (InstallValueOptions, InstallFlags)
+            : (new[] { "--service-name" }, new[] { command });
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < args.Count; i++)
+        {
+            var argument = args[i];
+            var known = values.FirstOrDefault(v => string.Equals(v, argument, StringComparison.OrdinalIgnoreCase))
+                ?? flags.FirstOrDefault(f => string.Equals(f, argument, StringComparison.OrdinalIgnoreCase));
+
+            if (known is null)
+            {
+                throw new ConfigurationException(
+                    $"'{argument}' is not a {command} option{Suggest(argument, [.. values, .. flags])}. Nothing "
+                    + "was changed. Run --help for the options.");
+            }
+
+            // Repeated, the parser below would silently take the first -- which, for a token or an
+            // artifact directory, is a coin toss over which one the operator actually meant.
+            if (!seen.Add(known))
+            {
+                throw new ConfigurationException($"{known} was given more than once; give it once. Nothing was changed.");
+            }
+
+            if (values.Contains(known, StringComparer.Ordinal))
+            {
+                // A value that is itself an option means the real value was dropped on the way here --
+                // Windows PowerShell 5.1 drops an empty string argument to a native exe, so `--token $tok`
+                // with an empty $tok arrives as `--token --allow-command-execution`. Taken as the value, that
+                // installed a guessable token AND, because flags are looked for anywhere, the grant beside
+                // it. "--" rather than HttpBind's single "-": every option here is spelled with two, and a
+                // password or a pinned token is free to begin with one.
+                var value = i + 1 < args.Count ? args[i + 1] : null;
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    throw new ConfigurationException($"{known} needs a value. Nothing was changed.");
+                }
+
+                if (value.StartsWith("--", StringComparison.Ordinal))
+                {
+                    throw new ConfigurationException(
+                        $"{known} needs a value, and '{value}' is an option, not a value. Nothing was changed.");
+                }
+
+                i++;
+            }
+        }
+    }
+
+    /// <summary>The service an <c>--uninstall-service</c> or <c>--service-status</c> run is about.</summary>
+    /// <remarks>
+    /// Validated like an install: a misspelt <c>--service-name</c> would otherwise fall back to the
+    /// default name, and for uninstall that removes a service nobody asked to remove.
+    /// </remarks>
+    public static string ManagedServiceName(IReadOnlyList<string> args)
+    {
+        CheckArguments(args);
+
+        for (var i = 0; i < args.Count - 1; i++)
+        {
+            if (string.Equals(args[i], "--service-name", StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i + 1];
+            }
+        }
+
+        return "windiag";
+    }
+
+    /// <summary>" -- did you mean '--read-only'?" for a spelling that differs only in dashes, underscores or case.</summary>
+    internal static string Suggest(string argument, IEnumerable<string> known)
+    {
+        static string Squash(string s) => new string(s.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+
+        var match = known.FirstOrDefault(k => Squash(k) == Squash(argument));
+        return match is null ? string.Empty : $" -- did you mean '{match}'?";
+    }
+
+    /// <summary>Parses the install switches, or explains what is wrong with them.</summary>
+    /// <param name="args">The command line.</param>
+    /// <param name="stdin">Where --token-stdin reads the token from; the process's standard input when null.</param>
+    public static ServiceInstallOptions Parse(IReadOnlyList<string> args, TextReader? stdin)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        CheckArguments(args);
 
         string? Value(string name)
         {
@@ -166,7 +282,15 @@ public sealed record ServiceInstallOptions
                 + "registration appears to have succeeded.");
         }
 
-        var supplied = Value("--token");
+        // --token-stdin keeps a pinned token off the target's command line, where process-creation
+        // auditing (event 4688), PSEXESVC and this server's own process_list would all show it. Both at
+        // once is refused: whichever silently won, the operator installed a token they did not mean.
+        if (Flag("--token-stdin") && Flag("--token"))
+        {
+            throw new ConfigurationException("--token-stdin and --token both supply the token; give only one.");
+        }
+
+        var supplied = Flag("--token-stdin") ? ReadToken(stdin ?? Console.In) : Value("--token");
 
         return new ServiceInstallOptions
         {
@@ -189,6 +313,39 @@ public sealed record ServiceInstallOptions
         };
     }
 
+    private static string ReadToken(TextReader reader)
+    {
+        var token = reader.ReadLine()?.Trim();
+        return string.IsNullOrEmpty(token)
+            ? throw new ConfigurationException(
+                "--token-stdin was given but standard input held no token. Nothing was installed.")
+            : token;
+    }
+
+    // What a directory windiag was deployed into holds: the server and its staged successor, what the
+    // release zip packs beside it (its hash and the licence notices -- extracting the zip into C:\WinDiag
+    // is the documented install, and was refused while these were missing here), the Sysinternals tools
+    // found beside it, deploy-target's manifest, the Procmon filter override an operator may put there,
+    // and bootstrap-target's two files that exist only while the installer runs, named afresh for each run.
+    // A test reads the release workflow, so a file added to the zip without being added here fails the suite.
+    private static readonly string[] ServerDirectoryFiles =
+    [
+        "WinDiag.Mcp*", "SHA256.txt", "LICENSE", "THIRD-PARTY-NOTICES.md",
+        "handle*.exe", "Procmon*.exe", "autorunsc*.exe", "windiag-staged.json",
+        "windiag.pmc", "install-token-*.tmp", "install-windiag-*.cmd"
+    ];
+
+    /// <summary>The names in a server directory that are not windiag's, in the order given.</summary>
+    /// <remarks>
+    /// The installer restricts a server directory only administrators could change but which holds files
+    /// their own accounts own -- which, for a server run from an administrator's Downloads or Desktop folder,
+    /// would take that folder away from its own user. A directory holding anything else is therefore refused
+    /// rather than restricted.
+    /// </remarks>
+    public static IReadOnlyList<string> ForeignToServerDirectory(IEnumerable<string> names) =>
+        names.Where(name => !ServerDirectoryFiles.Any(
+            pattern => System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true))).ToList();
+
     /// <summary>256 bits of randomness, so nobody is tempted to pick one by hand.</summary>
     public static string GenerateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
@@ -206,6 +363,69 @@ public sealed record ServiceInstallOptions
         "networkservice" or "nt authority\\networkservice" => "NT AUTHORITY\\NetworkService",
         _ => account
     };
+
+    /// <summary>
+    /// The SID of a built-in service account, in any spelling <see cref="Parse(IReadOnlyList{string}, TextReader?)"/>
+    /// accepts or <see cref="Normalise"/> produces; null for any other account.
+    /// </summary>
+    /// <remarks>
+    /// <para>Not looked up by name, because the name sc.exe wants is not one LSA knows. Microsoft's
+    /// NetworkService and LocalService account pages say so in as many words: "This account is not
+    /// recognized by the security subsystem, so you cannot specify its name in a call to the
+    /// LookupAccountName function." The SCM special-cases <c>NT AUTHORITY\NetworkService</c>; LSA's own
+    /// names are <c>NETWORK SERVICE</c> and <c>LOCAL SERVICE</c>, with a space, and are localised besides
+    /// (<c>NT-AUTORITÄT\NETZWERKDIENST</c>). Translating the sc.exe spelling refused every NetworkService
+    /// and LocalService install before sc.exe ever ran. The SIDs are fixed by Windows (well-known SIDs
+    /// S-1-5-18, -19 and -20), so nothing needs to be asked.</para>
+    /// <para>LSA's own spellings are mapped as well, so an operator who types what <c>whoami</c> prints is
+    /// not sent to a lookup that would happen to work only in English.</para>
+    /// </remarks>
+    public static string? WellKnownAccountSid(string account)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+
+        var name = account.Trim().ToLowerInvariant();
+        if (name.StartsWith(@"nt authority\", StringComparison.Ordinal))
+        {
+            name = name[@"nt authority\".Length..];
+        }
+
+        return name switch
+        {
+            "localsystem" or "system" => LocalSystemSid,
+            "localservice" or "local service" => "S-1-5-19",
+            "networkservice" or "network service" => "S-1-5-20",
+            _ => null
+        };
+    }
+
+    /// <summary>The LocalSystem account's SID.</summary>
+    public const string LocalSystemSid = "S-1-5-18";
+
+    /// <summary>The subkey of the service's own key that holds its bearer token, and nothing else.</summary>
+    public const string TokenKeyName = "Parameters";
+
+    /// <summary>The value in <see cref="TokenKeyName"/> that holds the token.</summary>
+    /// <remarks>
+    /// Named like the variable it replaces, which also keeps registry_read redacting it: that tool hides
+    /// any string value whose name ends in TOKEN.
+    /// </remarks>
+    public const string TokenValueName = "WINDIAG_TOKEN";
+
+    /// <summary>The token key's path under HKLM.</summary>
+    public static string TokenKeyPath(string serviceName) =>
+        $@"SYSTEM\CurrentControlSet\Services\{serviceName}\{TokenKeyName}";
+
+    /// <summary>The token a service runs with: the one in its token key, or else the one in its environment.</summary>
+    /// <param name="stored">What <see cref="TokenValueName"/> in <see cref="TokenKeyPath"/> holds, or null.</param>
+    /// <param name="fromEnvironment">WINDIAG_TOKEN as the process received it, or null.</param>
+    /// <remarks>
+    /// The environment is read only when the key has nothing: a target installed by an older build has its
+    /// token there, and update_self brings it this build without an install running again. It must still
+    /// start with the token the relay holds for it. The next --install-service moves it.
+    /// </remarks>
+    public static string? ServiceToken(string? stored, string? fromEnvironment) =>
+        string.IsNullOrWhiteSpace(stored) ? fromEnvironment : stored.Trim();
 
     /// <summary>
     /// The argument list for <c>sc.exe create</c>.
@@ -254,12 +474,19 @@ public sealed record ServiceInstallOptions
         ["failure", Name, "reset=", "86400", "actions=", "restart/5000/restart/30000/restart/60000"];
 
     /// <summary>
-    /// The per-service environment, as the REG_MULTI_SZ the SCM hands the process.
+    /// The per-service environment, as the REG_MULTI_SZ the SCM hands the process: the service's name,
+    /// its artifact directory and its grants -- never the token.
     /// </summary>
     /// <remarks>
-    /// This key is ACL'd to SYSTEM and Administrators. A machine-wide variable would be readable by
-    /// every local user, and with self-update or command execution enabled the token is equivalent to
-    /// code execution -- so where it is written matters more than that it is set.
+    /// <para>The token is not here because this value lives in the service's own key, and that key cannot be
+    /// made safe for a secret. sc.exe creates it with the Services key's ACL, under which every local user
+    /// may read it, and the installer can only restrict it afterwards. Windows checks access when a handle
+    /// is opened, not each time it is used, so a user who opened the key in between keeps reading it after
+    /// the ACL changes -- and the key name is predictable, so they need only keep trying. The token goes in
+    /// the <see cref="TokenKeyName"/> subkey instead, which is created with its ACL already on it; see
+    /// <see cref="ProtectedAcl.CreateTokenKey"/>.</para>
+    /// <para>The key is still restricted (<see cref="ProtectedAcl.ProtectServiceKey"/>): the grants are
+    /// not secret, but a target installed by an older build still has its token here.</para>
     /// </remarks>
     public IReadOnlyList<string> EnvironmentBlock()
     {
@@ -268,9 +495,9 @@ public sealed record ServiceInstallOptions
         // server can also discover this by querying WMI for its own process id, but that is the
         // fallback for a hand-registered service: on a real one the query threw instead of answering,
         // and a restart path should not depend on the less reliable of two ways to learn the same fact.
+        // It is also how the running service finds its token key.
         var values = new List<string>
         {
-            $"WINDIAG_TOKEN={Token}",
             $"WINDIAG_SERVICE_NAME={Name}"
         };
 

@@ -65,7 +65,7 @@ public sealed class AutostartTools
     [Description(
         "List what is configured to run without anybody starting it - services, drivers, logon items, " +
         "scheduled tasks, Explorer and Office add-ins, image hijacks - with the file each one points " +
-        "at and who signed it. " +
+        "at and who signed it. Every user's profile is scanned, and a per-user entry names whose it is. " +
         "Use it when something runs that should not, when an uninstall left a hook behind, or when an " +
         "add-in loads a build you did not ship. " +
         "categories takes one or more of: all, boot, codecs, appinit, explorer, gadgets, imagehijacks, " +
@@ -142,24 +142,37 @@ public sealed class AutostartTools
     {
         var builder = new StringBuilder();
 
+        if (result.MalformedRowCount > 0)
+        {
+            // First of all, because it qualifies everything below it, including the signature count.
+            builder.Append("WARNING: ").Append(result.MalformedRowCount)
+                .Append(result.MalformedRowCount == 1 ? " row" : " rows")
+                .AppendLine(" of autorunsc's output could not be read as a whole entry and " +
+                            "are not listed. A registry value name or version string containing a line " +
+                            "break produces exactly this, and such a name can hide a real entry or make " +
+                            "a smuggled one look signed. Treat this list as incomplete, and read the " +
+                            "Run keys and Startup folders directly with registry_read.");
+        }
+
         if (!result.Elevated)
         {
             // Leads, for the same reason path_handle_search's warning does: entries under other users'
             // profiles and some protected keys are simply absent, and absence reads as "not configured".
+            // Every profile is asked for either way; elevation is what loads the ones not in use.
             builder.AppendLine(
                 "WARNING: autorunsc ran WITHOUT administrator rights, so this list is partial. Entries " +
-                "under other users' profiles and in protected keys are missing, and an absent entry " +
-                "here does not mean it is not configured. Restart the server elevated for a complete " +
-                "answer.");
+                "under the profiles of users who are not logged on, and in protected keys, are missing, " +
+                "and an absent entry here does not mean it is not configured. Restart the server " +
+                "elevated for a complete answer.");
         }
 
         builder.Append(result.TotalMatched)
             .Append(result.TotalMatched == 1 ? " autostart entry" : " autostart entries")
-            .Append(" in ").Append(categories);
+            .Append(" in ").Append(RenderLimits.Printable(categories));
 
         if (!string.IsNullOrWhiteSpace(nameFilter))
         {
-            builder.Append(" matching '").Append(nameFilter).Append('\'');
+            builder.Append(" matching '").Append(RenderLimits.Printable(nameFilter)).Append('\'');
         }
 
         builder.AppendLine(":");
@@ -167,18 +180,18 @@ public sealed class AutostartTools
         foreach (var group in result.Entries.Take(RenderLimits.MaxRenderedRows)
                      .GroupBy(e => e.Category, StringComparer.OrdinalIgnoreCase))
         {
-            builder.Append("[").Append(group.Key).AppendLine("]");
+            builder.Append("[").Append(RenderLimits.Printable(group.Key)).AppendLine("]");
 
             foreach (var entry in group)
             {
-                builder.Append("- ").Append(entry.Entry);
+                builder.Append("- ").Append(RenderLimits.Printable(entry.Entry));
 
                 if (!entry.Enabled)
                 {
                     builder.Append(" (disabled)");
                 }
 
-                builder.Append("  ").Append(entry.ImagePath ?? "(no image recorded)");
+                builder.Append("  ").Append(RenderLimits.Printable(entry.ImagePath) ?? "(no image recorded)");
 
                 if (entry.ImageMissing)
                 {
@@ -193,11 +206,21 @@ public sealed class AutostartTools
                 }
                 else if (entry.Company is { } company)
                 {
-                    builder.Append("  ").Append(company);
+                    builder.Append("  ").Append(RenderLimits.Printable(company));
                 }
 
                 builder.AppendLine();
-                builder.Append("    ").AppendLine(entry.Location);
+                builder.Append("    ").Append(RenderLimits.Printable(entry.Location));
+
+                // Every profile is scanned, so a per-user entry is ambiguous without whose it is. The profile
+                // name is an account name, which a user chooses, so it is escaped like the rest.
+                if (entry.Profile is { } profile
+                    && !string.Equals(profile, "System-wide", StringComparison.OrdinalIgnoreCase))
+                {
+                    builder.Append("  (profile ").Append(RenderLimits.Printable(profile)).Append(')');
+                }
+
+                builder.AppendLine();
             }
         }
 
@@ -207,6 +230,9 @@ public sealed class AutostartTools
         {
             builder.Append(result.UnsignedCount switch
             {
+                0 when result.MalformedRowCount > 0 =>
+                    "Every entry listed is validly signed, but see the warning above about the rows " +
+                    "that could not be read.",
                 0 => "Every entry returned is validly signed.",
                 1 => "1 entry is not validly signed - that is the one worth looking at first.",
                 var n => $"{n} entries are not validly signed - those are worth looking at first."

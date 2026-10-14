@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  windows:
     # windows-latest is not a preference: the target framework is net9.0-windows and the code calls
     # Restart Manager, ServiceController, EventLogReader and WinVerifyTrust directly.
     runs-on: windows-latest
@@ -64,6 +64,9 @@ jobs:
         run: |
           dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x64 `
             --self-contained -p:PublishSingleFile=false -o artifacts/ci-publish-check
+          # pwsh judges a native command only by the last one in the block; a failed publish must stop
+          # here rather than be reported as a missing assembly.
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
           $required = 'System.Threading.AccessControl.dll', 'System.Diagnostics.EventLog.dll'
           $missing = $required | Where-Object { -not (Test-Path "artifacts/ci-publish-check/$_") }
           if ($missing) {
@@ -72,7 +75,184 @@ jobs:
           }
           Write-Host "publish set carries: $($required -join ', ')"
 
-  relay:
+      # The whole install path on a real, elevated Windows machine, which nothing else in CI reaches: the
+      # installer's directory refusal, the token key it creates restricted, the service's own start-up checks,
+      # a call over HTTP with the token the service read from that key, and uninstall. Each part is asserted
+      # so that removing the call that does it turns this red: the refusals, the token key (no token, so the
+      # call 401s), ServiceKey/directory protection at install (the service would warn on start), and
+      # ServiceHardening on start (the loosened directory and key below would stay loose).
+      - name: Install smoke on Windows
+        shell: pwsh
+        run: |
+          dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x64 --self-contained `
+            -p:PublishSingleFile=true -o artifacts/windiag-smoke
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
+          . ./tools/windiag-acl.ps1
+
+          $name = 'windiag-smoke'
+          $address = 'http://127.0.0.1:4025'
+          $token = 'smoke-' + [guid]::NewGuid().ToString('N')
+          $server = 'C:\WinDiagSmoke'
+          $artifacts = 'C:\WinDiagSmokeArtifacts'
+          $exposed = 'C:\WinDiagSmokeExposed'
+          $serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$name"
+          $trusted = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+
+          # Native stderr is the installer's whole report, so it is collected rather than let pwsh's 'stop'
+          # preference judge it; the exit code is what decides.
+          function Invoke-Installer([string] $Exe, [string[]] $Arguments) {
+            $ErrorActionPreference = 'Continue'
+            $output = $token | & $Exe @Arguments 2>&1 | ForEach-Object { "$_" } | Out-String
+            Write-Host $output
+            [pscustomobject]@{ Exit = $LASTEXITCODE; Output = $output }
+          }
+
+          # Who other than SYSTEM, Administrators and TrustedInstaller owns, or can write, the directory or
+          # anything in it. Its own judgement, not the server's, so a fault there cannot pass itself.
+          function Get-DirectoryExposure([string] $Path) {
+            $writes = 0x2 -bor 0x4 -bor 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+            foreach ($item in @(Get-Item -Force $Path) + @(Get-ChildItem -Force -Recurse $Path)) {
+              $acl = Get-Acl -LiteralPath $item.FullName
+              $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+              if ($trusted -notcontains $owner) { "$($item.FullName): owned by $owner" }
+              foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+                if ($rule.AccessControlType -ne 'Allow' -or $rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
+                if (([int64] $rule.FileSystemRights -band $writes) -and $trusted -notcontains $rule.IdentityReference.Value) {
+                  "$($item.FullName): $($rule.IdentityReference.Value) has $($rule.FileSystemRights)"
+                }
+              }
+            }
+          }
+
+          # Who other than SYSTEM, Administrators and -Reader (granted ReadKey alone) can read or change the key,
+          # or owns it; and whether it inherits instead of having an ACL of its own.
+          function Get-KeyExposure([string] $Path, [string] $Reader) {
+            $acl = Get-Acl -LiteralPath $Path
+            if (-not $acl.AreAccessRulesProtected) { "${Path}: inherits from its parent" }
+            $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if ($trusted[0..1] -notcontains $owner) { "${Path}: owned by $owner" }
+            foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+              if ($rule.AccessControlType -ne 'Allow' -or $trusted[0..1] -contains $rule.IdentityReference.Value) { continue }
+              if ($Reader -and $rule.IdentityReference.Value -eq $Reader -and $rule.RegistryRights -eq 'ReadKey') { continue }
+              "${Path}: $($rule.IdentityReference.Value) has $($rule.RegistryRights)"
+            }
+          }
+
+          # The text of each event the service wrote since then that reports a repair. Read from the insertion
+          # strings as well as Message, which is empty when the event's message file cannot be resolved.
+          function Get-HardeningWarning([datetime] $Since) {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'windiag'; StartTime = $Since } -ErrorAction SilentlyContinue |
+              ForEach-Object { (@($_.Message) + @($_.Properties | ForEach-Object { $_.Value })) -join ' ' } |
+              Where-Object { $_ -match 'other than SYSTEM and Administrators' }
+          }
+
+          function Wait-Serving {
+            $deadline = (Get-Date).AddSeconds(60)
+            do {
+              Start-Sleep -Seconds 2
+              $answer = $null
+              try { $answer = ./tools/mcp-call.ps1 -Address $address -Token $token -Tool capabilities -Raw 2>$null } catch { }
+            } until ($answer -or (Get-Date) -gt $deadline)
+            if (-not $answer) { throw "$name is not answering at $address with the token it was installed with" }
+          }
+
+          try {
+            # A folder made by hand under C:\ inherits "Authenticated Users: Modify": refused, not taken over.
+            New-Item -ItemType Directory $exposed | Out-Null
+            Copy-Item artifacts/windiag-smoke/WinDiag.Mcp.exe $exposed
+            $refused = Invoke-Installer "$exposed\WinDiag.Mcp.exe" @('--install-service', '--http', $address, '--token-stdin', '--service-name', $name)
+            if ($refused.Exit -ne 2 -or $refused.Output -notmatch 'Nothing was installed') { throw "an exposed server directory was not refused (exit $($refused.Exit))" }
+            if (Get-Service $name -ErrorAction SilentlyContinue) { throw 'a refused install registered a service' }
+            if (-not (Get-DirectoryExposure $exposed)) { throw 'the refused server directory was changed' }
+
+            # The bootstrap scripts' way: created restricted, then filled. Whoever owns the copy -- Administrators,
+            # or on a machine that gives new files to their creator this administrator's own account -- the
+            # installer must accept it.
+            Protect-WinDiagDirectory $server
+            Copy-Item artifacts/windiag-smoke/WinDiag.Mcp.exe $server
+            $exe = "$server\WinDiag.Mcp.exe"
+
+            # An artifact directory somebody made by hand: refused too.
+            New-Item -ItemType Directory $artifacts | Out-Null
+            $refused = Invoke-Installer $exe @('--install-service', '--http', $address, '--token-stdin', '--service-name', $name, '--artifacts', $artifacts)
+            if ($refused.Exit -ne 2 -or $refused.Output -notmatch 'Nothing was installed') { throw "an exposed artifact directory was not refused (exit $($refused.Exit))" }
+            if (Get-Service $name -ErrorAction SilentlyContinue) { throw 'a refused install registered a service' }
+            Remove-Item -Recurse -Force $artifacts
+
+            $installed = Get-Date
+            $install = Invoke-Installer $exe @('--install-service', '--http', $address, '--token-stdin', '--service-name', $name,
+              '--artifacts', $artifacts, '--allow-self-update')
+            if ($install.Exit -ne 0) { throw "install failed ($($install.Exit))" }
+            Wait-Serving
+
+            $problems = @(Get-DirectoryExposure $server) + @(Get-DirectoryExposure $artifacts) +
+                        @(Get-KeyExposure $serviceKey) + @(Get-KeyExposure "$serviceKey\Parameters")
+            if ($problems) { throw "exposed after install:`n$($problems -join "`n")" }
+            $environment = (Get-ItemProperty $serviceKey).Environment
+            if ($environment -match 'TOKEN') { throw "the token is in the service key's Environment value: $environment" }
+            if ((Get-ItemProperty "$serviceKey\Parameters").WINDIAG_TOKEN -ne $token) { throw 'the token key does not hold the token' }
+            # The installer restricted both before the service first started, so that start found nothing to fix.
+            if (Get-HardeningWarning $installed) { throw "the service found its install exposed:`n$((Get-HardeningWarning $installed) -join "`n")" }
+
+            $status = Invoke-Installer $exe @('--service-status', '--service-name', $name)
+            if ($status.Exit -ne 0 -or $status.Output -notmatch 'token\s+configured \(HKLM') { throw '--service-status does not report the token key' }
+
+            $text = 'windiag smoke'
+            $put = ./tools/mcp-call.ps1 -Address $address -Token $token -Tool put_file -Raw -Arguments @{
+              path = "$artifacts\smoke.txt"; contentBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)) }
+            if (-not $put) { throw 'put_file returned nothing' }
+            $get = ./tools/mcp-call.ps1 -Address $address -Token $token -Tool get_file -Raw -Arguments @{ path = "$artifacts\smoke.txt" }
+            if (-not $get) { throw 'get_file returned nothing' }
+            $back = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($get | ConvertFrom-Json).file.content))
+            if ($back -ne $text) { throw "round trip returned '$back'" }
+            Write-Host 'put_file/get_file round trip ok'
+
+            # What a service does on every start: loosen the server directory and the service key behind its
+            # back, restart it, and it must have restricted both again and said so in the event log.
+            icacls $server /grant '*S-1-5-11:(OI)(CI)M' /Q | Out-Null
+            $keyAcl = Get-Acl $serviceKey
+            $keyAcl.AddAccessRule((New-Object Security.AccessControl.RegistryAccessRule (
+              [Security.Principal.SecurityIdentifier]'S-1-5-32-545'), 'ReadKey', 'Allow'))
+            Set-Acl $serviceKey $keyAcl
+            if (-not (Get-DirectoryExposure $server) -or -not (Get-KeyExposure $serviceKey)) { throw 'loosening did not take' }
+            $restarted = Get-Date
+            Restart-Service $name -Force
+            Wait-Serving
+            $problems = @(Get-DirectoryExposure $server) + @(Get-KeyExposure $serviceKey)
+            if ($problems) { throw "still exposed after a restart:`n$($problems -join "`n")" }
+            $warnings = @(Get-HardeningWarning $restarted)
+            if (-not ($warnings -match [regex]::Escape($server))) { throw 'no warning names the repaired server directory' }
+            if (-not ($warnings -match 'registry key of service')) { throw 'no warning names the repaired service key' }
+            Write-Host 'start-up hardening ok'
+
+            $uninstall = Invoke-Installer $exe @('--uninstall-service', '--service-name', $name)
+            if ($uninstall.Exit -ne 0) { throw "uninstall failed ($($uninstall.Exit))" }
+            $deadline = (Get-Date).AddSeconds(30)
+            while ((Test-Path $serviceKey) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+            if (Test-Path $serviceKey) { throw 'the service key, and the token key in it, outlived uninstall' }
+            Write-Host 'LocalSystem install ok'
+
+            # NetworkService, which LSA cannot look up by the name sc.exe takes, and which must read its own token key.
+            $nsArtifacts = "$artifacts-ns"
+            $install = Invoke-Installer $exe @('--install-service', '--http', $address, '--token-stdin', '--service-name', $name,
+              '--account', 'NetworkService', '--artifacts', $nsArtifacts)
+            if ($install.Exit -ne 0) { throw "NetworkService install failed ($($install.Exit))" }
+            Wait-Serving
+            $problems = @(Get-KeyExposure "$serviceKey\Parameters" -Reader 'S-1-5-20')
+            if ($problems) { throw "the NetworkService token key is exposed:`n$($problems -join "`n")" }
+            $uninstall = Invoke-Installer $exe @('--uninstall-service', '--service-name', $name)
+            if ($uninstall.Exit -ne 0) { throw "NetworkService uninstall failed ($($uninstall.Exit))" }
+            Write-Host 'windows install smoke ok'
+          }
+          finally {
+            if (Get-Service $name -ErrorAction SilentlyContinue) {
+              sc.exe stop $name | Out-Null
+              sc.exe delete $name | Out-Null
+            }
+            Remove-Item -Recurse -Force $server, $artifacts, "$artifacts-ns", $exposed -ErrorAction SilentlyContinue
+          }
+
+  unix:
     # The relay and its shared core are net9.0 and must stay that way, so they are built and tested on
     # the platforms they exist for. Per project, not per solution: the solution also holds net9.0-windows
     # projects, which fail to restore here with NETSDK1100.
@@ -138,6 +318,7 @@ jobs:
         shell: pwsh
         run: |
           dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -o artifacts/macdiag-smoke
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
           codesign --verify artifacts/macdiag-smoke/MacDiag.Mcp
           if ($LASTEXITCODE -ne 0) { throw 'the published arm64 binary is not validly signed' }
           'smoke-token' | sudo artifacts/macdiag-smoke/MacDiag.Mcp --install-service --http http://127.0.0.1:4025 --token-stdin --allow-self-update
@@ -183,6 +364,7 @@ jobs:
           # update_self end to end: a second build with different bytes, staged in chunks, installed through launchd.
           dotnet publish src/MacDiag.Mcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true `
             -p:InformationalVersion=0.0.0-update-smoke -o artifacts/macdiag-smoke2
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish of the update build failed ($LASTEXITCODE)" }
           $bytes = [IO.File]::ReadAllBytes('artifacts/macdiag-smoke2/MacDiag.Mcp')
           $sha = (Get-FileHash artifacts/macdiag-smoke2/MacDiag.Mcp -Algorithm SHA256).Hash
           $staged = '/Library/PrivilegedHelperTools/com.sysdiag.macdiag/MacDiag.Mcp.new'
@@ -241,6 +423,8 @@ jobs:
           $rid = if ($IsMacOS) { 'osx-arm64' } else { 'linux-x64' }
           dotnet publish src/DiagRelay.Mcp -c Release -r $rid --self-contained -p:PublishSingleFile=false `
             -o artifacts/relay-k1
+          # Without this a publish that failed part-way leaves no ASP.NET Core files and passes the check.
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
           $web = Get-ChildItem artifacts/relay-k1 -Filter 'Microsoft.AspNetCore*'
           if ($web) { throw "The relay's publish set contains ASP.NET Core: $($web.Name -join ', ')" }
           Write-Host "relay publish set: no ASP.NET Core"

@@ -259,8 +259,12 @@ try {
         } 120)
     Assert-That 'process_modules lists this host''s modules' ($modules.modules.modules.Count -gt 0) `
         $modules.modules.limitation
-    Assert-That 'every module reports a preferred base to compare against' `
-        (@($modules.modules.modules | Where-Object { -not $_.preferredBase }).Count -eq 0) `
+    # Only System32's: a module under a directory a non-admin can change -- a per-user pwsh, a profile --
+    # is deliberately not identified, and so has no preferred base.
+    $system32 = @($modules.modules.modules | Where-Object {
+            $_.path.StartsWith([Environment]::SystemDirectory + '\', [StringComparison]::OrdinalIgnoreCase) })
+    Assert-That 'every System32 module reports a preferred base to compare against' `
+        ($system32.Count -gt 0 -and @($system32 | Where-Object { -not $_.preferredBase }).Count -eq 0) `
         'a load address with nothing to compare it to is unusable'
 
     # The bitness check that only a 64-bit machine can make: a 64-bit server must read a 64-bit

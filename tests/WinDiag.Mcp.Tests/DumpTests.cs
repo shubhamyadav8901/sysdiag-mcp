@@ -196,3 +196,81 @@ public sealed class LogicalDiskWarningTests
         Assert.True(Disk("Removable", 0).CanRunOutOfSpace);
     }
 }
+
+/// <summary>capture_dump never writes the memory of the processes that hold the machine's credentials.</summary>
+/// <remarks>
+/// A full dump of lsass, followed by get_file -- which reads the artifact directory with no grant -- used to
+/// copy NTLM hashes and Kerberos tickets off the host with nothing but the token.
+/// </remarks>
+public sealed class CredentialProcessDumpTests
+{
+    private const string System32 = @"C:\Windows\system32";
+
+    [Theory]
+    [InlineData("lsass", @"C:\Windows\System32\lsass.exe")]
+    [InlineData("lsaiso", @"C:\Windows\System32\LsaIso.exe")]
+    [InlineData("csrss", @"C:\WINDOWS\SYSTEM32\CSRSS.EXE")]
+    public void Refuses_a_credential_process_running_from_system32(string name, string imagePath)
+    {
+        var refusal = MiniDumpWriter.CredentialRefusal(name, 4242, imagePath, System32);
+
+        Assert.NotNull(refusal);
+        Assert.Contains(name, refusal, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PID 4242", refusal);
+        Assert.Contains("credentials", refusal);
+        Assert.Contains("Nothing was written", refusal);
+    }
+
+    [Fact]
+    public void Refuses_by_name_when_the_image_path_cannot_be_read()
+    {
+        // lsass running as a protected process may not even answer a limited query. Not being able to see
+        // where it runs from is no reason to assume it is someone else's lsass.
+        Assert.NotNull(MiniDumpWriter.CredentialRefusal("lsass", 4242, imagePath: null, System32));
+    }
+
+    [Fact]
+    public void Dumps_a_process_that_merely_shares_the_name_but_runs_from_elsewhere()
+    {
+        // Judged by the verified image, not the name: the real lsass only ever runs from System32, and a
+        // user's own lsass.exe in a tools folder is theirs to debug.
+        Assert.Null(MiniDumpWriter.CredentialRefusal("lsass", 4242, @"C:\Users\dev\tools\lsass.exe", System32));
+    }
+
+    [Fact]
+    public void Dumps_an_ordinary_system_process()
+    {
+        Assert.Null(MiniDumpWriter.CredentialRefusal("svchost", 4242, @"C:\Windows\System32\svchost.exe", System32));
+        Assert.Null(MiniDumpWriter.CredentialRefusal("notepad", 4242, imagePath: null, System32));
+    }
+
+    [Fact]
+    public void Refuses_the_real_lsass_on_this_machine_and_writes_nothing()
+    {
+        // Against the live process, so the check is proven to run before a file is created -- elevation is
+        // not needed for the refusal, because it comes before the process is opened for reading.
+        var lsass = System.Diagnostics.Process.GetProcessesByName("lsass").Single();
+        var artifacts = Path.Combine(Path.GetTempPath(), $"windiag-lsass-{Guid.NewGuid():N}");
+        var writer = new MiniDumpWriter(
+            WinDiagOptions.FromEnvironment(new Hashtable { ["WINDIAG_ARTIFACT_DIR"] = artifacts }),
+            new FakePrivilegeProbe(isElevated: true));
+
+        try
+        {
+            var ex = Assert.Throws<DumpCaptureException>(
+                () => writer.Capture(lsass.Id, DumpKind.Full, CancellationToken.None));
+
+            Assert.Contains("credentials", ex.Message);
+            Assert.False(
+                Directory.Exists(artifacts) && Directory.EnumerateFiles(artifacts).Any(),
+                "a file was written for a refused dump");
+        }
+        finally
+        {
+            if (Directory.Exists(artifacts))
+            {
+                Directory.Delete(artifacts, recursive: true);
+            }
+        }
+    }
+}

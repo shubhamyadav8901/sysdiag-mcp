@@ -32,17 +32,20 @@ public sealed class HandleExeInspector : IHandleInspector
     private readonly IToolLocator _locator;
     private readonly IPrivilegeProbe _privileges;
     private readonly WinDiagOptions _options;
+    private readonly IProcessTable _processes;
 
     public HandleExeInspector(
         IExternalToolRunner runner,
         IToolLocator locator,
         IPrivilegeProbe privileges,
-        WinDiagOptions options)
+        WinDiagOptions options,
+        IProcessTable processes)
     {
         _runner = runner;
         _locator = locator;
         _privileges = privileges;
         _options = options;
+        _processes = processes;
     }
 
     public async Task<HandleSearchResult> SearchAsync(
@@ -72,7 +75,7 @@ public sealed class HandleExeInspector : IHandleInspector
         arguments.Add(ToolArgument.Caller(nameFragment));
 
         return await RunAndParseAsync(
-                arguments, nameFragment, includeAllObjectTypes, processScoped: false, cancellationToken)
+                arguments, nameFragment, includeAllObjectTypes, scopedTo: null, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -106,7 +109,7 @@ public sealed class HandleExeInspector : IHandleInspector
                 arguments,
                 $"PID {processId}",
                 includeAllObjectTypes,
-                processScoped: true,
+                scopedTo: processId,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -115,14 +118,23 @@ public sealed class HandleExeInspector : IHandleInspector
         IReadOnlyList<ToolArgument> arguments,
         string query,
         bool includeAllObjectTypes,
-        bool processScoped,
+        int? scopedTo,
         CancellationToken cancellationToken)
     {
+        var processScoped = scopedTo is not null;
+
         var executable = SysinternalsArchitecture.ResolveName(_locator, BaseName, WrongArchitectureSymptom);
+
+        // Read on both sides of the run: a row is confirmed only under a process that was the same
+        // process throughout, which one reading cannot show. See PrintedImageWitness.
+        var before = _processes.Snapshot();
 
         var result = await _runner
             .RunAsync(executable, arguments, ExternalToolPolicy.ConsoleTool, cancellationToken)
             .ConfigureAwait(false);
+
+        var printer = result.ProcessId is { } pid ? (pid, Path.GetFileName(result.Executable)) : ((int, string)?)null;
+        var images = new PrintedImageWitness(before, _processes.Snapshot(), ExternalToolRunner.ConsoleToolEncoding, printer);
 
         // handle.exe reports "no matches" via empty output, not an exit code, and writes access-denied
         // diagnostics to stdout alongside data. Only treat it as failed when nothing usable came back.
@@ -139,7 +151,8 @@ public sealed class HandleExeInspector : IHandleInspector
                 query, [], _privileges.IsElevated, false, 0, includeAllObjectTypes, processScoped);
         }
 
-        var entries = HandleCsvParser.Parse(result.StandardOutput);
+        var parsed = HandleCsvParser.Parse(result.StandardOutput, images.IsWhole, scopedTo);
+        var entries = parsed.Entries;
         var truncated = entries.Count > _options.MaxResults;
 
         return new HandleSearchResult(
@@ -149,6 +162,8 @@ public sealed class HandleExeInspector : IHandleInspector
             Truncated: truncated,
             TotalMatched: entries.Count,
             IncludedAllObjectTypes: includeAllObjectTypes,
-            ProcessScoped: processScoped);
+            ProcessScoped: processScoped,
+            UnparsedRows: parsed.UnparsedRows,
+            UnconfirmedImage: parsed.UnconfirmedImage);
     }
 }

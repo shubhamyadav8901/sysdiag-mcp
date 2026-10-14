@@ -7,5 +7,9 @@ public interface IToolLocator
     string Resolve(string executableName);
 
     /// <summary>Resolves <paramref name="executableName"/>, returning false when it is not installed.</summary>
+    /// <exception cref="UntrustedToolException">
+    /// It is installed, but in a place this server refuses to run it from unsigned: "not installed" would
+    /// be untrue.
+    /// </exception>
     bool TryResolve(string executableName, out string fullPath);
 }

@@ -122,7 +122,6 @@ public sealed class ServiceInstallationTests
         // reports it except a capabilities call nobody makes.
         var bare = Parse("--http", "http://x:1").EnvironmentBlock();
 
-        Assert.Contains(bare, v => v.StartsWith("WINDIAG_TOKEN=", StringComparison.Ordinal));
         Assert.DoesNotContain(bare, v => v.StartsWith("WINDIAG_ALLOW_", StringComparison.Ordinal));
 
         var granted = Parse(
@@ -153,6 +152,82 @@ public sealed class ServiceInstallationTests
         // service is not thereby allowed to read outside the artifact directory, so a re-registration
         // that drops this comes back able to read less than the server it replaced.
         Assert.Contains("WINDIAG_ALLOW_ARBITRARY_READ=1", everything);
+    }
+
+    [Fact]
+    public void Never_puts_the_token_in_the_environment_value_of_a_key_sc_exe_made_readable_by_every_user()
+    {
+        // sc.exe creates the service key readable by Users, and the installer can only restrict it afterwards.
+        // A handle opened in between keeps reading whatever is written later, so a token written there was
+        // readable by anyone who kept trying the predictable key name. It goes into a key created restricted.
+        var options = Parse("--http", "http://x:1", "--token", "pinned-token-value", "--allow-command-execution");
+
+        var block = options.EnvironmentBlock();
+
+        Assert.DoesNotContain(block, v => v.Contains("pinned-token-value", StringComparison.Ordinal));
+        Assert.DoesNotContain(block, v => v.StartsWith("WINDIAG_TOKEN", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("WINDIAG_SERVICE_NAME=windiag", block);
+    }
+
+    [Fact]
+    public void Keeps_the_token_in_a_subkey_of_the_service_key_named_so_registry_read_redacts_it()
+    {
+        // A subkey, so the SCM deletes it with the service; and a value name ending in TOKEN, so a second
+        // instance's registry_read cannot read this one's token out of it.
+        Assert.Equal(@"SYSTEM\CurrentControlSet\Services\windiag-lab\Parameters", ServiceInstallOptions.TokenKeyPath("windiag-lab"));
+
+        var (rendered, _) = Diagnostics.RegistryInspection.WindowsRegistryInspector.RenderValue(
+            ServiceInstallOptions.TokenValueName, "0123456789abcdef");
+        Assert.DoesNotContain("0123456789abcdef", rendered);
+    }
+
+    [Theory]
+    [InlineData("stored", null, "stored")]
+    [InlineData("stored", "from-environment", "stored")]
+    [InlineData(null, "from-environment", "from-environment")]
+    [InlineData("  ", "from-environment", "from-environment")]
+    [InlineData(null, null, null)]
+    public void Runs_with_the_token_in_its_key_and_falls_back_to_the_environment_an_older_install_used(
+        string? stored, string? fromEnvironment, string? expected)
+    {
+        // A target an older build installed has its token only in Environment, and update_self brings it this
+        // build without an install running: it must still come up with the token the relay holds.
+        Assert.Equal(expected, ServiceInstallOptions.ServiceToken(stored, fromEnvironment));
+    }
+
+    [Theory]
+    [InlineData("--account", "NetworkService", "S-1-5-20")]
+    [InlineData("--account", @"NT AUTHORITY\NetworkService", "S-1-5-20")]
+    [InlineData("--account", "LocalService", "S-1-5-19")]
+    [InlineData("--account", @"nt authority\localservice", "S-1-5-19")]
+    [InlineData("--account", "LocalSystem", "S-1-5-18")]
+    [InlineData("--account", @"NT AUTHORITY\LocalSystem", "S-1-5-18")]
+    public void Maps_every_built_in_spelling_the_installer_accepts_to_its_well_known_sid(string option, string account, string sid)
+    {
+        // What reaches the SID lookup is the sc.exe spelling Parse normalises to, and LSA does not know that
+        // name -- so each one must resolve without asking it.
+        var normalised = Parse("--http", "http://x:1", option, account).Account;
+
+        Assert.Equal(sid, ServiceInstallOptions.WellKnownAccountSid(normalised));
+        Assert.Equal(sid, ServiceInstallOptions.WellKnownAccountSid(account));
+    }
+
+    [Theory]
+    [InlineData(@"NT AUTHORITY\NETWORK SERVICE", "S-1-5-20")]
+    [InlineData(@"NT AUTHORITY\LOCAL SERVICE", "S-1-5-19")]
+    [InlineData(@"NT AUTHORITY\SYSTEM", "S-1-5-18")]
+    public void Maps_lsas_own_spelling_of_the_built_in_accounts_too(string account, string sid)
+    {
+        Assert.Equal(sid, ServiceInstallOptions.WellKnownAccountSid(account));
+    }
+
+    [Theory]
+    [InlineData(@"CONTOSO\svc-windiag")]
+    [InlineData(@".\windiag")]
+    [InlineData("NetworkServices")]
+    public void Leaves_any_other_account_to_be_looked_up(string account)
+    {
+        Assert.Null(ServiceInstallOptions.WellKnownAccountSid(account));
     }
 
     [Fact]
@@ -217,5 +292,228 @@ public sealed class ServiceInstallationTests
         // A service name with no display name should not fall back to the generic default, or two
         // services on one machine are indistinguishable in Services.msc.
         Assert.Equal("windiag-lab", Parse("--http", "http://x:1", "--service-name", "windiag-lab").DisplayName);
+    }
+    [Fact]
+    public void Reads_a_pinned_token_from_standard_input_so_it_never_reaches_the_targets_command_line()
+    {
+        // The bootstrap scripts used to pass --token <value>, which lands in the target's process
+        // creation audit (event 4688), in PSEXESVC's command line, and in this server's own
+        // process_list -- one log reader then holds the fleet's token. stdin is in none of those.
+        var options = ServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://x:1", "--token-stdin"], new StringReader("  t0k  \r\nignored\r\n"));
+
+        Assert.Equal("t0k", options.Token);
+        Assert.True(options.TokenWasSupplied);
+    }
+
+    [Fact]
+    public void Refuses_an_empty_token_on_standard_input_rather_than_generating_one_nobody_sees()
+    {
+        // Generating one here would install a service whose token was printed into a pipe or a log, so
+        // the operator would hold a token the target does not accept and not know why every call 401s.
+        var ex = Assert.Throws<ConfigurationException>(() => ServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://x:1", "--token-stdin"], new StringReader("\r\n")));
+
+        Assert.Contains("--token-stdin", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Refuses_a_token_on_both_standard_input_and_the_command_line_rather_than_one_silently_winning()
+    {
+        var ex = Assert.Throws<ConfigurationException>(() => ServiceInstallOptions.Parse(
+            ["--install-service", "--http", "http://x:1", "--token-stdin", "--token", "other"], new StringReader("t0k\n")));
+
+        Assert.Contains("--token-stdin", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--readonly", "--read-only")]
+    [InlineData("--read_only", "--read-only")]
+    [InlineData("--allow-arbitary-read", null)]
+    [InlineData("--tokn", null)]
+    public void Refuses_an_install_option_it_does_not_know_rather_than_installing_without_it(string typo, string? suggestion)
+    {
+        // Ignored, `--readonly` installed and started a fully writable LocalSystem service -- put_file,
+        // service_control, process_kill -- with nothing on screen to say the restriction was dropped.
+        var ex = Assert.Throws<ConfigurationException>(() => Parse("--http", "http://x:1", typo));
+
+        Assert.Contains($"'{typo}'", ex.Message, StringComparison.Ordinal);
+        if (suggestion is not null)
+        {
+            Assert.Contains($"'{suggestion}'", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Refuses_an_option_whose_value_is_missing_rather_than_generating_a_token_in_its_place()
+    {
+        // A trailing `--token` used to be read as "no token given": the install generated one, and the
+        // relay's targets file -- holding the token the operator meant -- then 401'd on every call.
+        var ex = Assert.Throws<ConfigurationException>(() => Parse("--http", "http://x:1", "--token"));
+
+        Assert.Contains("--token", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--token", "--allow-command-execution")]
+    [InlineData("--token", "--read-only")]
+    [InlineData("--artifacts", "--read-only")]
+    [InlineData("--password", "--allow-self-update")]
+    [InlineData("--token", "")]
+    [InlineData("--account", " ")]
+    public void Refuses_an_option_whose_value_was_dropped_rather_than_taking_the_next_option_as_it(string option, string next)
+    {
+        // Windows PowerShell 5.1 drops an empty string argument to a native exe, so `--token $tok` with
+        // an empty $tok arrives as `--token --allow-command-execution`: read that way, the install had
+        // command execution granted AND a bearer token anyone could guess. An empty value is refused too,
+        // because PowerShell 7 does pass it, and a token of "" is no token at all.
+        var ex = Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", option, next, "--service-name", "w"));
+
+        Assert.Contains($"{option} needs a value", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Still_accepts_a_value_that_merely_begins_with_a_single_dash()
+    {
+        // Only "--" marks an option: every option windiag has is spelled that way, while a password or a
+        // pinned token is free to begin with one dash.
+        var options = Parse("--http", "http://x:1", "--token", "-abc123", "--account", @".\diag", "--password", "-p4ss");
+
+        Assert.Equal("-abc123", options.Token);
+        Assert.Equal("-p4ss", options.Password);
+    }
+
+    [Fact]
+    public void Refuses_an_option_given_twice_rather_than_silently_using_the_first()
+    {
+        var ex = Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", "--artifacts", @"C:", "--artifacts", @"C:"));
+
+        Assert.Contains("--artifacts", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Accepts_every_option_the_help_text_documents()
+    {
+        // The other half of refusing unknown options: a documented one refused would be a regression
+        // nobody could work around.
+        var options = ServiceInstallOptions.Parse(
+            [
+                "--install-service", "--http", "http://x:1", "--service-name", "n", "--display-name", "d",
+                "--start", "demand", "--account", "LocalService", "--token", "t", "--artifacts", @"C:",
+                "--firewall-from", "10.0.0.1", "--allow-self-update", "--allow-command-execution",
+                "--allow-arbitrary-write", "--allow-arbitrary-read", "--read-only", "--no-restart-on-failure"
+            ],
+            stdin: null);
+
+        Assert.True(options.ReadOnly);
+        Assert.False(options.RestartOnFailure);
+    }
+
+    [Fact]
+    public void Treats_a_directory_holding_only_windiag_files_as_its_own_and_anything_else_as_somebody_elses()
+    {
+        // The installer restricts the server's directory to SYSTEM and Administrators. Run from the
+        // Downloads folder -- the README does say "run it from any shell" -- that would take the user's
+        // own Downloads away from them, so a directory holding anything else is refused instead.
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
+        [
+            "WinDiag.Mcp.exe", "WinDiag.Mcp.new.exe", "handle64.exe", "Procmon64.exe", "autorunsc64.exe",
+            "handle.exe", "windiag-staged.json",
+
+            // bootstrap-target's two files, present while the installer runs, named afresh for each run.
+            "install-token-0f3c9a2b7d4e4f61a8b5c6d7e8f90123.tmp", "install-windiag-0f3c9a2b7d4e4f61a8b5c6d7e8f90123.cmd",
+
+            // The documented Procmon filter override, read from beside the server.
+            "windiag.pmc"
+        ]));
+
+        Assert.Equal(
+            ["holiday.jpg", "setup.msi"],
+            ServiceInstallOptions.ForeignToServerDirectory(["WinDiag.Mcp.exe", "holiday.jpg", "setup.msi"]));
+    }
+
+    [Fact]
+    public void Treats_everything_the_windows_release_zip_holds_as_windiag_files_so_the_documented_install_from_it_is_not_refused()
+    {
+        // The windiag-win-x64 zip, extracted into a new C:\WinDiag as the README says: that folder inherits
+        // "Authenticated Users: Modify" from C:\, so the installer looks for foreign files before restricting
+        // it -- and refused this exact set, telling the operator to use C:\WinDiag, which they already were.
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(
+            ["WinDiag.Mcp.exe", "SHA256.txt", "LICENSE", "THIRD-PARTY-NOTICES.md"]));
+    }
+
+    [Fact]
+    public void Treats_every_file_the_release_workflow_packs_into_the_windows_zip_as_windiag_files()
+    {
+        // Read from the workflow rather than listed again here, because a list here is what fell out of
+        // step: LICENSE and THIRD-PARTY-NOTICES.md were added to the zips without anyone touching the
+        // installer. The workflow uploads the windiag build from artifacts/<rid>/, and the package step
+        // copies the notices into every zip.
+        var workflow = File.ReadAllText(RepositoryFile(".github", "workflows", "release.yml"));
+
+        var uploaded = System.Text.RegularExpressions.Regex.Matches(
+                workflow, @"^\s*artifacts/\$\{\{ matrix\.rid \}\}/(?<name>[^\s/$]+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(m => m.Groups["name"].Value);
+        var copiedIn = System.Text.RegularExpressions.Regex.Matches(workflow, @"install -m \d+ (?<files>(?:\.\./\S+ )+)")
+            .SelectMany(m => m.Groups["files"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Select(path => path["../".Length..]);
+        var packed = uploaded.Concat(copiedIn).ToList();
+
+        // Both halves found, so a reworded workflow fails here instead of passing on an empty list.
+        Assert.Contains("WinDiag.Mcp.exe", packed);
+        Assert.Contains("LICENSE", packed);
+        Assert.Empty(ServiceInstallOptions.ForeignToServerDirectory(packed));
+    }
+
+    private static string RepositoryFile(params string[] parts)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine([dir.FullName, .. parts]);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"{Path.Combine(parts)} not found above the test output directory.");
+    }
+
+    [Fact]
+    public void Every_install_option_the_parser_accepts_is_documented_in_the_help_text()
+    {
+        // Now that an unknown option is refused, an accepted one missing from --help is an option nobody
+        // can discover -- and the operator's only recourse is reading this file.
+        foreach (var option in ServiceInstallOptions.InstallOptions)
+        {
+            Assert.Contains(option, ServerBuilder.HelpText, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("--uninstall-service")]
+    [InlineData("--service-status")]
+    public void Service_management_takes_only_a_service_name(string command)
+    {
+        Assert.Equal("lab", ServiceInstallOptions.ManagedServiceName([command, "--service-name", "lab"]));
+        Assert.Equal("windiag", ServiceInstallOptions.ManagedServiceName([command]));
+
+        // A typo here would otherwise act on the default service rather than the one meant -- and for
+        // uninstall that is deleting the wrong service.
+        var ex = Assert.Throws<ConfigurationException>(
+            () => ServiceInstallOptions.ManagedServiceName([command, "--servicename", "lab"]));
+        Assert.Contains("'--servicename'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'--service-name'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Refuses_two_service_commands_at_once()
+    {
+        Assert.Throws<ConfigurationException>(
+            () => ServiceInstallOptions.ManagedServiceName(["--service-status", "--uninstall-service"]));
+        Assert.Throws<ConfigurationException>(
+            () => Parse("--http", "http://x:1", "--uninstall-service"));
     }
 }

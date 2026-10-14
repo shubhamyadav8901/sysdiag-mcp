@@ -20,12 +20,12 @@ public static class SelfUpdateSummary
     {
         var builder = new StringBuilder();
 
-        builder.Append("Accepted ").Append(result.StagedPath).Append(" (")
+        builder.Append("Accepted ").Append(RenderLimits.Printable(result.StagedPath)).Append(" (")
             .Append(result.SizeBytes.ToString("N0", CultureInfo.InvariantCulture))
-            .Append(" bytes, signature ").Append(result.SignatureVerdict).AppendLine(").");
+            .Append(" bytes, signature ").Append(RenderLimits.Printable(result.SignatureVerdict)).AppendLine(").");
 
-        builder.Append("SHA-256 ").AppendLine(result.Sha256);
-        builder.Append("Replacing ").AppendLine(result.LivePath);
+        builder.Append("SHA-256 ").AppendLine(RenderLimits.Printable(result.Sha256));
+        builder.Append("Replacing ").AppendLine(RenderLimits.Printable(result.LivePath));
         builder.AppendLine();
 
         // Said plainly because the caller is about to see a dropped connection and must not read it as
@@ -62,7 +62,7 @@ public static class SelfUpdateSummary
         }
 
         builder.Append("If it does not come back, the helper logged what happened to ")
-            .Append(result.HelperLogPath);
+            .Append(RenderLimits.Printable(result.HelperLogPath));
 
         return builder.ToString();
     }

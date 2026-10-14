@@ -30,7 +30,8 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
         "(default true) leaves out what comes from the sealed system volume, and Apple's kernel and system " +
         "extensions; neither a label nor the program's signer is trusted, since a planted plist chooses its label and " +
         "can run curl or sh -c. verifySignatures checks each program with codesign, and an interpreter running code " +
-        "from its arguments counts as unsigned; unsignedOnly " +
+        "from its arguments counts as unsigned, as does a certificate Apple did not issue (self-signed or a private " +
+        "CA), whatever it is called; unsignedOnly " +
         "returns only unsigned programs, scripts, missing programs and files another account could change - usually " +
         "the fastest route to an answer.")]
     public async Task<AutostartAuditToolResult> AutostartAudit(
@@ -97,8 +98,11 @@ public sealed class AutostartTools(IAutostartInspector autostarts)
             builder.Append("  ").Append(RenderLimits.Printable(entry.ImagePath ?? "(no program recorded)"));
             if (entry.ScriptPath is { } script) builder.Append(" running ").Append(RenderLimits.Printable(script));
             if (entry.ImageMissing) builder.Append("  [FILE NOT FOUND]");
+            // The reason goes with every verdict: a self-signed program has a signature that verifies, and an [UNSIGNED]
+            // beside it with no reason reads as a mistake.
             if (entry.Signed == false) builder.Append("  [UNSIGNED]");
-            else if (entry.Signed == true && entry.SignatureDetail is { } signer) builder.Append("  (").Append(RenderLimits.Printable(signer)).Append(')');
+            else if (entry.Signed is null && entry.SignatureDetail is not null) builder.Append("  [SIGNATURE NOT JUDGED]");
+            if (entry.SignatureDetail is { } signer) builder.Append(entry.Signed == true ? "  (" : " (").Append(RenderLimits.Printable(signer)).Append(')');
             if (entry.Profile is { } profile) builder.Append("  user ").Append(RenderLimits.Printable(profile));
             builder.AppendLine();
             builder.Append("    ").Append(RenderLimits.Printable(entry.Location));

@@ -9,19 +9,10 @@ namespace WinDiag.Mcp.Diagnostics.Control;
 public sealed class WindowsServiceControllerAdapter : IServiceController
 {
     /// <summary>
-    /// Services that must never be stopped or restarted through this tool.
+    /// Services that must never be stopped or restarted through this tool; shared with process_control,
+    /// which refuses their host process for the same reason. See <see cref="ProtectedTargets"/>.
     /// </summary>
-    /// <remarks>
-    /// Stopping any of these takes the machine out of service, and several take the diagnostics with
-    /// them — stop <c>Winmgmt</c> and <c>process_list</c> stops working; stop <c>RpcSs</c> and
-    /// essentially everything does. The list is short and hardcoded on purpose: a configurable
-    /// safety list is one that eventually gets configured empty.
-    /// </remarks>
-    private static readonly HashSet<string> Critical = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "RpcSs", "DcomLaunch", "RpcEptMapper", "LSM", "Power", "PlugPlay",
-        "EventLog", "Winmgmt", "BFE", "mpssvc", "SamSs", "CryptSvc", "ProfSvc"
-    };
+    private static readonly IReadOnlySet<string> Critical = ProtectedTargets.CriticalServices;
 
     /// <summary>How long to wait for a state change before reporting it as not settled.</summary>
     private static readonly TimeSpan StateTimeout = TimeSpan.FromSeconds(45);
@@ -40,13 +31,17 @@ public sealed class WindowsServiceControllerAdapter : IServiceController
 
         if (action != ServiceAction.Start && Critical.Contains(serviceName))
         {
-            throw new ServiceControlException(
-                $"Refusing to {action.ToString().ToLowerInvariant()} '{serviceName}'. It is a core Windows " +
-                "service; stopping it would take this machine out of service, and several on that list " +
-                "would take these diagnostics down with it. Nothing has been done.");
+            throw RefuseCore(serviceName, action);
         }
 
         using var service = Open(serviceName);
+
+        // Checked again against the short name the SCM resolved: Open takes a display name too, so
+        // "Remote Procedure Call (RPC)" walked past the check above and stopped RpcSs all the same.
+        if (action != ServiceAction.Start && Critical.Contains(service.ServiceName))
+        {
+            throw RefuseCore(service.ServiceName, action);
+        }
         var before = ReadStatus(service);
         var dependents = new List<string>();
 
@@ -92,6 +87,11 @@ public sealed class WindowsServiceControllerAdapter : IServiceController
             DependentServicesStopped: dependents,
             Detail: Describe(action, before, after, dependents));
     }
+
+    private static ServiceControlException RefuseCore(string serviceName, ServiceAction action) =>
+        new($"Refusing to {action.ToString().ToLowerInvariant()} '{serviceName}'. It is a core Windows " +
+            "service; stopping it would take this machine out of service, and several on that list " +
+            "would take these diagnostics down with it. Nothing has been done.");
 
     /// <summary>
     /// Stops dependents first, because the SCM refuses to stop a service that others depend on.

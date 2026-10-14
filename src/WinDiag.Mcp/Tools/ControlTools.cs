@@ -41,7 +41,9 @@ public sealed class ControlTools
         "anything the process had not written out. " +
         "You must pass the process name you expect alongside the PID, and it is verified first - PIDs " +
         "are reused, so one read from an earlier process_list may belong to something else entirely by " +
-        "now. Core Windows processes are refused outright.")]
+        "now. Core Windows processes are refused outright. Terminate and suspend are also refused for a " +
+        "process Windows marks critical, and for one hosting a service service_control refuses to stop " +
+        "(RpcSs, DcomLaunch, Winmgmt, EventLog and the like - usually a svchost). Resume is never refused.")]
     public ProcessControlToolResult ProcessControl(
         [Description("Process id to act on. Get a current one from process_list.")]
         int processId,
@@ -111,9 +113,9 @@ public sealed class ControlTools
     {
         var builder = new StringBuilder();
 
-        builder.Append(result.Action).Append(' ').Append(result.ProcessName)
+        builder.Append(result.Action).Append(' ').Append(RenderLimits.Printable(result.ProcessName))
             .Append(" (PID ").Append(result.ProcessId).AppendLine("):");
-        builder.AppendLine(result.Detail);
+        builder.AppendLine(RenderLimits.Printable(result.Detail));
 
         if (result.Action == ProcessAction.Suspend)
         {
@@ -130,21 +132,21 @@ public sealed class ControlTools
     {
         var builder = new StringBuilder();
 
-        builder.Append(result.ServiceName);
+        builder.Append(RenderLimits.Printable(result.ServiceName));
         if (result.DisplayName is { } display && !string.Equals(display, result.ServiceName, StringComparison.Ordinal))
         {
-            builder.Append(" (").Append(display).Append(')');
+            builder.Append(" (").Append(RenderLimits.Printable(display)).Append(')');
         }
 
         builder.AppendLine();
-        builder.AppendLine(result.Detail);
+        builder.AppendLine(RenderLimits.Printable(result.Detail));
 
         if (result.DependentServicesStopped.Count > 0)
         {
             builder.AppendLine().AppendLine("Dependent services stopped:");
             foreach (var dependent in result.DependentServicesStopped)
             {
-                builder.Append("- ").AppendLine(dependent);
+                builder.Append("- ").AppendLine(RenderLimits.Printable(dependent));
             }
 
             builder.Append("Start these again individually if they are needed.");

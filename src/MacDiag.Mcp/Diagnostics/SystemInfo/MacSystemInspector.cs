@@ -86,31 +86,39 @@ public sealed class MacSystemInspector(IExternalCommand commands, IPrivilegeProb
             Environment.ProcessorCount,
             total,
             memory?.AvailableBytes ?? 0,
-            Filesystems(MountList.ForSpace(mounts), limitations),
+            Filesystems(MountList.ForSpace(mounts), DriveSize, PerMountBudget, limitations),
             limitations);
     }
 
-    private static List<MountedFilesystem> Filesystems(IEnumerable<MacMount> mounts, List<string> limitations)
+    private static (long Total, long Free) DriveSize(string mountPoint)
+    {
+        var drive = new DriveInfo(mountPoint);
+        return (drive.TotalSize, drive.AvailableFreeSpace);
+    }
+
+    /// <param name="size">Asks one volume its size; DriveInfo in production, which statfs(2)s it.</param>
+    internal static List<MountedFilesystem> Filesystems(
+        IEnumerable<MacMount> mounts, Func<string, (long Total, long Free)> size, TimeSpan perMount, List<string> limitations)
     {
         var result = new List<MountedFilesystem>();
         foreach (var mount in mounts)
         {
             long totalBytes = 0, freeBytes = 0;
-            var probe = Task.Run(() =>
-            {
-                var drive = new DriveInfo(mount.MountPoint);
-                return (drive.TotalSize, drive.AvailableFreeSpace);
-            });
+            // A thread of its own, not the pool's: a probe stuck in the kernel on a dead network mount keeps its thread
+            // for good, and on a small, busy pool the next mount's probe then waited for a thread longer than its whole
+            // budget, so a healthy volume was reported as not answering (LinuxDiag, on a two-core CI runner).
+            var probe = Task.Factory.StartNew(
+                () => size(mount.MountPoint), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
             try
             {
-                if (probe.Wait(PerMountBudget))
+                if (probe.Wait(perMount))
                 {
                     (totalBytes, freeBytes) = probe.Result;
                 }
                 else
                 {
-                    limitations.Add($"{mount.MountPoint} did not answer within {PerMountBudget.TotalSeconds:0} s, so its size is unknown (shown as 0).");
+                    limitations.Add($"{mount.MountPoint} did not answer within {perMount.TotalSeconds:0} s, so its size is unknown (shown as 0).");
                 }
             }
             catch (AggregateException ex) when (ex.InnerException is IOException or UnauthorizedAccessException)

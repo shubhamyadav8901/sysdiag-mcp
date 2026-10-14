@@ -198,4 +198,61 @@ public sealed class EventLogRenderingTests
         Assert.Contains("First line.", summary);
         Assert.DoesNotContain("Second line", summary);
     }
+
+    /// <summary>Terminal controls before the line break, so cutting a message at its first line leaves them in.</summary>
+    private const string Hostile = "\u001b[31m\u202eATTN\nFORGED line";
+
+    [Theory]
+    [InlineData("level")]
+    [InlineData("provider")]
+    [InlineData("message")]
+    public void A_records_text_reaches_the_summary_without_a_terminal_control_or_a_forged_line(string field)
+    {
+        // Whoever registers a provider writes its name and its messages, and a forwarded or imported record
+        // carries its level as text. Cutting the message at its first line removed the forged line but never
+        // the ESC or the bidirectional override ahead of it.
+        var entry = new EventEntry(
+            DateTimeOffset.UnixEpoch,
+            7034,
+            field == "level" ? Hostile : "Error",
+            field == "provider" ? Hostile : "Service Control Manager",
+            field == "message" ? Hostile : "The service terminated unexpectedly.",
+            640);
+
+        var summary = EventLogTools.Render(new EventQueryResult("System", 30, [entry], false, []));
+
+        AssertInert(summary);
+        Assert.Contains("ATTN", summary);
+    }
+
+    [Fact]
+    public void A_mistyped_log_name_and_the_names_offered_instead_carry_no_terminal_control_or_forged_line()
+    {
+        var summary = EventLogTools.Render(new EventQueryResult(Hostile, 60, [], false, ["System", Hostile]));
+
+        AssertInert(summary);
+        Assert.Contains("- System", summary);
+    }
+
+    [Fact]
+    public void A_quiet_log_named_with_terminal_controls_says_so_without_them()
+    {
+        var summary = EventLogTools.Render(new EventQueryResult(Hostile, 60, [], false, []));
+
+        AssertInert(summary);
+        Assert.Contains("No matching records", summary);
+    }
+
+    private static void AssertInert(string summary)
+    {
+        // Render ends its own lines with AppendLine, which writes "\r\n" on Windows. Checking the raw summary
+        // for '\r' failed every multi-line summary on CI's Windows runner while passing on Linux and macOS, so
+        // the platform's line ending is taken out first and only a CR the payload smuggled in is left to find.
+        var text = summary.Replace(Environment.NewLine, "\n", StringComparison.Ordinal);
+
+        Assert.DoesNotContain(text.Split('\n'), line => line.TrimStart().StartsWith("FORGED", StringComparison.Ordinal));
+        Assert.DoesNotContain('\u001b', text);
+        Assert.DoesNotContain('\u202e', text);
+        Assert.DoesNotContain('\r', text);
+    }
 }
