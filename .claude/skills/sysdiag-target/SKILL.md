@@ -7,8 +7,8 @@ description: Use when standing up, updating, or recovering a sysdiag target mach
 
 ## First, never skip this
 
-`WinDiag.Mcp.exe --help` is the authoritative CLI reference and the README documents every
-`WINDIAG_*` variable, both bootstrap routes, and the `-Grants` presets. **Reading `src/` to find out
+`WinDiag.Mcp.exe --help` is the authoritative CLI reference. `docs/configuration.md` documents every
+`WINDIAG_*` variable, and `docs/windows.md` both bootstrap routes and the `-Grants` presets. **Reading `src/` to find out
 what a flag is called is a bug in the docs — fix the doc rather than working around it.**
 
 Adding an entry to `~/.sysdiag-targets.json` deploys nothing. It only tells the relay where to
