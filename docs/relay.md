@@ -16,6 +16,10 @@ Keep the entry named `sysdiag`: forwarded tools are named after the registration
 
 On Linux or macOS the command is the `DiagRelay.Mcp` binary — no `.exe` — from a `-r linux-x64` or `-r osx-arm64` publish. A binary downloaded from a release artifact arrives without its execute bit, so `chmod +x DiagRelay.Mcp` before registering it.
 
+Release zips carry a relay for each of these. To build one for the machine you are on:
+
+    dotnet publish src/DiagRelay.Mcp -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o artifacts/diagrelay
+
 It exposes five control tools — `connect`, `disconnect`, `status`, and the two transfer tools
 [`push_file` / `pull_file`](#moving-files-without-spending-context) below. Call `connect` with the target's
 current address and token, and that target's full tool set appears here (via a `tools/list_changed`

@@ -1,5 +1,43 @@
 # WinDiag on Windows targets
 
+## Tools
+
+**The build order is complete.** Twenty tools plus an opt-in twenty-first (`update_self`), both
+transports (stdio locally, authenticated Streamable HTTP for running on a target), dump capture,
+Procmon-backed activity tracing, the Sysinternals shell-outs, and the process/service control write
+tools.
+
+Most are backed by native Windows APIs. Four shell out to Sysinternals — `path_handle_search` and
+`process_handles` to `handle`, `capture_activity` to `Procmon`, `autostart_audit` to `autorunsc` —
+and `tools/deploy-target.ps1` stages all of them from a pinned manifest.
+
+| Tool | Backing | Answers |
+|---|---|---|
+| `who_locks_path` | Restart Manager | Who is holding this file or folder open |
+| `path_handle_search` | Sysinternals `handle` | Handle search across every process (files by default; all object types on request) |
+| `process_handles` | Sysinternals `handle -p` | Everything one process holds open — files, keys, sections, mutants, tokens |
+| `autostart_audit` | Sysinternals `autorunsc` | What runs without anybody starting it, and who signed it |
+| `system_overview` | Win32 / runtime | What is this machine, and can the server see everything |
+| `capabilities` | — | Which tools work here, and why any do not |
+| `process_list` | WMI `Win32_Process` | What is running, with parent PID and full command line |
+| `process_modules` | `Process.Modules` + PE headers + `WinVerifyTrust` | Which DLLs loaded, from where, whether anything unsigned got in, and which modules lost a base-address collision. Version and signature are read from the file the kernel names as behind each mapping, held open while it is read - not from the listed path, which may since hold another file (flagged replaced on disk). The kernel's name is the name the file was opened under and does not follow a rename of a directory above it, so it is trusted only where SYSTEM, Administrators and TrustedInstaller alone can change every directory on the path - a policy judgement, not a proof: a directory moved into place earlier, while permissions were looser, is not caught, and holders of the restore or take-ownership privilege can change any directory. A module whose file cannot be identified that way - under a user profile or temp directory, or on a share - is flagged, names the first directory anyone else can change, and is not verified. The verdict is on that file, not on the code in memory |
+| `named_pipes` | `NtQueryDirectoryFile` + `WaitNamedPipe` | IPC pipes, and whether any has every instance taken and none listening for a client |
+| `network_owners` | IP Helper | Which process owns which socket |
+| `service_config` | SCM + services registry | Configured start type vs actual state, account, dependencies |
+| `event_log_tail` | `EventLogReader` | What the machine complained about, filtered |
+| `file_signatures` | `WinVerifyTrust` | Is this the binary we shipped |
+| `effective_access` | Security descriptors + a real access attempt | Why is this denied |
+| `registry_read` | Managed registry API, native view | What a setting is actually set to, in the view you meant. Available under every grant; HKLM\SAM, HKLM\SECURITY and other users' HKU hives need `--allow-arbitrary-read`, and values named like a credential are always redacted |
+| `capture_dump` *(writes)* | `MiniDumpWriteDump` | Snapshot a process → hand the path to mcp-windbg. Never lsass, lsaiso or csrss (judged by the image in System32): they hold the machine's credentials |
+| `capture_activity` *(writes)* | Sysinternals `Procmon` | Record file and registry activity for a few seconds |
+| `query_activity` | streaming read of a capture | Filter that trace down to the operations that failed |
+| `process_control` *(writes)* | Win32 process control | Terminate, suspend or resume a process — PID plus expected name, verified before acting. Terminate and suspend are refused for core processes (lsass, csrss, winlogon…), for any process Windows marks critical, and for the host of any service `service_control` refuses to stop; resume never is |
+| `service_control` *(writes)* | SCM | Start, stop or restart a service; refuses to stop or restart a small set of critical ones, by short or display name |
+| `update_self` *(writes, opt-in)* | hash-verified binary replacement | Replace this server's own executable and restart it, without touching the target by hand. Finishes the calls already running before it restarts, refusing new ones meanwhile; `force` skips that and cuts them off. It is also the one tool a draining server still accepts, so calling it again with `force` stops the wait |
+| `run_command` *(writes, opt-in)* | arbitrary shell (cmd / powershell / direct) | Run any command as the server's account — for git, builds, Klocwork, anything the other tools do not cover |
+| `put_file` *(writes)* | hash-verified file write over HTTP | Stage a file on the target without an SMB share — server updates, Sysinternals binaries, inputs; scoped to the artifact directory unless arbitrary write is enabled, and to the server's own folder only with the self-update grant |
+| `get_file` | hash-verified sliced file read over HTTP | Pull a file *back* without an SMB share — the dump or trace a capture wrote; same scoping. For anything large, drive it with the relay's [`pull_file`](relay.md#moving-files-without-spending-context) or `tools/fetch-from-target.ps1` rather than calling it directly, so the bytes stay out of the caller's context |
+
 ## Running it
 
 From a checkout, or the published executable's `--help`:
