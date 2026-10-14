@@ -37,4 +37,4 @@ fi
 anchor=$(printf '%s' "${heading#\#\# }" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9 _-' | tr ' ' '-')
 
 printf '%s\n\n' "$summary"
-printf '**Full changelog:** [CHANGELOG.md](https://github.com/%s/blob/%s/CHANGELOG.md#%s)\n' "$repo" "$ref" "$anchor"
+printf '**Changelog:** [the full %s section](https://github.com/%s/blob/%s/CHANGELOG.md#%s)\n' "$version" "$repo" "$ref" "$anchor"

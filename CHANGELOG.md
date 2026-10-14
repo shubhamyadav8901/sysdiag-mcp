@@ -14,7 +14,8 @@ release fixed something that had been silently wrong, it says what the wrong ans
 ## [Unreleased]
 
 Moves every project to .NET 10, gives WinDiag an icon of its own in place of one that embedded the
-Windows logo, and updates the MCP SDK to 2.2.0.
+Windows logo, and updates the MCP SDK to 2.2.0. Release pages become short summaries that link their pull
+requests.
 
 ### Changed
 
@@ -26,25 +27,34 @@ Windows logo, and updates the MCP SDK to 2.2.0.
   embedded the Windows logo.
 - Dependencies: the MCP SDK (`ModelContextProtocol`, `ModelContextProtocol.AspNetCore`) moves to 2.2.0
   and the `Microsoft.Extensions.Hosting` family to 10.0.12.
+- A GitHub Release's page carries the version's changelog summary, a link to its full section, and GitHub's
+  list of the pull requests merged since the last release, instead of the whole section.
 
 ## [3.0.0] - 2026-10-14
 
-The first public release. It adds **MacDiag**, a macOS server. It closes a broad set of security holes across
-all three servers and the relay: token exposure, directory ACLs, unsafe DLL and tool loading, and confinement of
-`put_file`, `get_file` and `query_activity`. It also renames the project from windiag to **sysdiag**.
+The first public release. It adds **MacDiag**, a macOS server. It closes a broad set of security holes in
+WinDiag, LinuxDiag and the relay: token exposure, directory ACLs, unsafe DLL and tool loading, and
+confinement of `put_file`, `get_file` and `query_activity`. It also renames the project from windiag to
+**sysdiag**.
 
 **Upgrading from 2.x:**
 
-- Rename `~/.windiag-targets.json` to `~/.sysdiag-targets.json`, and `WINDIAG_RELAY_FILE_ROOT` to
-  `SYSDIAG_RELAY_FILE_ROOT`.
-- A WinDiag service refuses to start from a directory that an ordinary account can change, such as
-  `D:\Tools\WinDiag`. The event log names the directory and who can change it. Fix those rights, or move to
-  `C:\WinDiag`.
-- Run `--install-service` again on each WinDiag target. This moves its token out of the service's
-  `Environment` value into a restricted `Parameters` key. Until then the service keeps working, and warns
-  on every start.
-- An unknown command-line or install option is now refused. Some reads and writes need a grant they did not
-  need before, and the refusal names it.
+- **Change the token on every WinDiag target.** Before this release any local user could read it, and it
+  allows `run_command` as SYSTEM. Running `--install-service` again also moves it into a restricted key; until
+  then the service keeps working and warns on every start.
+- A WinDiag service refuses to start when it cannot lock down its directory itself: a drive root, a link, or
+  a directory below one that an ordinary account can change, such as `D:\Tools\WinDiag`. The event log names
+  the directory and who can change it. Remove those rights (or `icacls <dir> /setowner *S-1-5-32-544`) and
+  start the service again with `sc.exe start`, since its restart retries will be spent; or move to `C:\WinDiag`.
+- Relay: rename `~/.windiag-targets.json` to `~/.sysdiag-targets.json` and `WINDIAG_RELAY_FILE_ROOT` to
+  `SYSDIAG_RELAY_FILE_ROOT`, and re-key the client's `mcpServers` entry to `sysdiag`. Its default file roots
+  no longer include the folder above the executable, so copy builds into the per-user `sysdiag` folder or set
+  the variable.
+- LinuxDiag: an artifact directory that root alone does not control must be moved, or every `update_self`
+  after this one is refused.
+- An unknown command-line or install option is now refused, and some reads and writes need a grant they did
+  not need before; the refusal names it. Callers that worked around `run_command`'s old Cmd quoting must stop,
+  and `named_pipes` renames two structured fields.
 
 **Known issue:** `update_self` can strand a pre-3.0 WinDiag install that the new start-up check refuses
 ([#4](https://github.com/shubhamyadav8901/sysdiag-mcp/issues/4)).
@@ -372,6 +382,8 @@ all three servers and the relay: token exposure, directory ACLs, unsafe DLL and 
 Adds **LinuxDiag**, a Linux server for Ubuntu and Debian on x86-64. The relay moves to its own executable,
 `DiagRelay.Mcp`, which also runs on Linux. WinDiag installs itself as a Windows service with
 `--install-service`, and `update_self` works under the service manager.
+
+This release said LinuxDiag was not yet for production hosts: its security review still had open findings.
 
 **Breaking:** `WinDiag.Mcp.exe --relay` is removed. Point MCP clients at `DiagRelay.Mcp` instead.
 
