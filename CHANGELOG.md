@@ -95,15 +95,23 @@ release fixed something that had been silently wrong, it says what the wrong ans
   (`HKLM\SYSTEM\CurrentControlSet\Services\<name>`, value `Environment`). `sc create` gives the key the
   Services key's ACL and nothing restricted it, although the README said only SYSTEM and Administrators
   could read it. With the Standard grants that token allows `run_command` as SYSTEM. Now
-  `--install-service` restricts the key to SYSTEM and Administrators before writing the token,
-  `--service-status` names anyone else who can read or change it and restricts it, and a service that
-  finds its key exposed on start restricts it and logs a warning to change the token. Change the token
-  on every target installed by an earlier release.
+  `--install-service` stores the token in `Services\<name>\Parameters`, a key created with SYSTEM and
+  Administrators (and the service's own account, read-only, when it is not SYSTEM) as its only access,
+  so no handle opened before it was restricted can read it; it refuses a `Parameters` key that already
+  exists. The service key itself is restricted too, `--service-status` says where the token is and
+  restricts an exposed key, and a service that finds its key exposed on start restricts it and logs a
+  warning. A target installed earlier keeps starting with the token in `Environment` and warns until
+  `--install-service` is run again, which moves it; do not send it an older build through `update_self`
+  after that. Change the token on every target installed by an earlier release.
 - Before, `C:\WinDiag` and `C:\WinDiagArtifacts`, the bootstrap defaults, inherited *Authenticated Users:
   Modify* from `C:\`. Any local user could plant `handle64.exe` and similar binaries, a replacement
   server, or a changed `self-update.cmd`, all of which the SYSTEM service runs, and could read its memory
-  dumps. Now the installer and the service give either directory, when anyone else can change it, a
-  protected ACL: SYSTEM and Administrators, plus the service's own account when it is not SYSTEM. Run as
+  dumps. Now `--install-service` refuses an existing server or artifact directory that anyone but an
+  administrator can change, rather than taking it over (a handle opened on it before would survive), and
+  creates a missing `--artifacts` directory with its protected ACL from the start: SYSTEM and
+  Administrators, plus the service's own account when it is not SYSTEM. On every start the service gives
+  either directory that ACL when someone else can change it, and moves aside a default `%TEMP%\windiag`
+  that someone else made. Run as
   SYSTEM or elevated, they also hand what it holds to Administrators, working through handles opened
   without following links. The bootstrap scripts create missing directories that way before copying
   anything, and `deploy-target.ps1` does the same for a missing server directory it stages to over the
@@ -215,10 +223,11 @@ release fixed something that had been silently wrong, it says what the wrong ans
   them (root's, with group and other write, setuid and setgid removed), and makes a binary installed
   from its own path root's. All of this is examined before any binary, environment file or unit is
   written. An `--artifacts` directory follows the rules under Breaking, and an existing one is never
-  re-chmodded; a missing one is made `0700`. `update_self` checks the artifact directory again before writing its
-  helper script, and replaces its log rather than writing through whatever is at that name. Before, an
-  existing directory was used with whatever owner and mode it had, so an operator-owned `/opt/linuxdiag`
-  or a world-writable artifact directory let a local user get root code execution at the next update.
+  re-chmodded; a missing one is made `0700`. `update_self` checks the artifact directory again before
+  writing its helper script, and replaces its log rather than writing through whatever is at that name.
+  Before, an existing directory was used with whatever owner and mode it had, so an operator-owned
+  `/opt/linuxdiag` or a world-writable artifact directory let a local user get root code execution at
+  the next update.
 - LinuxDiag `service_control` refuses a stop or restart when `systemctl list-dependencies` fails. Before,
   its exit code was not read, so a D-Bus timeout or a partial walk read as "nothing depends on this" and
   the stop ran, and could take `ssh.service` or the diagnostics server down with it. It now answers
@@ -229,13 +238,15 @@ release fixed something that had been silently wrong, it says what the wrong ans
   `*.wants` link pointed at, so an enabled packaged user unit whose ExecStart a user replaced in
   `~/.config/systemd/user/x.service.d/o.conf` was reported with the packaged program, called packaged,
   and hidden by `unpackagedOnly`. User timers, sockets and paths now name the program of the unit they
-  start; before, they showed none. Units enabled for every user, including vendor ones under
-  `/usr/lib/systemd/user` such as `pipewire.socket`, are listed, and listed again for any user whose own
-  files change what they, or the service they start, run. `~/.config/environment.d/*.conf` and
-  `DefaultEnvironment=` in `~/.config/systemd/user.conf` are entries of their own, naming the variables
-  they set but never the values, read only when the user owns the file; before, an `LD_PRELOAD` set there
-  ran inside every user service unreported. An unreadable shared unit directory is named as a
-  limitation of its own; before, it was counted as an unreadable home directory.
+  start, read as systemd reads it (a timer's or path's first valid `Unit=`, a socket's `Service=`, a
+  template instantiated, an invalid name ignored); before, they showed none. Units enabled for every
+  user, including vendor ones under `/usr/lib/systemd/user` such as `pipewire.socket`, are listed, and
+  listed again for any user whose own files change what they, or the service they start, run.
+  `~/.config/environment.d/*.conf` and `DefaultEnvironment=` in `~/.config/systemd/user.conf` are
+  entries of their own, naming the variables they set but never the values, read only when the user owns
+  the file; before, an `LD_PRELOAD` set there ran inside every user service unreported. An unreadable
+  shared unit directory is named as a limitation of its own; before, it was counted as an unreadable
+  home directory.
 - The relay's default `push_file`/`pull_file` root no longer reaches the home directory. It was the
   folder above the relay's executable wherever that was: `~/bin/DiagRelay.Mcp` allowed all of `$HOME`,
   `~/DiagRelay.Mcp` every user's home, and a release unpacked in `~/Downloads/x` allowed `~/Downloads`.
