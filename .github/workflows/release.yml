@@ -270,14 +270,14 @@ jobs:
           sha256sum *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # The page carries the summary written under the version's heading and a link to the full section,
+      # not the section itself: a whole section made a 300-line page. Fails on a rehearsal too, when the
+      # section or its summary is missing.
       - name: Notes from the changelog
         run: |
-          awk -v v="${{ steps.version.outputs.version }}" '
-            index($0, "## [" v "]") == 1 { found = 1; next }
-            found && /^## \[/ { exit }
-            found { print }' CHANGELOG.md > notes.md
-          test -s notes.md || { echo "::error::CHANGELOG.md has no section for ${{ steps.version.outputs.version }}"; exit 1; }
-          head -n 5 notes.md
+          tools/release-notes.sh "${{ steps.version.outputs.version }}" > notes.md ||
+            { echo "::error::CHANGELOG.md has no section, or no summary, for ${{ steps.version.outputs.version }}"; exit 1; }
+          cat notes.md
 
       - name: Publish
         # A pushed tag only: a manual run started on a tag has ref_type tag too, and is still a rehearsal.
@@ -286,4 +286,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/SHA256SUMS.txt
-          --title "sysdiag ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
+          --title "sysdiag ${GITHUB_REF_NAME}" --notes-file notes.md --generate-notes --verify-tag

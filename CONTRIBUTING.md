@@ -83,16 +83,19 @@ obvious one. Long bodies are welcome; the history is documentation.
 Tags are `vMAJOR.MINOR.PATCH`, annotated, on the commit that shipped the change. Bump `<Version>` in
 `Directory.Build.props` — the one number the server and the relay both take their version from; file
 and assembly versions are derived from it — move the `Unreleased` entries into a dated section, then
-tag:
+tag. Every section opens with a short summary, before its first `###`: two to four sentences on what the
+release means for someone upgrading, then any upgrade steps and known issues, linked. That summary is the
+release page:
 
 ```
 git tag -a v1.4.0 -m "sysdiag v1.4.0" -m "<the changelog section>"
 ```
 
 Pushing the tag runs the Release workflow. It builds and tests every server on its own OS, then
-publishes a GitHub Release with one zip per binary, `SHA256SUMS.txt`, and that version's changelog
-section as the notes. Run the workflow by hand first: it does everything except publish, and fails if
-`<Version>` has no changelog section.
+publishes a GitHub Release with one zip per binary, `SHA256SUMS.txt`, and notes made of the section's
+summary, a link to the full section, and GitHub's list of the pull requests merged since the last release.
+`tools/release-notes.sh <version>` prints the first two parts. Run the workflow by hand first: it does
+everything except publish, and fails if `<Version>` has no changelog section or the section no summary.
 
 MAJOR is for a change that breaks a caller — a tool removed, a result field's meaning changed, a
 default that alters what an existing call returns.

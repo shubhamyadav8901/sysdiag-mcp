@@ -13,6 +13,10 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+Moves every project to .NET 10, gives WinDiag an icon of its own in place of one that embedded the
+Windows logo, and updates the MCP SDK to 2.2.0. Release pages become short summaries that link their pull
+requests.
+
 ### Changed
 
 - Every project targets .NET 10 (`net10.0`, `net10.0-windows`), the current long-term-support release, in
@@ -23,8 +27,37 @@ release fixed something that had been silently wrong, it says what the wrong ans
   embedded the Windows logo.
 - Dependencies: the MCP SDK (`ModelContextProtocol`, `ModelContextProtocol.AspNetCore`) moves to 2.2.0
   and the `Microsoft.Extensions.Hosting` family to 10.0.12.
+- A GitHub Release's page carries the version's changelog summary, a link to its full section, and GitHub's
+  list of the pull requests merged since the last release, instead of the whole section.
 
 ## [3.0.0] - 2026-10-14
+
+The first public release. It adds **MacDiag**, a macOS server. It closes a broad set of security holes in
+WinDiag, LinuxDiag and the relay: token exposure, directory ACLs, unsafe DLL and tool loading, and
+confinement of `put_file`, `get_file` and `query_activity`. It also renames the project from windiag to
+**sysdiag**.
+
+**Upgrading from 2.x:**
+
+- **Change the token on every WinDiag target.** Before this release any local user could read it, and it
+  allows `run_command` as SYSTEM. Running `--install-service` again also moves it into a restricted key; until
+  then the service keeps working and warns on every start.
+- A WinDiag service refuses to start when it cannot lock down its directory itself: a drive root, a link, or
+  a directory below one that an ordinary account can change, such as `D:\Tools\WinDiag`. The event log names
+  the directory and who can change it. Remove those rights (or `icacls <dir> /setowner *S-1-5-32-544`) and
+  start the service again with `sc.exe start`, since its restart retries will be spent; or move to `C:\WinDiag`.
+- Relay: rename `~/.windiag-targets.json` to `~/.sysdiag-targets.json` and `WINDIAG_RELAY_FILE_ROOT` to
+  `SYSDIAG_RELAY_FILE_ROOT`, and re-key the client's `mcpServers` entry to `sysdiag`. Its default file roots
+  no longer include the folder above the executable, so copy builds into the per-user `sysdiag` folder or set
+  the variable.
+- LinuxDiag: an artifact directory that root alone does not control must be moved, or every `update_self`
+  after this one is refused.
+- An unknown command-line or install option is now refused, and some reads and writes need a grant they did
+  not need before; the refusal names it. Callers that worked around `run_command`'s old Cmd quoting must stop,
+  and `named_pipes` renames two structured fields.
+
+**Known issue:** `update_self` can strand a pre-3.0 WinDiag install that the new start-up check refuses
+([#4](https://github.com/shubhamyadav8901/sysdiag-mcp/issues/4)).
 
 ### Breaking
 
@@ -346,6 +379,14 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [2.0.0] - 2026-10-01
 
+Adds **LinuxDiag**, a Linux server for Ubuntu and Debian on x86-64. The relay moves to its own executable,
+`DiagRelay.Mcp`, which also runs on Linux. WinDiag installs itself as a Windows service with
+`--install-service`, and `update_self` works under the service manager.
+
+This release said LinuxDiag was not yet for production hosts: its security review still had open findings.
+
+**Breaking:** `WinDiag.Mcp.exe --relay` is removed. Point MCP clients at `DiagRelay.Mcp` instead.
+
 ### Removed
 
 - **BREAKING: `WinDiag.Mcp.exe --relay`.** The relay is now its own executable, `DiagRelay.Mcp`,
@@ -539,6 +580,9 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [1.3.0] - 2026-08-21
 
+WinDiag can run as a Windows service, so `service_control` can restart a target remotely. Running it by
+hand is unchanged.
+
 ### Added
 
 - **The same executable can run as a Windows service.** `AddWindowsService()` on the existing
@@ -562,6 +606,9 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [1.2.1] - 2026-08-21
 
+`path_handle_search` and `process_handles` stop sending callers on a slow all-object-types sweep for
+handles the fast search already returns.
+
 ### Fixed
 
 - `path_handle_search` and `process_handles` no longer offer mapped sections as a reason to re-run
@@ -571,6 +618,9 @@ release fixed something that had been silently wrong, it says what the wrong ans
   which is precisely the holder `who_locks_path` misses.
 
 ## [1.2.0] - 2026-08-21
+
+`update_self` waits for in-flight tool calls before it restarts, bounded by
+`WINDIAG_UPDATE_DRAIN_TIMEOUT_SECONDS`. `force` keeps the old cut-off behaviour.
 
 ### Changed
 
@@ -596,6 +646,9 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [1.1.0] - 2026-08-20
 
+The relay gains `push_file` and `pull_file`. They move whole files to and from a target without the bytes
+passing through the conversation, confined by `WINDIAG_RELAY_FILE_ROOT`.
+
 ### Added
 
 - **`push_file` and `pull_file` on the relay**, moving whole files without their bytes entering the
@@ -613,7 +666,8 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [1.0.0] - 2026-08-19
 
-First release in which **every tool can actually be called from an MCP client.**
+First release in which **every tool can actually be called from an MCP client.** Seven tools returned answers
+that failed the server's own output schema, so clients threw them away.
 
 ### Fixed
 
@@ -633,6 +687,9 @@ First release in which **every tool can actually be called from an MCP client.**
 
 ## [0.8.0] - 2026-08-19
 
+Adds `get_file`, which collects captures and dumps over the server's own channel. Fixes `who_locks_path`,
+which failed whenever it actually found a holder.
+
 ### Added
 
 - `get_file`: retrieve a capture or dump over the server's own channel, so collecting an artifact
@@ -648,6 +705,8 @@ First release in which **every tool can actually be called from an MCP client.**
 
 ## [0.7.0] - 2026-08-18
 
+Adds `--relay`: one local stdio MCP server that forwards to a fleet of targets, each under its own alias.
+
 ### Added
 
 - **`--relay`**: one local stdio MCP server that forwards to any target at runtime, so a fleet of lab
@@ -657,6 +716,9 @@ First release in which **every tool can actually be called from an MCP client.**
   very first `tools/list` — which is what clients that read the tool list only at startup require.
 
 ## [0.6.0] - 2026-08-17
+
+Adds `put_file`, which stages files over the server's authenticated channel in hash-verified chunks. Adds
+`deploy-target.ps1`, which publishes, stages and self-updates a target in one command.
 
 ### Added
 
@@ -668,6 +730,8 @@ First release in which **every tool can actually be called from an MCP client.**
 
 ## [0.5.0] - 2026-08-16
 
+Adds `run_command`, an opt-in tool for arbitrary commands, behind its own flag.
+
 ### Added
 
 - `run_command`, an opt-in arbitrary-command tool behind its own flag — the escape hatch for git,
@@ -675,7 +739,8 @@ First release in which **every tool can actually be called from an MCP client.**
 
 ## [0.4.0] - 2026-08-15
 
-The full tool surface, verified on both bitnesses.
+The full tool surface, verified on both bitnesses: autostart, handles, modules, the registry, and process and
+service control, on 32-bit and 64-bit Windows.
 
 ### Added
 
@@ -689,6 +754,9 @@ The full tool surface, verified on both bitnesses.
 
 ## [0.3.0] - 2026-08-14
 
+Adds `update_self`: a server replaces its own executable and restarts. The new executable is hash-checked and
+signature-ratcheted.
+
 ### Added
 
 - `update_self`: replace the server's own executable and restart, for a target reachable by file copy
@@ -696,6 +764,9 @@ The full tool surface, verified on both bitnesses.
   a failure restarts the existing build rather than leaving nothing running.
 
 ## [0.2.0] - 2026-08-13
+
+Picks the Sysinternals build by the target's architecture. Before, the 32-bit `handle.exe` on 64-bit Windows
+answered "no handles" to every query. Also adds on-target verification and a minimal HTTP MCP client.
 
 ### Added
 
@@ -710,6 +781,9 @@ The full tool surface, verified on both bitnesses.
   target's architecture.
 
 ## [0.1.0] - 2026-08-12
+
+The first release of windiag: a Windows diagnostics MCP server for the live-machine questions a debugger cannot
+answer. It serves stdio locally, or authenticated HTTP on a target.
 
 ### Added
 
