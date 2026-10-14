@@ -2,16 +2,17 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- net9.0-windows, not net9.0: this server is Windows-only by nature (Restart Manager,
+    <!-- net10.0-windows, not net10.0: this server is Windows-only by nature (Restart Manager,
          ServiceController, EventLogReader, ETW) and the TFM makes that explicit rather than
          letting the platform-compatibility analyzer warn on every call. -->
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>WinDiag.Mcp</AssemblyName>
     <RootNamespace>WinDiag.Mcp</RootNamespace>
 
     <!-- Icon and version metadata, so the exe is identifiable in Explorer, Task Manager and endpoint
          reports rather than a nameless binary. file_signatures and process_modules surface Company and
-         the versions below; the icon is the Windows-magnifier logo in Resources. -->
+         the versions below. The icon in Resources is original artwork, a magnifier over a pulse trace:
+         an earlier one embedded the Windows logo, which this project has no right to ship. -->
     <ApplicationIcon>Resources\windiag.ico</ApplicationIcon>
     <Company>Shubham Yadav</Company>
     <Product>WinDiag</Product>
@@ -40,8 +41,6 @@
     <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.12" />
     <PackageReference Include="System.Management" Version="10.0.12" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12" />
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.12" />
-    <PackageReference Include="System.Threading.AccessControl" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>

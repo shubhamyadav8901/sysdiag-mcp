@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net9.0, so the same suite runs on Linux (tools/test-linux.sh) and on every CI OS. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- net10.0, so the same suite runs on Linux (tools/test-linux.sh) and on every CI OS. -->
+    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

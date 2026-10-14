@@ -2,10 +2,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- net9.0: the relay is the one part of this family that has to run on macOS and Linux, so it may
+    <!-- net10.0: the relay is the one part of this family that has to run on macOS and Linux, so it may
          not depend on anything Windows-only. CA1416 under -warnaserror is what enforces that; every
          Windows call sits behind an OperatingSystem.IsWindows() guard. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>DiagRelay.Mcp</AssemblyName>
     <RootNamespace>DiagRelay.Mcp</RootNamespace>
     <Company>Shubham Yadav</Company>

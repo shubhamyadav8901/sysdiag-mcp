@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   windows:
-    # windows-latest is not a preference: the target framework is net9.0-windows and the code calls
+    # windows-latest is not a preference: the target framework is net10.0-windows and the code calls
     # Restart Manager, ServiceController, EventLogReader and WinVerifyTrust directly.
     runs-on: windows-latest
 
@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Restore
         run: dotnet restore
@@ -55,7 +55,9 @@ jobs:
       # it is absent from the publish set unless referenced outright -- while the test host, which is
       # not published, always has it. A shipped build therefore threw FileNotFoundException on the
       # first event log write while every test stayed green: a service that served every tool until
-      # update_self logged one warning mid-update and died.
+      # update_self logged one warning mid-update and died. Since net10.0 the assembly is part of the
+      # shared framework, so the SDK refuses the PackageReference (NU1510) and the runtime pack carries
+      # it instead; the check stays, because a framework change could drop it again just as quietly.
       #
       # Asserted against the publish *set* because that is what the single-file bundler embeds, so
       # checking here covers the bundle without unpacking it.
@@ -71,7 +73,8 @@ jobs:
           $missing = $required | Where-Object { -not (Test-Path "artifacts/ci-publish-check/$_") }
           if ($missing) {
             throw "Publish output is missing: $($missing -join ', '). Add a PackageReference; a " +
-                  "transitive dependency alone does not survive to the published set."
+                  "transitive dependency alone does not survive to the published set. If the SDK " +
+                  "refuses it as framework-provided (NU1510), find why the runtime pack dropped it."
           }
           Write-Host "publish set carries: $($required -join ', ')"
 
@@ -253,8 +256,8 @@ jobs:
           }
 
   unix:
-    # The relay and its shared core are net9.0 and must stay that way, so they are built and tested on
-    # the platforms they exist for. Per project, not per solution: the solution also holds net9.0-windows
+    # The relay and its shared core are net10.0 and must stay that way, so they are built and tested on
+    # the platforms they exist for. Per project, not per solution: the solution also holds net10.0-windows
     # projects, which fail to restore here with NETSDK1100.
     strategy:
       fail-fast: false
@@ -267,7 +270,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Build
         run: dotnet build tests/DiagRelay.Mcp.Tests -warnaserror
@@ -298,7 +301,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           sudo tools/capture-macos-fixtures.sh
-          cp -R tests/MacDiag.Mcp.Tests/Fixtures/macos tests/MacDiag.Mcp.Tests/bin/Debug/net9.0/Fixtures/
+          cp -R tests/MacDiag.Mcp.Tests/Fixtures/macos tests/MacDiag.Mcp.Tests/bin/Debug/net10.0/Fixtures/
 
       - name: Test MacDiag
         run: dotnet test tests/MacDiag.Mcp.Tests --no-build --verbosity normal

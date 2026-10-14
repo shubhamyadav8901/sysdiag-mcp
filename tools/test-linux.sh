@@ -13,7 +13,7 @@
 #
 # One-time setup, no root needed:
 #   curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-#   bash /tmp/dotnet-install.sh --channel 9.0 --install-dir "$HOME/.dotnet"
+#   bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$HOME/.dotnet"
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

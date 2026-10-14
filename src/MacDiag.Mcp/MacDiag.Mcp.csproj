@@ -2,9 +2,9 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- net9.0 with the whole assembly marked macOS-only (AssemblyInfo.cs), so the platform analyzer
+    <!-- net10.0 with the whole assembly marked macOS-only (AssemblyInfo.cs), so the platform analyzer
          checks every call, as LinuxDiag's does for Linux. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>MacDiag.Mcp</AssemblyName>
     <RootNamespace>MacDiag.Mcp</RootNamespace>
     <Company>Shubham Yadav</Company>

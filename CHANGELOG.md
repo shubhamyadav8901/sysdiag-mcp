@@ -13,6 +13,17 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
+### Changed
+
+- Every project targets .NET 10 (`net10.0`, `net10.0-windows`), the current long-term-support release, in
+  place of .NET 9, whose support ends on 2026-11-10. A `global.json` pins the SDK to 10.0.100 or a later
+  feature band. The self-contained binaries need nothing installed; a framework-dependent build now needs
+  the .NET 10 runtime.
+- WinDiag.Mcp.exe has a new icon: a magnifier over a pulse trace, drawn for this project. The previous icon
+  embedded the Windows logo.
+- Dependencies: the MCP SDK (`ModelContextProtocol`, `ModelContextProtocol.AspNetCore`) moves to 2.2.0
+  and the `Microsoft.Extensions.Hosting` family to 10.0.12.
+
 ## [3.0.0] - 2026-10-14
 
 ### Breaking
