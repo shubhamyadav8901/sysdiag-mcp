@@ -13,7 +13,7 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 ## [Unreleased]
 
-## [3.0.0] - 2026-10-06
+## [3.0.0] - 2026-10-14
 
 ### Breaking
 
