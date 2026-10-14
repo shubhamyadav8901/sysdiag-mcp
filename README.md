@@ -63,7 +63,8 @@ names, so an agent asks a Linux box and a Windows box alike.
 | Who holds this file open or locked | `who_locks_path`, `path_handle_search` | ✓ | ✓ | ✓ |
 | What one process holds and has loaded | `process_handles`, `process_modules` | ✓ | ✓ | ✓ |
 | What is running, from what command line | `process_list` | ✓ | ✓ | ✓ |
-| Which process owns this socket or pipe | `network_owners`, `named_pipes` | ✓ | ✓ | ✓ |
+| Which process owns this socket | `network_owners` | ✓ | ✓ | ✓ |
+| Which named pipes and local sockets exist | `named_pipes` | ✓ | ✓ | ✓ |
 | How a service is configured, and its state | `service_config` | ✓ | ✓ | ✓ |
 | What the machine logged | `event_log_tail` | ✓ | ✓ | ✓ |
 | What runs without anyone starting it | `autostart_audit` | ✓ | ✓ | ✓ |
