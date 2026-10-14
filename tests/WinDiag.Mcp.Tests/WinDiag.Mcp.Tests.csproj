@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <!-- Matches the server's TFM so tests can touch the same Windows-only APIs. -->
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

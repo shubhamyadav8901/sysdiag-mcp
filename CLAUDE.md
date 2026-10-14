@@ -39,7 +39,7 @@ dotnet test tests/MacDiag.Mcp.Tests      # the macOS server; its [MacFact] tests
 - `tests/WinDiag.Mcp.OnTarget` needs a real machine, administrator rights and a kernel driver. It does
   not run in CI — see `tools/verify-on-target.ps1`.
 - Publishing is `-r win-x64` or `win-x86`, `--self-contained -p:PublishSingleFile=true`, into
-  `artifacts/win-<arch>/`. The relay is its own net9.0 project, `src/DiagRelay.Mcp`, published to
+  `artifacts/win-<arch>/`. The relay is its own net10.0 project, `src/DiagRelay.Mcp`, published to
   `artifacts/diagrelay/`. Test it on real Linux with `tools/test-linux.sh` through WSL — mode, lock and
   case-sensitivity tests only run there. **Invoke it from PowerShell or cmd, never Git Bash**: MSYS
   rewrites the `/mnt/d/...` argument into `C:/Program Files/Git/mnt/d/...` and the script is not found.
@@ -67,7 +67,7 @@ dotnet test tests/MacDiag.Mcp.Tests      # the macOS server; its [MacFact] tests
   capabilities, and the update and command engines. A change to the contract is made there, once;
   `RelayContractTests` runs the relay's real transfer code against it. An exception a tool throws on
   purpose implements `IDiagnosticException`, or its message never reaches the caller. The kit is
-  `net9.0` and the relay must never reference it — CI checks the relay's publish set for ASP.NET Core.
+  `net10.0` and the relay must never reference it — CI checks the relay's publish set for ASP.NET Core.
 - **A diagnostic channel must never be able to break the thing it reports on.** Under the SCM there is
   no stderr, so logging goes to the event log; a sink that can throw took down `update_self` mid-run.
   Sinks are made safe or removed, never left to throw.

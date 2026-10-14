@@ -2,9 +2,9 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- net9.0 with the whole assembly marked Linux-only (AssemblyInfo.cs), so the platform analyzer
-         checks every call as windiag's net9.0-windows TFM does there. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- net10.0 with the whole assembly marked Linux-only (AssemblyInfo.cs), so the platform analyzer
+         checks every call as windiag's net10.0-windows TFM does there. -->
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>LinuxDiag.Mcp</AssemblyName>
     <RootNamespace>LinuxDiag.Mcp</RootNamespace>
     <Company>Shubham Yadav</Company>

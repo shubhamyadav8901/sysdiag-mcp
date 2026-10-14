@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net9.0: parser and registration tests run on any OS; [MacFact] tests run in CI's macos-latest job.
+    <!-- net10.0: parser and registration tests run on any OS; [MacFact] tests run in CI's macos-latest job.
          Not InvariantGlobalization, like the server: normalisation must behave as it does there. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

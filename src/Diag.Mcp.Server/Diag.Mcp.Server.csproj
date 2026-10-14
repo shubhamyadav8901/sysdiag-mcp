@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net9.0: shared by the Windows server and the Linux server. Anything Windows-only belongs in
+    <!-- net10.0: shared by the Windows server and the Linux server. Anything Windows-only belongs in
          the server that needs it. The relay must never reference this project: it would pull a web
          server into a stdio client. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Diag.Mcp.Server</RootNamespace>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

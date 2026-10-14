@@ -25,7 +25,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # One dotnet command per step. A multi-line run block on a Windows runner is pwsh, which fails the
       # step on the LAST command's exit code only: a red WinDiag suite followed by a green relay suite
@@ -83,7 +83,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # One dotnet command per step, for the reason the publish job gives: this matrix has a Windows leg.
       - name: Build
@@ -124,7 +124,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # The kit's tests are built explicitly: LinuxDiag's test project links the kit's guards as source and
       # does not reference the kit's test project, so `--no-build` would find nothing to run. One dotnet
@@ -178,7 +178,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # One dotnet command per step; see the publish job.
       - name: Build the server kit

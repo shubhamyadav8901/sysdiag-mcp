@@ -349,7 +349,7 @@ partial instead of presenting it as complete. The Docker socket is asked one fix
 `GET /containers/json`, within 5 seconds - a hung daemon never hangs a tool. `process_control` needs Linux
 5.3 or later for its pidfd; on an older kernel (RHEL 8 ships 4.18) it refuses with that explanation rather
 than risk signalling a reused PID. `process_handles`, `path_handle_search`, `who_locks_path` and `named_pipes` need glibc 2.28
-or later, which every distribution .NET 9 supports has.
+or later, which every distribution .NET 10 supports has.
 
 #### Services, logs and host configuration
 
@@ -548,7 +548,7 @@ dotnet publish src/WinDiag.Mcp/WinDiag.Mcp.csproj -c Release -r win-x64 --self-c
 ```
 
 Produces `artifacts/win-x64/WinDiag.Mcp.exe`, ~96 MB. Drop `--self-contained` for a ~2 MB build if
-the target already has the .NET 9 runtime. Trimming is *not* used: the MCP SDK discovers tools by
+the target already has the .NET 10 runtime. Trimming is *not* used: the MCP SDK discovers tools by
 reflection and WMI binds late, so a trimmed build fails at runtime rather than at publish.
 
 **Targets are both 32- and 64-bit VMs, so publish both** and copy the matching one to each machine —
