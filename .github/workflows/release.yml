@@ -226,6 +226,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Build provenance: id-token to obtain the Sigstore signing certificate, attestations to store it.
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v7
@@ -278,6 +281,41 @@ jobs:
           tools/release-notes.sh "${{ steps.version.outputs.version }}" > notes.md ||
             { echo "::error::CHANGELOG.md has no section, or no summary, for ${{ steps.version.outputs.version }}"; exit 1; }
           cat notes.md
+
+      # Every zip, and every executable inside one, gets a signed statement of the commit and workflow run
+      # that built it, so a download -- or a binary already copied onto a target -- can be checked with
+      # `gh attestation verify <file> -R <repo>`. This is provenance, not OS code signing: SmartScreen and
+      # Gatekeeper do not read it. The executables are attested as well as the zips because the binary on
+      # a target is what someone actually has to vouch for, long after the zip is gone.
+      #
+      # A rehearsal only checks that the patterns match, rather than attesting builds nobody will publish.
+      - name: Attestation subjects
+        run: |
+          shopt -s nullglob
+          subjects=(dist/*.zip dist/*/*.Mcp dist/*/*.Mcp.exe)
+          printf '%s\n' "${subjects[@]}"
+          # 8 zips and 8 executables: the two WinDiag architectures, three relays, LinuxDiag, two MacDiag.
+          test "${#subjects[@]}" -eq 16 || { echo "::error::expected 16 attestation subjects, found ${#subjects[@]}"; exit 1; }
+
+      - name: Attest build provenance
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*/*.Mcp
+            dist/*/*.Mcp.exe
+
+      # Proof the attestation is retrievable and names this repository before the release points anyone at it.
+      - name: Verify an attestation
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in dist/*.zip; do
+            gh attestation verify "$f" -R "${GITHUB_REPOSITORY}" > /dev/null
+          done
+          echo "every zip verifies"
 
       - name: Publish
         # A pushed tag only: a manual run started on a tag has ref_type tag too, and is still a rehearsal.

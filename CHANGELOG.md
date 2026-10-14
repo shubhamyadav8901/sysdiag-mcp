@@ -15,7 +15,14 @@ release fixed something that had been silently wrong, it says what the wrong ans
 
 Moves every project to .NET 10, gives WinDiag an icon of its own in place of one that embedded the
 Windows logo, and updates the MCP SDK to 2.2.0. Release pages become short summaries that link their pull
-requests.
+requests, and every release zip and binary carries a build-provenance attestation.
+
+### Added
+
+- Every release zip, and every executable inside one, carries a build-provenance attestation, a
+  Sigstore-signed record of the commit and workflow run that built it. Verify a download or an installed
+  binary with `gh attestation verify <file> -R shubhamyadav8901/sysdiag-mcp`. The binaries themselves are
+  still not code-signed.
 
 ### Changed
 

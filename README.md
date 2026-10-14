@@ -22,6 +22,17 @@ Download the zip for each machine from the [latest release](https://github.com/s
 `windiag-win-x64` or `windiag-win-x86`, `linuxdiag-linux-x64`, `macdiag-osx-arm64` or `macdiag-osx-x64`, and `diagrelay-<platform>` for the
 relay. Each carries a `SHA256.txt`, the licence and `THIRD-PARTY-NOTICES.md`. Every binary is self-contained, so no .NET install is needed.
 
+In releases after v3.0.0, every zip and every executable in one has a build-provenance attestation: a signed record of the
+commit and workflow run that built it. Check a download, or a binary already on a target, with the GitHub CLI:
+
+```
+gh attestation verify windiag-win-x64-v3.1.0.zip -R shubhamyadav8901/sysdiag-mcp
+gh attestation verify C:/Tools/sysdiag/WinDiag.Mcp.exe -R shubhamyadav8901/sysdiag-mcp
+```
+
+This proves where a file came from. It is not OS code signing: the binaries are not Authenticode- or
+Developer ID-signed, so SmartScreen and Gatekeeper still treat them as unsigned.
+
 To diagnose the machine you are on, register its server with Claude Code over stdio:
 
 ```
