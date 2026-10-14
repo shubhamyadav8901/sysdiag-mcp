@@ -565,7 +565,11 @@ public sealed class ProtectDirectoryOnDiskTests : IDisposable
     [ElevatedFact]
     public void Creates_a_missing_directory_afresh_with_nothing_exposed_when_asked_not_to_adopt_one()
     {
-        var path = Path.Combine(NewDirectory(), "artifacts");
+        // The parent is restricted first: made straight under C:\ it inherits Authenticated Users: Modify, so any
+        // user could rename it, and the ancestor check rightly refuses everything below it.
+        var parent = NewDirectory();
+        ProtectedAcl.ProtectDirectory(parent, serviceAccount: null, ownedByAdministrators: true);
+        var path = Path.Combine(parent, "artifacts");
 
         ProtectedAcl.ProtectDirectory(path, serviceAccount: null, ownedByAdministrators: true, adoptExisting: false);
 
